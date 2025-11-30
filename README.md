@@ -4,8 +4,17 @@ emoji: 🤖
 colorFrom: blue
 colorTo: yellow
 sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
 pinned: false
 license: mit
+tags:
+- building-mcp-track-creative
+- mcp-in-action-track-consumer
+- mcp-in-action-track-creative
+---
+
+# AMCP
 tags:
 - building-mcp-track-creative
 - mcp-in-action-track-consumer
