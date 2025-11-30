@@ -2,10 +2,14 @@
 title: AMCP
 emoji: 🤖
 colorFrom: blue
-colorTo: purple
-sdk: docker
+colorTo: yellow
+sdk: gradio
 pinned: false
 license: mit
+tags:
+- building-mcp-track-creative
+- mcp-in-action-track-consumer
+- mcp-in-action-track-creative
 ---
 
 # AMCP
