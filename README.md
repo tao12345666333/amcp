@@ -6,6 +6,7 @@ colorTo: yellow
 sdk: gradio
 sdk_version: 6.0.1
 app_file: app.py
+python_version: "3.11"
 pinned: false
 license: apache-2.0
 tags:
