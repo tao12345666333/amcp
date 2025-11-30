@@ -6,12 +6,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ripgrep \
     git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js for MCP servers
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
@@ -26,5 +20,8 @@ RUN mkdir -p /root/.config/amcp
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Default command
-CMD ["amcp"]
+# Expose port for Gradio
+EXPOSE 7860
+
+# Run Gradio app
+CMD ["python", "app.py"]
