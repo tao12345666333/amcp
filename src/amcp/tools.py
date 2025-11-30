@@ -1,0 +1,511 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+import typer
+from rich.console import Console
+
+
+@dataclass
+class ToolResult:
+    """Result of tool execution."""
+    
+    success: bool
+    content: str
+    metadata: Dict[str, Any] = None
+    error: Optional[str] = None
+    
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+
+
+class ToolError(Exception):
+    """Base exception for tool errors."""
+    pass
+
+
+class ToolExecutionError(ToolError):
+    """Raised when tool execution fails."""
+    pass
+
+
+class ToolValidationError(ToolError):
+    """Raised when tool parameters are invalid."""
+    pass
+
+
+@runtime_checkable
+class Tool(Protocol):
+    """Protocol for tool implementations."""
+    
+    @property
+    def name(self) -> str:
+        """Tool name."""
+        ...
+    
+    @property
+    def description(self) -> str:
+        """Tool description."""
+        ...
+    
+    def execute(self, **kwargs) -> ToolResult:
+        """Execute the tool with given parameters."""
+        ...
+
+
+class BaseTool(ABC):
+    """Base class for tool implementations."""
+    
+    def __init__(self):
+        self.console = Console()
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Tool name."""
+        pass
+    
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        """Tool description."""
+        pass
+    
+    @abstractmethod
+    def execute(self, **kwargs) -> ToolResult:
+        """Execute the tool with given parameters."""
+        pass
+    
+    def validate_parameters(self, **kwargs) -> None:
+        """Validate tool parameters. Override in subclasses."""
+        pass
+    
+    def get_spec(self) -> Dict[str, Any]:
+        """Get tool specification for LLM."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.get_parameters_schema(),
+            },
+        }
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        """Get JSON schema for tool parameters. Override in subclasses."""
+        return {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        }
+
+
+class ToolRegistry:
+    """Registry for managing tools."""
+    
+    def __init__(self):
+        self._tools: Dict[str, Tool] = {}
+        self._tool_specs: Dict[str, Dict[str, Any]] = {}
+    
+    def register(self, tool: Tool) -> None:
+        """Register a tool."""
+        self._tools[tool.name] = tool
+        self._tool_specs[tool.name] = tool.get_spec() if hasattr(tool, 'get_spec') else {}
+    
+    def unregister(self, name: str) -> None:
+        """Unregister a tool."""
+        self._tools.pop(name, None)
+        self._tool_specs.pop(name, None)
+    
+    def get_tool(self, name: str) -> Optional[Tool]:
+        """Get a tool by name."""
+        return self._tools.get(name)
+    
+    def list_tools(self) -> List[str]:
+        """List all registered tool names."""
+        return list(self._tools.keys())
+    
+    def get_tool_specs(self) -> Dict[str, Dict[str, Any]]:
+        """Get all tool specifications."""
+        return self._tool_specs.copy()
+    
+    def execute_tool(self, name: str, **kwargs) -> ToolResult:
+        """Execute a tool by name."""
+        tool = self.get_tool(name)
+        if not tool:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Tool '{name}' not found"
+            )
+        
+        try:
+            # Validate parameters
+            if hasattr(tool, 'validate_parameters'):
+                tool.validate_parameters(**kwargs)
+            
+            # Execute tool
+            result = tool.execute(**kwargs)
+            return result
+            
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Tool execution failed: {type(e).__name__}: {e}"
+            )
+
+
+# Built-in tools
+class ReadFileTool(BaseTool):
+    """Tool for reading files."""
+    
+    @property
+    def name(self) -> str:
+        return "read_file"
+    
+    @property
+    def description(self) -> str:
+        return "Read a text file from the local workspace. Use relative paths from current working directory."
+    
+    def execute(self, path: str, ranges: Optional[List[str]] = None, max_lines: Optional[int] = None) -> ToolResult:
+        """Execute the read file tool."""
+        from pathlib import Path
+        from .readfile import read_file_with_ranges
+        
+        try:
+            file_path = Path(path).expanduser().resolve()
+            
+            if not file_path.exists():
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"File not found: {file_path}"
+                )
+            
+            if not file_path.is_file():
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Path is a directory, not a file: {file_path}"
+                )
+            
+            # Read file with ranges
+            blocks = read_file_with_ranges(file_path, ranges or [])
+            
+            # Format result
+            content_parts = []
+            for block in blocks:
+                header = f"{file_path}:{block['start']}-{block['end']}"
+                content_parts.append(f"**{header}**")
+                
+                for lineno, line in block["lines"][:max_lines or 400]:
+                    content_parts.append(f"{lineno:>6} | {line}")
+                
+                if len(block["lines"]) > (max_lines or 400):
+                    content_parts.append("... (truncated)")
+            
+            content = "\\n".join(content_parts)
+            
+            return ToolResult(
+                success=True,
+                content=content,
+                metadata={
+                    "file_path": str(file_path),
+                    "blocks_read": len(blocks),
+                    "total_lines": sum(len(block["lines"]) for block in blocks)
+                }
+            )
+            
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Failed to read file: {type(e).__name__}: {e}"
+            )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to read (relative to current working directory)"
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
+                    "description": "Optional list of line ranges like '1-200'"
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5000,
+                    "description": "Maximum lines to return per block (default 400)"
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        }
+
+
+class ThinkTool(BaseTool):
+    """Tool for internal reasoning and planning."""
+    
+    @property
+    def name(self) -> str:
+        return "think"
+    
+    @property
+    def description(self) -> str:
+        return "Use this tool for internal reasoning, planning, and organizing your thoughts before taking action."
+    
+    def execute(self, thought: str) -> ToolResult:
+        """Execute thinking process."""
+        return ToolResult(
+            success=True,
+            content=f"🤔 Thinking: {thought}",
+            metadata={"thought": thought}
+        )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "thought": {
+                    "type": "string",
+                    "description": "Your thoughts, plans, or reasoning"
+                }
+            },
+            "required": ["thought"],
+            "additionalProperties": False,
+        }
+
+
+class BashTool(BaseTool):
+    """Tool for executing bash commands."""
+    
+    @property
+    def name(self) -> str:
+        return "bash"
+    
+    @property
+    def description(self) -> str:
+        return "Execute bash commands. Use for file operations, running scripts, or system commands. Returns stdout and stderr."
+    
+    def execute(self, command: str, timeout: int = 30) -> ToolResult:
+        """Execute bash command."""
+        import subprocess
+        
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            
+            output = result.stdout
+            if result.stderr:
+                output += f"\n[stderr]\n{result.stderr}"
+            
+            return ToolResult(
+                success=result.returncode == 0,
+                content=output or "(no output)",
+                metadata={
+                    "command": command,
+                    "exit_code": result.returncode
+                },
+                error=None if result.returncode == 0 else f"Command exited with code {result.returncode}"
+            )
+                
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Command timed out after {timeout} seconds"
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Command failed: {type(e).__name__}: {e}"
+            )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Bash command to execute"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300,
+                    "description": "Timeout in seconds (default: 30)"
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        }
+
+
+class GrepTool(BaseTool):
+    """Tool for searching files using ripgrep."""
+    
+    @property
+    def name(self) -> str:
+        return "grep"
+    
+    @property
+    def description(self) -> str:
+        return "Search for patterns in files using ripgrep. Returns matching lines with file paths and line numbers."
+    
+    def execute(
+        self,
+        pattern: str,
+        paths: Optional[List[str]] = None,
+        ignore_case: bool = False,
+        hidden: bool = False,
+        context: int = 0,
+        globs: Optional[List[str]] = None
+    ) -> ToolResult:
+        """Execute grep search."""
+        import shutil
+        import subprocess
+        
+        if shutil.which("rg") is None:
+            return ToolResult(
+                success=False,
+                content="",
+                error="ripgrep (rg) not found on PATH. Please install ripgrep."
+            )
+        
+        try:
+            cmd = ["rg", pattern, *(paths or ["."]), "-n"]
+            if ignore_case:
+                cmd.append("-i")
+            if hidden:
+                cmd.append("--hidden")
+            if context:
+                cmd.extend(["-C", str(context)])
+            for g in (globs or []):
+                cmd.extend(["-g", g])
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                return ToolResult(
+                    success=True,
+                    content=result.stdout,
+                    metadata={
+                        "pattern": pattern,
+                        "paths": paths or ["."],
+                        "match_count": len(result.stdout.splitlines())
+                    }
+                )
+            elif result.returncode == 1:
+                # No matches found
+                return ToolResult(
+                    success=True,
+                    content="No matches found.",
+                    metadata={"pattern": pattern, "match_count": 0}
+                )
+            else:
+                return ToolResult(
+                    success=False,
+                    content=result.stdout,
+                    error=result.stderr or f"ripgrep exited with code {result.returncode}"
+                )
+                
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                success=False,
+                content="",
+                error="Search timed out after 30 seconds"
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Search failed: {type(e).__name__}: {e}"
+            )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Pattern to search for (regex supported)"
+                },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Paths to search in (default: current directory)"
+                },
+                "ignore_case": {
+                    "type": "boolean",
+                    "description": "Case-insensitive search"
+                },
+                "hidden": {
+                    "type": "boolean",
+                    "description": "Search hidden files and directories"
+                },
+                "context": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of context lines to show around matches"
+                },
+                "globs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File glob patterns to filter (e.g., '*.py')"
+                }
+            },
+            "required": ["pattern"],
+            "additionalProperties": False,
+        }
+
+
+# Initialize default tool registry
+def create_default_tool_registry() -> ToolRegistry:
+    """Create a tool registry with default tools."""
+    registry = ToolRegistry()
+    
+    # Register built-in tools
+    registry.register(ReadFileTool())
+    registry.register(GrepTool())
+    registry.register(ThinkTool())
+    registry.register(BashTool())
+    
+    return registry
+
+
+# Global tool registry instance
+_default_registry: Optional[ToolRegistry] = None
+
+
+def get_tool_registry() -> ToolRegistry:
+    """Get the global tool registry instance."""
+    global _default_registry
+    if _default_registry is None:
+        _default_registry = create_default_tool_registry()
+    return _default_registry
+
+
+def register_tool(tool: Tool) -> None:
+    """Register a tool with the global registry."""
+    get_tool_registry().register(tool)

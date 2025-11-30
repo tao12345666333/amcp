@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional
+
+try:
+    import tomllib  # py311+
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
+
+import tomli_w  # type: ignore
+
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+CONFIG_FILE = CONFIG_DIR / "config.toml"
+
+
+@dataclass
+class Server:
+    # stdio transport fields
+    command: Optional[str] = None
+    args: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
+    # http(sse) transport fields
+    url: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ChatConfig:
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    # Tool calling settings
+    tool_loop_limit: Optional[int] = None
+    default_max_lines: Optional[int] = None
+    read_roots: Optional[list[str]] = None  # list of allowed root paths for read_file
+    # MCP tool exposure
+    mcp_tools_enabled: Optional[bool] = None
+    mcp_servers: Optional[list[str]] = None  # which servers' tools to expose; if unset, expose all configured servers
+
+
+@dataclass
+class AMCPConfig:
+    servers: Dict[str, Server]
+    chat: Optional[ChatConfig] = None
+
+
+_DEFAULT = {
+    "servers": {
+        "exa": {
+            "url": "https://mcp.exa.ai/mcp",
+        }
+    },
+    "chat": {
+        "base_url": "https://api.sambanova.ai/v1",
+        "model": "DeepSeek-V3.1-Terminus",
+        # "api_key": ""  # optional; users can add this if they want config-based auth
+        "tool_loop_limit": 5,
+        "default_max_lines": 400,
+        # "read_roots": ["."]  # optional; defaults to current working directory when unset
+"mcp_tools_enabled": True,
+        # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
+    }
+}
+
+
+def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
+    command = raw.get("command")
+    command_s = str(command) if command is not None else None
+    args = [str(x) for x in (raw.get("args") or [])]
+    env = {str(k): str(v) for k, v in (raw.get("env") or {}).items()}
+    url = raw.get("url")
+    url_s = str(url) if url is not None else None
+    headers = {str(k): str(v) for k, v in (raw.get("headers") or {}).items()}
+    return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
+
+
+def _decode_chat(raw: Mapping[str, object] | None) -> Optional[ChatConfig]:
+    if not raw:
+        return None
+    base_url = raw.get("base_url")
+    model = raw.get("model")
+    api_key = raw.get("api_key")
+    tool_loop_limit = raw.get("tool_loop_limit")
+    default_max_lines = raw.get("default_max_lines")
+    read_roots = raw.get("read_roots")
+    mcp_tools_enabled = raw.get("mcp_tools_enabled")
+    mcp_servers = raw.get("mcp_servers")
+    return ChatConfig(
+        base_url=str(base_url) if base_url is not None else None,
+        model=str(model) if model is not None else None,
+        api_key=str(api_key) if api_key is not None else None,
+        tool_loop_limit=int(tool_loop_limit) if tool_loop_limit is not None else None,
+        default_max_lines=int(default_max_lines) if default_max_lines is not None else None,
+        read_roots=[str(p) for p in (read_roots or [])] if read_roots is not None else None,
+        mcp_tools_enabled=bool(mcp_tools_enabled) if mcp_tools_enabled is not None else None,
+        mcp_servers=[str(s) for s in (mcp_servers or [])] if mcp_servers is not None else None,
+    )
+
+
+def load_config() -> AMCPConfig:
+    if CONFIG_FILE.exists():
+        data = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    else:
+        # fall back to default in-memory config
+        data = _DEFAULT
+    servers = {name: _decode_server(name, raw) for name, raw in data.get("servers", {}).items()}
+    chat = _decode_chat(data.get("chat"))
+    return AMCPConfig(servers=servers, chat=chat)
+
+
+def _encode_server(s: Server) -> dict:
+    out: dict = {}
+    if s.command:
+        out["command"] = s.command
+    if s.args:
+        out["args"] = list(s.args)
+    if s.env:
+        out["env"] = dict(s.env)
+    if s.url:
+        out["url"] = s.url
+    if s.headers:
+        out["headers"] = dict(s.headers)
+    return out
+
+
+def _encode_chat(c: ChatConfig | None) -> dict | None:
+    if c is None:
+        return None
+    out: dict = {}
+    if c.base_url:
+        out["base_url"] = c.base_url
+    if c.model:
+        out["model"] = c.model
+    if c.api_key:
+        out["api_key"] = c.api_key
+    if c.tool_loop_limit is not None:
+        out["tool_loop_limit"] = int(c.tool_loop_limit)
+    if c.default_max_lines is not None:
+        out["default_max_lines"] = int(c.default_max_lines)
+    if c.read_roots is not None:
+        out["read_roots"] = list(c.read_roots)
+    if c.mcp_tools_enabled is not None:
+        out["mcp_tools_enabled"] = bool(c.mcp_tools_enabled)
+    if c.mcp_servers is not None:
+        out["mcp_servers"] = list(c.mcp_servers)
+    return out
+
+
+def save_config(cfg: AMCPConfig) -> Path:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    data = {"servers": {name: _encode_server(s) for name, s in cfg.servers.items()}}
+    chat_obj = _encode_chat(cfg.chat)
+    if chat_obj is not None:
+        data["chat"] = chat_obj
+    with open(CONFIG_FILE, "wb") as f:
+        tomli_w.dump(data, f)
+    return CONFIG_FILE
+
+
+def save_default_config() -> Path:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "wb") as f:
+            tomli_w.dump(_DEFAULT, f)
+    return CONFIG_FILE
