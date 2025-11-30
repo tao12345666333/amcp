@@ -1,6 +1,24 @@
-# amcp
+---
+title: AMCP
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+license: mit
+---
+
+# AMCP
 
 A Lego-style coding agent CLI with built-in tools (grep, read files, bash execution) and MCP server integration for extended capabilities (web search, etc.).
+
+## Features
+
+- **Built-in Tools**: read_file, grep, bash, think
+- **MCP Integration**: Connect to any MCP server for extended capabilities
+- **Conversation History**: Persistent sessions across runs
+- **Flexible Configuration**: YAML-based agent specifications
+- **Tool Calling**: Automatic tool selection and execution
 
 ## Install (editable)
 
@@ -70,3 +88,7 @@ mcp_tools_enabled = true
 ## Notes
 - `rg` (ripgrep) must be installed and on PATH for the grep tool.
 - MCP servers must be installed separately and runnable (stdio transport).
+
+## License
+
+MIT
