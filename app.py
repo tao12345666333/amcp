@@ -30,8 +30,7 @@ demo = gr.ChatInterface(
         "List files in the current directory",
         "Search for 'def' in Python files",
         "What tools do you have available?"
-    ],
-    theme=gr.themes.Soft()
+    ]
 )
 
 if __name__ == "__main__":
