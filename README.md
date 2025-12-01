@@ -27,6 +27,7 @@ tags:
 A Lego-style coding agent CLI with built-in tools (grep, read files, bash execution) and MCP server integration for extended capabilities (web search, etc.).
 
 X: https://x.com/zhangjintao9020/status/1995170132973466018?s=20
+Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp=sharing
 
 
 ## Features
