@@ -75,6 +75,8 @@ amcp mcp call --server exa --tool web_search_exa --args '{"query":"rust async"}'
 - **grep**: Search for patterns in files using ripgrep
 - **bash**: Execute bash commands for file operations and system tasks
 - **think**: Internal reasoning and planning
+- **write_file**: Write content to files (can be disabled via config)
+- **edit_file**: Edit files with search and replace (can be disabled via config)
 
 ## Config
 
@@ -101,6 +103,8 @@ base_url = "https://api.sambanova.ai/v1"
 model = "DeepSeek-V3.1-Terminus"
 api_key = "your-api-key"
 mcp_tools_enabled = true
+write_tool_enabled = true  # Enable/disable built-in write_file tool
+edit_tool_enabled = true   # Enable/disable built-in edit_file tool
 ```
 
 ## Notes

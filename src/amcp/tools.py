@@ -480,8 +480,129 @@ class GrepTool(BaseTool):
         }
 
 
+class WriteFileTool(BaseTool):
+    """Tool for writing content to files."""
+    
+    @property
+    def name(self) -> str:
+        return "write_file"
+    
+    @property
+    def description(self) -> str:
+        return "Write content to a file. Creates new file or overwrites existing file."
+    
+    def execute(self, path: str, content: str) -> ToolResult:
+        """Execute the write file tool."""
+        from pathlib import Path
+        
+        try:
+            file_path = Path(path).expanduser().resolve()
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            
+            return ToolResult(
+                success=True,
+                content=f"Successfully wrote {len(content)} characters to {file_path}",
+                metadata={"file_path": str(file_path), "size": len(content)}
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Failed to write file: {type(e).__name__}: {e}"
+            )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to write"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to write to the file"
+                }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        }
+
+
+class EditFileTool(BaseTool):
+    """Tool for editing files with search and replace."""
+    
+    @property
+    def name(self) -> str:
+        return "edit_file"
+    
+    @property
+    def description(self) -> str:
+        return "Edit a file by replacing old_text with new_text. The old_text must match exactly."
+    
+    def execute(self, path: str, old_text: str, new_text: str) -> ToolResult:
+        """Execute the edit file tool."""
+        from pathlib import Path
+        
+        try:
+            file_path = Path(path).expanduser().resolve()
+            
+            if not file_path.exists():
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"File not found: {file_path}"
+                )
+            
+            content = file_path.read_text(encoding="utf-8")
+            
+            if old_text not in content:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error="old_text not found in file"
+                )
+            
+            new_content = content.replace(old_text, new_text, 1)
+            file_path.write_text(new_content, encoding="utf-8")
+            
+            return ToolResult(
+                success=True,
+                content=f"Successfully edited {file_path}",
+                metadata={"file_path": str(file_path)}
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Failed to edit file: {type(e).__name__}: {e}"
+            )
+    
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to edit"
+                },
+                "old_text": {
+                    "type": "string",
+                    "description": "Text to search for (must match exactly)"
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "Text to replace with"
+                }
+            },
+            "required": ["path", "old_text", "new_text"],
+            "additionalProperties": False,
+        }
+
+
 # Initialize default tool registry
-def create_default_tool_registry() -> ToolRegistry:
+def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = True) -> ToolRegistry:
     """Create a tool registry with default tools."""
     registry = ToolRegistry()
     
@@ -491,6 +612,11 @@ def create_default_tool_registry() -> ToolRegistry:
     registry.register(ThinkTool())
     registry.register(BashTool())
     
+    if enable_write:
+        registry.register(WriteFileTool())
+    if enable_edit:
+        registry.register(EditFileTool())
+    
     return registry
 
 
@@ -498,11 +624,22 @@ def create_default_tool_registry() -> ToolRegistry:
 _default_registry: Optional[ToolRegistry] = None
 
 
-def get_tool_registry() -> ToolRegistry:
+def get_tool_registry(enable_write: Optional[bool] = None, enable_edit: Optional[bool] = None) -> ToolRegistry:
     """Get the global tool registry instance."""
     global _default_registry
     if _default_registry is None:
-        _default_registry = create_default_tool_registry()
+        # Load config to determine defaults
+        from .config import load_config
+        cfg = load_config()
+        chat_cfg = cfg.chat
+        
+        # Use config values if not explicitly provided
+        if enable_write is None:
+            enable_write = chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
+        if enable_edit is None:
+            enable_edit = chat_cfg.edit_tool_enabled if chat_cfg and chat_cfg.edit_tool_enabled is not None else True
+        
+        _default_registry = create_default_tool_registry(enable_write=enable_write, enable_edit=enable_edit)
     return _default_registry
 
 

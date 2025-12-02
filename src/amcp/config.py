@@ -40,6 +40,9 @@ class ChatConfig:
     # MCP tool exposure
     mcp_tools_enabled: Optional[bool] = None
     mcp_servers: Optional[list[str]] = None  # which servers' tools to expose; if unset, expose all configured servers
+    # Built-in file modification tools
+    write_tool_enabled: Optional[bool] = None
+    edit_tool_enabled: Optional[bool] = None
 
 
 @dataclass
@@ -61,8 +64,10 @@ _DEFAULT = {
         "tool_loop_limit": 5,
         "default_max_lines": 400,
         # "read_roots": ["."]  # optional; defaults to current working directory when unset
-"mcp_tools_enabled": True,
+        "mcp_tools_enabled": True,
         # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
+        "write_tool_enabled": True,
+        "edit_tool_enabled": True,
     }
 }
 
@@ -89,6 +94,8 @@ def _decode_chat(raw: Mapping[str, object] | None) -> Optional[ChatConfig]:
     read_roots = raw.get("read_roots")
     mcp_tools_enabled = raw.get("mcp_tools_enabled")
     mcp_servers = raw.get("mcp_servers")
+    write_tool_enabled = raw.get("write_tool_enabled")
+    edit_tool_enabled = raw.get("edit_tool_enabled")
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
         model=str(model) if model is not None else None,
@@ -98,6 +105,8 @@ def _decode_chat(raw: Mapping[str, object] | None) -> Optional[ChatConfig]:
         read_roots=[str(p) for p in (read_roots or [])] if read_roots is not None else None,
         mcp_tools_enabled=bool(mcp_tools_enabled) if mcp_tools_enabled is not None else None,
         mcp_servers=[str(s) for s in (mcp_servers or [])] if mcp_servers is not None else None,
+        write_tool_enabled=bool(write_tool_enabled) if write_tool_enabled is not None else None,
+        edit_tool_enabled=bool(edit_tool_enabled) if edit_tool_enabled is not None else None,
     )
 
 
@@ -147,6 +156,10 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["mcp_tools_enabled"] = bool(c.mcp_tools_enabled)
     if c.mcp_servers is not None:
         out["mcp_servers"] = list(c.mcp_servers)
+    if c.write_tool_enabled is not None:
+        out["write_tool_enabled"] = bool(c.write_tool_enabled)
+    if c.edit_tool_enabled is not None:
+        out["edit_tool_enabled"] = bool(c.edit_tool_enabled)
     return out
 
 

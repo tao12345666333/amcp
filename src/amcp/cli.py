@@ -229,6 +229,9 @@ def main(
                     console.print(f"[dim]Steps: {summary['steps_taken']}/{summary['max_steps']} | Tools called: {summary['tools_called']} | Session: {agent.session_id}[/dim]")
                     console.print()
                     
+                except EOFError:
+                    console.print("[green]Goodbye! 👋[/green]")
+                    break
                 except KeyboardInterrupt:
                     console.print("\\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
                 except Exception as e:
