@@ -12,6 +12,7 @@ from rich.status import Status
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
+from .compaction import Compactor
 from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .tools import ToolRegistry
@@ -245,7 +246,7 @@ class Agent:
         """
         # Save user input to conversation history immediately to preserve context
         self.conversation_history.append({"role": "user", "content": user_input})
-        
+
         try:
             with self._create_progress_context(show_progress) as status:
                 status.update(f"[bold]Agent {self.name}[/bold] thinking...")
@@ -258,12 +259,22 @@ class Agent:
                 system_prompt = self._get_system_prompt(work_dir)
                 messages = [{"role": "system", "content": system_prompt}]
 
-                # Add conversation history (limit to last 20 messages to avoid context overflow)
-                history_to_add = (
-                    self.conversation_history[-20:]
-                    if len(self.conversation_history) > 20
-                    else self.conversation_history
-                )
+                # Add conversation history with compaction if needed
+                history_to_add = list(self.conversation_history)
+
+                # Apply compaction if context is too large
+                cfg = load_config()
+                base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
+                api_key = _resolve_api_key(None, cfg.chat)
+                client = _make_client(base_url, api_key)
+                model = cfg.chat.model if cfg.chat else "DeepSeek-V3.1-Terminus"
+                compactor = Compactor(client, model)
+
+                if compactor.should_compact(history_to_add):
+                    status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
+                    history_to_add = compactor.compact(history_to_add)
+                    self.console.print("[dim]Context compacted to reduce token usage[/dim]")
+
                 messages.extend(history_to_add)
 
                 # Build tools
@@ -287,10 +298,10 @@ class Agent:
             # Save error information to conversation history to maintain context
             error_msg = f"Agent execution failed: {e}"
             self.conversation_history.append({"role": "assistant", "content": f"[Error] {error_msg}"})
-            
+
             # Save conversation history even on failure to preserve context
             self._save_conversation_history()
-            
+
             self.console.print(f"[red]Agent execution failed:[/red] {e}")
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
 
@@ -574,7 +585,12 @@ class Agent:
                                     Panel(tool_result_text, title=f"Tool Error: {tool_name}", border_style="red")
                                 )
 
-                        # Add tool result to messages
+                        # Add tool result to messages (truncate large results)
+                        MAX_TOOL_RESULT_LEN = 8000
+                        truncated_result = tool_result_text
+                        if len(tool_result_text) > MAX_TOOL_RESULT_LEN:
+                            truncated_result = tool_result_text[:MAX_TOOL_RESULT_LEN] + "\n... [truncated]"
+
                         messages.append(
                             {
                                 "role": "assistant",
@@ -593,7 +609,7 @@ class Agent:
                                 "role": "tool",
                                 "tool_call_id": tc.id,
                                 "name": tool_name,
-                                "content": tool_result_text,
+                                "content": truncated_result,
                             }
                         )
 
