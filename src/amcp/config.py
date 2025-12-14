@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
 
 try:
     import tomllib  # py311+
@@ -12,7 +12,6 @@ except ModuleNotFoundError:  # pragma: no cover
 
 import tomli_w  # type: ignore
 
-
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
@@ -20,35 +19,35 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 @dataclass
 class Server:
     # stdio transport fields
-    command: Optional[str] = None
-    args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
     # http(sse) transport fields
-    url: Optional[str] = None
-    headers: Dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class ChatConfig:
-    base_url: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = None
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
     # Tool calling settings
-    tool_loop_limit: Optional[int] = None
-    default_max_lines: Optional[int] = None
-    read_roots: Optional[list[str]] = None  # list of allowed root paths for read_file
+    tool_loop_limit: int | None = None
+    default_max_lines: int | None = None
+    read_roots: list[str] | None = None  # list of allowed root paths for read_file
     # MCP tool exposure
-    mcp_tools_enabled: Optional[bool] = None
-    mcp_servers: Optional[list[str]] = None  # which servers' tools to expose; if unset, expose all configured servers
+    mcp_tools_enabled: bool | None = None
+    mcp_servers: list[str] | None = None  # which servers' tools to expose; if unset, expose all configured servers
     # Built-in file modification tools
-    write_tool_enabled: Optional[bool] = None
-    edit_tool_enabled: Optional[bool] = None
+    write_tool_enabled: bool | None = None
+    edit_tool_enabled: bool | None = None
 
 
 @dataclass
 class AMCPConfig:
-    servers: Dict[str, Server]
-    chat: Optional[ChatConfig] = None
+    servers: dict[str, Server]
+    chat: ChatConfig | None = None
 
 
 _DEFAULT = {
@@ -68,7 +67,7 @@ _DEFAULT = {
         # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
-    }
+    },
 }
 
 
@@ -83,7 +82,7 @@ def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
     return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
 
 
-def _decode_chat(raw: Mapping[str, object] | None) -> Optional[ChatConfig]:
+def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     if not raw:
         return None
     base_url = raw.get("base_url")

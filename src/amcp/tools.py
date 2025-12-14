@@ -2,21 +2,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-import typer
 from rich.console import Console
 
 
 @dataclass
 class ToolResult:
     """Result of tool execution."""
-    
+
     success: bool
     content: str
-    metadata: Dict[str, Any] = None
-    error: Optional[str] = None
-    
+    metadata: dict[str, Any] = None
+    error: str | None = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -24,33 +23,36 @@ class ToolResult:
 
 class ToolError(Exception):
     """Base exception for tool errors."""
+
     pass
 
 
 class ToolExecutionError(ToolError):
     """Raised when tool execution fails."""
+
     pass
 
 
 class ToolValidationError(ToolError):
     """Raised when tool parameters are invalid."""
+
     pass
 
 
 @runtime_checkable
 class Tool(Protocol):
     """Protocol for tool implementations."""
-    
+
     @property
     def name(self) -> str:
         """Tool name."""
         ...
-    
+
     @property
     def description(self) -> str:
         """Tool description."""
         ...
-    
+
     def execute(self, **kwargs) -> ToolResult:
         """Execute the tool with given parameters."""
         ...
@@ -58,32 +60,32 @@ class Tool(Protocol):
 
 class BaseTool(ABC):
     """Base class for tool implementations."""
-    
+
     def __init__(self):
         self.console = Console()
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """Tool name."""
         pass
-    
+
     @property
     @abstractmethod
     def description(self) -> str:
         """Tool description."""
         pass
-    
+
     @abstractmethod
     def execute(self, **kwargs) -> ToolResult:
         """Execute the tool with given parameters."""
         pass
-    
+
     def validate_parameters(self, **kwargs) -> None:
         """Validate tool parameters. Override in subclasses."""
         pass
-    
-    def get_spec(self) -> Dict[str, Any]:
+
+    def get_spec(self) -> dict[str, Any]:
         """Get tool specification for LLM."""
         return {
             "type": "function",
@@ -93,8 +95,8 @@ class BaseTool(ABC):
                 "parameters": self.get_parameters_schema(),
             },
         }
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         """Get JSON schema for tool parameters. Override in subclasses."""
         return {
             "type": "object",
@@ -106,147 +108,128 @@ class BaseTool(ABC):
 
 class ToolRegistry:
     """Registry for managing tools."""
-    
+
     def __init__(self):
-        self._tools: Dict[str, Tool] = {}
-        self._tool_specs: Dict[str, Dict[str, Any]] = {}
-    
+        self._tools: dict[str, Tool] = {}
+        self._tool_specs: dict[str, dict[str, Any]] = {}
+
     def register(self, tool: Tool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
-        self._tool_specs[tool.name] = tool.get_spec() if hasattr(tool, 'get_spec') else {}
-    
+        self._tool_specs[tool.name] = tool.get_spec() if hasattr(tool, "get_spec") else {}
+
     def unregister(self, name: str) -> None:
         """Unregister a tool."""
         self._tools.pop(name, None)
         self._tool_specs.pop(name, None)
-    
-    def get_tool(self, name: str) -> Optional[Tool]:
+
+    def get_tool(self, name: str) -> Tool | None:
         """Get a tool by name."""
         return self._tools.get(name)
-    
-    def list_tools(self) -> List[str]:
+
+    def list_tools(self) -> list[str]:
         """List all registered tool names."""
         return list(self._tools.keys())
-    
-    def get_tool_specs(self) -> Dict[str, Dict[str, Any]]:
+
+    def get_tool_specs(self) -> dict[str, dict[str, Any]]:
         """Get all tool specifications."""
         return self._tool_specs.copy()
-    
+
     def execute_tool(self, name: str, **kwargs) -> ToolResult:
         """Execute a tool by name."""
         tool = self.get_tool(name)
         if not tool:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Tool '{name}' not found"
-            )
-        
+            return ToolResult(success=False, content="", error=f"Tool '{name}' not found")
+
         try:
             # Validate parameters
-            if hasattr(tool, 'validate_parameters'):
+            if hasattr(tool, "validate_parameters"):
                 tool.validate_parameters(**kwargs)
-            
+
             # Execute tool
             result = tool.execute(**kwargs)
             return result
-            
+
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Tool execution failed: {type(e).__name__}: {e}"
-            )
+            return ToolResult(success=False, content="", error=f"Tool execution failed: {type(e).__name__}: {e}")
 
 
 # Built-in tools
 class ReadFileTool(BaseTool):
     """Tool for reading files."""
-    
+
     @property
     def name(self) -> str:
         return "read_file"
-    
+
     @property
     def description(self) -> str:
         return "Read a text file from the local workspace. Use relative paths from current working directory."
-    
-    def execute(self, path: str, ranges: Optional[List[str]] = None, max_lines: Optional[int] = None) -> ToolResult:
+
+    def execute(self, path: str, ranges: list[str] | None = None, max_lines: int | None = None) -> ToolResult:
         """Execute the read file tool."""
         from pathlib import Path
+
         from .readfile import read_file_with_ranges
-        
+
         try:
             file_path = Path(path).expanduser().resolve()
-            
+
             if not file_path.exists():
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=f"File not found: {file_path}"
-                )
-            
+                return ToolResult(success=False, content="", error=f"File not found: {file_path}")
+
             if not file_path.is_file():
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=f"Path is a directory, not a file: {file_path}"
-                )
-            
+                return ToolResult(success=False, content="", error=f"Path is a directory, not a file: {file_path}")
+
             # Read file with ranges
             blocks = read_file_with_ranges(file_path, ranges or [])
-            
+
             # Format result
             content_parts = []
             for block in blocks:
                 header = f"{file_path}:{block['start']}-{block['end']}"
                 content_parts.append(f"**{header}**")
-                
-                for lineno, line in block["lines"][:max_lines or 400]:
+
+                for lineno, line in block["lines"][: max_lines or 400]:
                     content_parts.append(f"{lineno:>6} | {line}")
-                
+
                 if len(block["lines"]) > (max_lines or 400):
                     content_parts.append("... (truncated)")
-            
+
             content = "\\n".join(content_parts)
-            
+
             return ToolResult(
                 success=True,
                 content=content,
                 metadata={
                     "file_path": str(file_path),
                     "blocks_read": len(blocks),
-                    "total_lines": sum(len(block["lines"]) for block in blocks)
-                }
+                    "total_lines": sum(len(block["lines"]) for block in blocks),
+                },
             )
-            
+
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Failed to read file: {type(e).__name__}: {e}"
-            )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+            return ToolResult(success=False, content="", error=f"Failed to read file: {type(e).__name__}: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to read (relative to current working directory)"
+                    "description": "Path to the file to read (relative to current working directory)",
                 },
                 "ranges": {
                     "type": "array",
                     "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
-                    "description": "Optional list of line ranges like '1-200'"
+                    "description": "Optional list of line ranges like '1-200'",
                 },
                 "max_lines": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 5000,
-                    "description": "Maximum lines to return per block (default 400)"
-                }
+                    "description": "Maximum lines to return per block (default 400)",
+                },
             },
             "required": ["path"],
             "additionalProperties": False,
@@ -255,32 +238,23 @@ class ReadFileTool(BaseTool):
 
 class ThinkTool(BaseTool):
     """Tool for internal reasoning and planning."""
-    
+
     @property
     def name(self) -> str:
         return "think"
-    
+
     @property
     def description(self) -> str:
         return "Use this tool for internal reasoning, planning, and organizing your thoughts before taking action."
-    
+
     def execute(self, thought: str) -> ToolResult:
         """Execute thinking process."""
-        return ToolResult(
-            success=True,
-            content=f"🤔 Thinking: {thought}",
-            metadata={"thought": thought}
-        )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+        return ToolResult(success=True, content=f"🤔 Thinking: {thought}", metadata={"thought": thought})
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                "thought": {
-                    "type": "string",
-                    "description": "Your thoughts, plans, or reasoning"
-                }
-            },
+            "properties": {"thought": {"type": "string", "description": "Your thoughts, plans, or reasoning"}},
             "required": ["thought"],
             "additionalProperties": False,
         }
@@ -288,69 +262,49 @@ class ThinkTool(BaseTool):
 
 class BashTool(BaseTool):
     """Tool for executing bash commands."""
-    
+
     @property
     def name(self) -> str:
         return "bash"
-    
+
     @property
     def description(self) -> str:
         return "Execute bash commands. Use for file operations, running scripts, or system commands. Returns stdout and stderr."
-    
+
     def execute(self, command: str, timeout: int = 30) -> ToolResult:
         """Execute bash command."""
         import subprocess
-        
+
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+
             output = result.stdout
             if result.stderr:
                 output += f"\n[stderr]\n{result.stderr}"
-            
+
             return ToolResult(
                 success=result.returncode == 0,
                 content=output or "(no output)",
-                metadata={
-                    "command": command,
-                    "exit_code": result.returncode
-                },
-                error=None if result.returncode == 0 else f"Command exited with code {result.returncode}"
+                metadata={"command": command, "exit_code": result.returncode},
+                error=None if result.returncode == 0 else f"Command exited with code {result.returncode}",
             )
-                
+
         except subprocess.TimeoutExpired:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Command timed out after {timeout} seconds"
-            )
+            return ToolResult(success=False, content="", error=f"Command timed out after {timeout} seconds")
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Command failed: {type(e).__name__}: {e}"
-            )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+            return ToolResult(success=False, content="", error=f"Command failed: {type(e).__name__}: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Bash command to execute"
-                },
+                "command": {"type": "string", "description": "Bash command to execute"},
                 "timeout": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 300,
-                    "description": "Timeout in seconds (default: 30)"
-                }
+                    "description": "Timeout in seconds (default: 30)",
+                },
             },
             "required": ["command"],
             "additionalProperties": False,
@@ -359,35 +313,33 @@ class BashTool(BaseTool):
 
 class GrepTool(BaseTool):
     """Tool for searching files using ripgrep."""
-    
+
     @property
     def name(self) -> str:
         return "grep"
-    
+
     @property
     def description(self) -> str:
         return "Search for patterns in files using ripgrep. Returns matching lines with file paths and line numbers."
-    
+
     def execute(
         self,
         pattern: str,
-        paths: Optional[List[str]] = None,
+        paths: list[str] | None = None,
         ignore_case: bool = False,
         hidden: bool = False,
         context: int = 0,
-        globs: Optional[List[str]] = None
+        globs: list[str] | None = None,
     ) -> ToolResult:
         """Execute grep search."""
         import shutil
         import subprocess
-        
+
         if shutil.which("rg") is None:
             return ToolResult(
-                success=False,
-                content="",
-                error="ripgrep (rg) not found on PATH. Please install ripgrep."
+                success=False, content="", error="ripgrep (rg) not found on PATH. Please install ripgrep."
             )
-        
+
         try:
             cmd = ["rg", pattern, *(paths or ["."]), "-n"]
             if ignore_case:
@@ -396,16 +348,11 @@ class GrepTool(BaseTool):
                 cmd.append("--hidden")
             if context:
                 cmd.extend(["-C", str(context)])
-            for g in (globs or []):
+            for g in globs or []:
                 cmd.extend(["-g", g])
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
             if result.returncode == 0:
                 return ToolResult(
                     success=True,
@@ -413,67 +360,48 @@ class GrepTool(BaseTool):
                     metadata={
                         "pattern": pattern,
                         "paths": paths or ["."],
-                        "match_count": len(result.stdout.splitlines())
-                    }
+                        "match_count": len(result.stdout.splitlines()),
+                    },
                 )
             elif result.returncode == 1:
                 # No matches found
                 return ToolResult(
-                    success=True,
-                    content="No matches found.",
-                    metadata={"pattern": pattern, "match_count": 0}
+                    success=True, content="No matches found.", metadata={"pattern": pattern, "match_count": 0}
                 )
             else:
                 return ToolResult(
                     success=False,
                     content=result.stdout,
-                    error=result.stderr or f"ripgrep exited with code {result.returncode}"
+                    error=result.stderr or f"ripgrep exited with code {result.returncode}",
                 )
-                
+
         except subprocess.TimeoutExpired:
-            return ToolResult(
-                success=False,
-                content="",
-                error="Search timed out after 30 seconds"
-            )
+            return ToolResult(success=False, content="", error="Search timed out after 30 seconds")
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Search failed: {type(e).__name__}: {e}"
-            )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+            return ToolResult(success=False, content="", error=f"Search failed: {type(e).__name__}: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Pattern to search for (regex supported)"
-                },
+                "pattern": {"type": "string", "description": "Pattern to search for (regex supported)"},
                 "paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Paths to search in (default: current directory)"
+                    "description": "Paths to search in (default: current directory)",
                 },
-                "ignore_case": {
-                    "type": "boolean",
-                    "description": "Case-insensitive search"
-                },
-                "hidden": {
-                    "type": "boolean",
-                    "description": "Search hidden files and directories"
-                },
+                "ignore_case": {"type": "boolean", "description": "Case-insensitive search"},
+                "hidden": {"type": "boolean", "description": "Search hidden files and directories"},
                 "context": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Number of context lines to show around matches"
+                    "description": "Number of context lines to show around matches",
                 },
                 "globs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "File glob patterns to filter (e.g., '*.py')"
-                }
+                    "description": "File glob patterns to filter (e.g., '*.py')",
+                },
             },
             "required": ["pattern"],
             "additionalProperties": False,
@@ -482,48 +410,38 @@ class GrepTool(BaseTool):
 
 class WriteFileTool(BaseTool):
     """Tool for writing content to files."""
-    
+
     @property
     def name(self) -> str:
         return "write_file"
-    
+
     @property
     def description(self) -> str:
         return "Write content to a file. Creates new file or overwrites existing file."
-    
+
     def execute(self, path: str, content: str) -> ToolResult:
         """Execute the write file tool."""
         from pathlib import Path
-        
+
         try:
             file_path = Path(path).expanduser().resolve()
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
-            
+
             return ToolResult(
                 success=True,
                 content=f"Successfully wrote {len(content)} characters to {file_path}",
-                metadata={"file_path": str(file_path), "size": len(content)}
+                metadata={"file_path": str(file_path), "size": len(content)},
             )
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Failed to write file: {type(e).__name__}: {e}"
-            )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+            return ToolResult(success=False, content="", error=f"Failed to write file: {type(e).__name__}: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to write"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write to the file"
-                }
+                "path": {"type": "string", "description": "Path to the file to write"},
+                "content": {"type": "string", "description": "Content to write to the file"},
             },
             "required": ["path", "content"],
             "additionalProperties": False,
@@ -532,69 +450,46 @@ class WriteFileTool(BaseTool):
 
 class EditFileTool(BaseTool):
     """Tool for editing files with search and replace."""
-    
+
     @property
     def name(self) -> str:
         return "edit_file"
-    
+
     @property
     def description(self) -> str:
         return "Edit a file by replacing old_text with new_text. The old_text must match exactly."
-    
+
     def execute(self, path: str, old_text: str, new_text: str) -> ToolResult:
         """Execute the edit file tool."""
         from pathlib import Path
-        
+
         try:
             file_path = Path(path).expanduser().resolve()
-            
+
             if not file_path.exists():
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error=f"File not found: {file_path}"
-                )
-            
+                return ToolResult(success=False, content="", error=f"File not found: {file_path}")
+
             content = file_path.read_text(encoding="utf-8")
-            
+
             if old_text not in content:
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error="old_text not found in file"
-                )
-            
+                return ToolResult(success=False, content="", error="old_text not found in file")
+
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
-            
+
             return ToolResult(
-                success=True,
-                content=f"Successfully edited {file_path}",
-                metadata={"file_path": str(file_path)}
+                success=True, content=f"Successfully edited {file_path}", metadata={"file_path": str(file_path)}
             )
         except Exception as e:
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Failed to edit file: {type(e).__name__}: {e}"
-            )
-    
-    def get_parameters_schema(self) -> Dict[str, Any]:
+            return ToolResult(success=False, content="", error=f"Failed to edit file: {type(e).__name__}: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to edit"
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "Text to search for (must match exactly)"
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "Text to replace with"
-                }
+                "path": {"type": "string", "description": "Path to the file to edit"},
+                "old_text": {"type": "string", "description": "Text to search for (must match exactly)"},
+                "new_text": {"type": "string", "description": "Text to replace with"},
             },
             "required": ["path", "old_text", "new_text"],
             "additionalProperties": False,
@@ -605,40 +500,41 @@ class EditFileTool(BaseTool):
 def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = True) -> ToolRegistry:
     """Create a tool registry with default tools."""
     registry = ToolRegistry()
-    
+
     # Register built-in tools
     registry.register(ReadFileTool())
     registry.register(GrepTool())
     registry.register(ThinkTool())
     registry.register(BashTool())
-    
+
     if enable_write:
         registry.register(WriteFileTool())
     if enable_edit:
         registry.register(EditFileTool())
-    
+
     return registry
 
 
 # Global tool registry instance
-_default_registry: Optional[ToolRegistry] = None
+_default_registry: ToolRegistry | None = None
 
 
-def get_tool_registry(enable_write: Optional[bool] = None, enable_edit: Optional[bool] = None) -> ToolRegistry:
+def get_tool_registry(enable_write: bool | None = None, enable_edit: bool | None = None) -> ToolRegistry:
     """Get the global tool registry instance."""
     global _default_registry
     if _default_registry is None:
         # Load config to determine defaults
         from .config import load_config
+
         cfg = load_config()
         chat_cfg = cfg.chat
-        
+
         # Use config values if not explicitly provided
         if enable_write is None:
             enable_write = chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
         if enable_edit is None:
             enable_edit = chat_cfg.edit_tool_enabled if chat_cfg and chat_cfg.edit_tool_enabled is not None else True
-        
+
         _default_registry = create_default_tool_registry(enable_write=enable_write, enable_edit=enable_edit)
     return _default_registry
 

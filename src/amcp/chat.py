@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import os
-import sys
 import json
-from typing import Annotated, Optional, Iterable
+import os
+import re
+from collections.abc import Iterable
+from pathlib import Path
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
 
-from .mcp_client import call_mcp_tool, list_mcp_tools
 from .config import AMCPConfig, ChatConfig, load_config
-from pathlib import Path
-import re
+from .mcp_client import call_mcp_tool, list_mcp_tools
 from .readfile import read_file_with_ranges
 
 console = Console()
@@ -24,9 +23,9 @@ def _run_quietly(coro):
     This helps hide noisy MCP server startup logs in chat mode.
     """
     import contextlib
-    with open(os.devnull, "w") as devnull:
-        with contextlib.redirect_stderr(devnull):
-            return __import__("asyncio").run(coro)
+
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stderr(devnull):
+        return __import__("asyncio").run(coro)
 
 
 def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
@@ -42,7 +41,7 @@ def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
     return base
 
 
-def _resolve_api_key(cli_key: Optional[str], cfg: ChatConfig | None) -> Optional[str]:
+def _resolve_api_key(cli_key: str | None, cfg: ChatConfig | None) -> str | None:
     # CLI > config > env
     if cli_key:
         return cli_key
@@ -51,10 +50,10 @@ def _resolve_api_key(cli_key: Optional[str], cfg: ChatConfig | None) -> Optional
     return os.environ.get("SAMBANOVA_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
 
-def _make_client(base_url: str, api_key: Optional[str]):
+def _make_client(base_url: str, api_key: str | None):
     try:
         from openai import OpenAI
-    except Exception as e:  # pragma: no cover
+    except Exception:  # pragma: no cover
         console.print("[red]openai package not installed. Please install dependencies.[/red]")
         raise
     return OpenAI(base_url=base_url, api_key=api_key or "")
@@ -102,7 +101,7 @@ def _stream_chat(client, model: str, messages: list[dict], stream: bool = True) 
                     if item.type == "output_text":
                         parts.append(item.text)
                 return "".join(parts)
-        except Exception as e:
+        except Exception:
             raise
 
 
@@ -132,13 +131,18 @@ def _attach_file_context(path: Path, ranges: Iterable[str] | None, max_lines: in
         lines = b["lines"]
         if not ranges and len(lines) > max_lines:
             lines = lines[:max_lines]
-        llm_context.append(f"FILE: {path} ({b['start']}-{b['start'] + len(lines) - 1})\n" + "\n".join(l for _, l in lines))
+        llm_context.append(
+            f"FILE: {path} ({b['start']}-{b['start'] + len(lines) - 1})\n" + "\n".join(l for _, l in lines)
+        )
         if not ranges and len(b["lines"]) > max_lines:
             llm_context.append("[...truncated...]")
     return "\n\n".join(rendered_parts), "\n\n".join(llm_context)
 
 
-_READ_CMD = re.compile(r"^\s*(?:/read|read|open|查看|读取|打开)\s+(?P<path>\S+)(?:\s+(?:lines?|行|第)\s*(?P<s>\d+)\s*[-~]\s*(?P<e>\d+))?\s*$", re.I)
+_READ_CMD = re.compile(
+    r"^\s*(?:/read|read|open|查看|读取|打开)\s+(?P<path>\S+)(?:\s+(?:lines?|行|第)\s*(?P<s>\d+)\s*[-~]\s*(?P<e>\d+))?\s*$",
+    re.I,
+)
 _PATH_RANGE_INLINE = re.compile(r"(?P<path>\S+?):(?P<s>\d+)-(?P<e>\d+)")
 
 
@@ -175,13 +179,21 @@ def _builtin_read_tool_spec() -> dict:
             "parameters": {
                 "type": "object",
                 "properties": {
-                        "path": {"type": "string", "description": "Path to a specific FILE (not directory). Use relative paths like 'src/amcp/readfile.py', NEVER directories like 'src/amcp'. COMMON FILES: 'src/amcp/readfile.py', 'src/amcp/rg.py', 'src/amcp/cli.py', 'src/amcp/chat.py', 'README.md', 'pyproject.toml'. Always include the file extension (.py, .md, .toml, etc)."},
-                        "ranges": {
-                            "type": "array",
-                            "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
-                            "description": "Optional list of line ranges like '1-200'. Use only if you need specific line ranges. For general file analysis, omit this to get the full file."
-                        },
-                        "max_lines": {"type": "integer", "minimum": 1, "maximum": 5000, "description": "Safety cap for lines returned per block (default 400)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Path to a specific FILE (not directory). Use relative paths like 'src/amcp/readfile.py', NEVER directories like 'src/amcp'. COMMON FILES: 'src/amcp/readfile.py', 'src/amcp/rg.py', 'src/amcp/cli.py', 'src/amcp/chat.py', 'README.md', 'pyproject.toml'. Always include the file extension (.py, .md, .toml, etc).",
+                    },
+                    "ranges": {
+                        "type": "array",
+                        "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
+                        "description": "Optional list of line ranges like '1-200'. Use only if you need specific line ranges. For general file analysis, omit this to get the full file.",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5000,
+                        "description": "Safety cap for lines returned per block (default 400)",
+                    },
                 },
                 "required": ["path"],
                 "additionalProperties": False,
@@ -193,8 +205,8 @@ def _builtin_read_tool_spec() -> dict:
 def _get_chat_runtime_settings(override: dict | None = None) -> dict:
     cfg: AMCPConfig = load_config()
     chat_cfg = cfg.chat
-    tool_loop_limit = (chat_cfg.tool_loop_limit if chat_cfg and chat_cfg.tool_loop_limit else 5)
-    default_max_lines = (chat_cfg.default_max_lines if chat_cfg and chat_cfg.default_max_lines else 400)
+    tool_loop_limit = chat_cfg.tool_loop_limit if chat_cfg and chat_cfg.tool_loop_limit else 5
+    default_max_lines = chat_cfg.default_max_lines if chat_cfg and chat_cfg.default_max_lines else 400
     roots: list[Path]
     if chat_cfg and chat_cfg.read_roots:
         roots = [Path(r).expanduser().resolve() for r in chat_cfg.read_roots]
@@ -225,12 +237,14 @@ def _dispatch_tool_call(name: str, arguments: dict, *, settings: dict) -> tuple[
     allowed_roots: list[Path] = settings["allowed_roots"]
     if not any(_is_within_root(p, root) for root in allowed_roots):
         raise ValueError(f"Path {p} is outside allowed roots: {allowed_roots}")
-    
+
     # Check if path exists and is a file
     if not p.exists():
         raise FileNotFoundError(f"File not found: {p}")
     if not p.is_file():
-        raise ValueError(f"Path is a directory, not a file: {p}. Use a specific file like 'src/amcp/readfile.py' instead of just 'src/amcp'.")
+        raise ValueError(
+            f"Path is a directory, not a file: {p}. Use a specific file like 'src/amcp/readfile.py' instead of just 'src/amcp'."
+        )
 
     rendered, llm = _attach_file_context(p, ranges, max_lines=max_lines)
     # content for model
@@ -246,7 +260,9 @@ def _is_within_root(path: Path, root: Path) -> bool:
         return False
 
 
-def _build_mcp_tools_and_registry(cfg: AMCPConfig, chat_cfg: ChatConfig | None, servers_override: list[str] | None) -> tuple[list[dict], dict]:
+def _build_mcp_tools_and_registry(
+    cfg: AMCPConfig, chat_cfg: ChatConfig | None, servers_override: list[str] | None
+) -> tuple[list[dict], dict]:
     # Decide which servers to include
     if chat_cfg and chat_cfg.mcp_tools_enabled is False:
         return [], {}
@@ -268,22 +284,33 @@ def _build_mcp_tools_and_registry(cfg: AMCPConfig, chat_cfg: ChatConfig | None, 
                 oname = f"mcp.{name}.{tname}"
                 # Parameters: best effort; prefer server-provided schema when available
                 params = info.get("inputSchema") or {"type": "object"}
-                tools.append({
-                    "type": "function",
-                    "function": {"name": oname, "description": info.get("description", ""), "parameters": params},
-                })
+                tools.append(
+                    {
+                        "type": "function",
+                        "function": {"name": oname, "description": info.get("description", ""), "parameters": params},
+                    }
+                )
                 reg[oname] = (name, tname)
         except Exception as e:
             console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
     return tools, reg
 
 
-def _chat_with_tools(client, model: str, base_messages: list[dict], stream: bool, settings_override: dict | None = None, *, extra_tools: list[dict] | None = None, tool_registry: dict | None = None) -> str:
+def _chat_with_tools(
+    client,
+    model: str,
+    base_messages: list[dict],
+    stream: bool,
+    settings_override: dict | None = None,
+    *,
+    extra_tools: list[dict] | None = None,
+    tool_registry: dict | None = None,
+) -> str:
     messages = list(base_messages)
     used_tools = False
     settings = _get_chat_runtime_settings(settings_override)
     max_steps = settings["tool_loop_limit"]
-    tools = [ _builtin_read_tool_spec() ]
+    tools = [_builtin_read_tool_spec()]
     if extra_tools:
         tools.extend(extra_tools)
     registry = tool_registry or {}
@@ -309,10 +336,12 @@ def _chat_with_tools(client, model: str, base_messages: list[dict], stream: bool
                     read_file_call_count += 1
                     if read_file_call_count >= 2:
                         # Force the model to respond by adding a system message
-                        messages.append({
-                            "role": "system", 
-                            "content": "You have already read the file content. Please analyze the information you have and provide your response without calling the read_file tool again."
-                        })
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": "You have already read the file content. Please analyze the information you have and provide your response without calling the read_file tool again.",
+                            }
+                        )
                         break
             # append assistant message with tool calls
             assistant_msg = {"role": "assistant", "content": msg.content or "", "tool_calls": []}
@@ -323,11 +352,13 @@ def _chat_with_tools(client, model: str, base_messages: list[dict], stream: bool
                     args = json.loads(fn.arguments or "{}")
                 except Exception:
                     pass
-                assistant_msg["tool_calls"].append({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": fn.name, "arguments": fn.arguments or "{}"},
-                })
+                assistant_msg["tool_calls"].append(
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": fn.name, "arguments": fn.arguments or "{}"},
+                    }
+                )
                 try:
                     if fn.name.startswith("mcp.") and registry:
                         server_name, inner_name = registry.get(fn.name, (None, None))
@@ -360,15 +391,19 @@ def _chat_with_tools(client, model: str, base_messages: list[dict], stream: bool
                     console.print(f"[red]Tool {fn.name} error:[/red] {e}")
                     # Add more specific error info for TaskGroup issues
                     if "TaskGroup" in str(e) and "exa" in fn.name:
-                        console.print("[yellow]Hint: Exa MCP server may be experiencing connectivity issues. Try rephrasing your request or using local tools instead.[/yellow]")
+                        console.print(
+                            "[yellow]Hint: Exa MCP server may be experiencing connectivity issues. Try rephrasing your request or using local tools instead.[/yellow]"
+                        )
                 # append tool result
                 messages.append(assistant_msg)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": fn.name,
-                    "content": tool_result_text,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": fn.name,
+                        "content": tool_result_text,
+                    }
+                )
             continue  # back to the loop
         else:
             final_text = msg.content or ""
@@ -379,6 +414,7 @@ def _chat_with_tools(client, model: str, base_messages: list[dict], stream: bool
             # print(f"DEBUG: Final response: {final_text[:100]}...")
             return final_text
     return "[Tool loop limit reached]"
+
 
 def _normalize_exa_web_search_args(args: dict) -> dict:
     out = dict(args or {})
@@ -406,11 +442,17 @@ def do_exa_search(server_name: str, query: str, num_results: int = 4) -> str:
         raise RuntimeError(f"Unknown MCP server '{server_name}'. Use 'amcp mcp tools -s ...' to verify.")
     result = console.status("Calling MCP web_search_exa...")
     with result:
-        resp = __import__("asyncio").run(call_mcp_tool(cfg.servers[server_name], "web_search_exa", {
-            "query": query,
-            "numResults": num_results,
-            "type": "fast",
-        }))
+        resp = __import__("asyncio").run(
+            call_mcp_tool(
+                cfg.servers[server_name],
+                "web_search_exa",
+                {
+                    "query": query,
+                    "numResults": num_results,
+                    "type": "fast",
+                },
+            )
+        )
     # Render
     out_lines = [f"MCP search results for: {query}"]
     for block in resp.get("content", []):
@@ -424,16 +466,16 @@ cfg_global: AMCPConfig = load_config()
 
 
 def chat_once(
-    model: Optional[str],
+    model: str | None,
     user_text: str,
-    base_url: Optional[str] = None,
-    system_prompt: Optional[str] = None,
+    base_url: str | None = None,
+    system_prompt: str | None = None,
     mcp_server: str = "exa",
     stream: bool = True,
-    api_key: Optional[str] = None,
-    work_dir: Optional[Path] = None,
-    mcp_servers_override: Optional[list[str]] = None,
-    mcp_tools_enabled: Optional[bool] = None,
+    api_key: str | None = None,
+    work_dir: Path | None = None,
+    mcp_servers_override: list[str] | None = None,
+    mcp_tools_enabled: bool | None = None,
 ) -> str:
     cfg: AMCPConfig = load_config()
     chat_cfg = cfg.chat
@@ -451,36 +493,44 @@ def chat_once(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_text})
     overrides = {"read_roots": [str(work_dir.resolve())]} if work_dir else None
-    
+
     # Build MCP tools
     extra_tools = []
     registry = {}
     enabled = True
-    
+
     # Check if MCP tools are disabled in config
-    if hasattr(chat_cfg, 'mcp_tools_enabled') and chat_cfg and chat_cfg.mcp_tools_enabled is False:
+    if hasattr(chat_cfg, "mcp_tools_enabled") and chat_cfg and chat_cfg.mcp_tools_enabled is False:
         enabled = False
-    
+
     # Override with command line flag
     if mcp_tools_enabled is not None:
         enabled = bool(mcp_tools_enabled)
-    
+
     if enabled:
         extra_tools, registry = _build_mcp_tools_and_registry(cfg, chat_cfg, mcp_servers_override)
-    
-    return _chat_with_tools(client, resolved_model, messages, stream=stream, settings_override=overrides, extra_tools=extra_tools, tool_registry=registry)
+
+    return _chat_with_tools(
+        client,
+        resolved_model,
+        messages,
+        stream=stream,
+        settings_override=overrides,
+        extra_tools=extra_tools,
+        tool_registry=registry,
+    )
 
 
 def chat_repl(
-    model: Optional[str],
-    base_url: Optional[str] = None,
-    system_prompt: Optional[str] = None,
+    model: str | None,
+    base_url: str | None = None,
+    system_prompt: str | None = None,
     mcp_server: str = "exa",
     stream: bool = True,
-    api_key: Optional[str] = None,
-    work_dir: Optional[Path] = None,
-    mcp_servers_override: Optional[list[str]] = None,
-    mcp_tools_enabled: Optional[bool] = None,
+    api_key: str | None = None,
+    work_dir: Path | None = None,
+    mcp_servers_override: list[str] | None = None,
+    mcp_tools_enabled: bool | None = None,
 ) -> None:
     cfg: AMCPConfig = load_config()
     chat_cfg = cfg.chat
@@ -501,7 +551,7 @@ def chat_repl(
     cfg = load_config()
     chat_cfg = cfg.chat
     enabled = True
-    if hasattr(chat_cfg, 'mcp_tools_enabled') and chat_cfg and chat_cfg.mcp_tools_enabled is False:
+    if hasattr(chat_cfg, "mcp_tools_enabled") and chat_cfg and chat_cfg.mcp_tools_enabled is False:
         enabled = False
     if mcp_tools_enabled is not None:
         enabled = bool(mcp_tools_enabled)
@@ -509,19 +559,21 @@ def chat_repl(
     registry = {}
     if enabled:
         extra_tools, registry = _build_mcp_tools_and_registry(cfg, chat_cfg, mcp_servers_override)
-    enabled_servers = sorted(set(name.split('.')[1] for name in registry.keys())) if registry else []
+    enabled_servers = sorted(set(name.split(".")[1] for name in registry.keys())) if registry else []
     mcp_line = f"MCP tools: {'on' if extra_tools else 'off'}; servers: {', '.join(enabled_servers) if enabled_servers else '-'}"
-    console.print(Panel(
-        f"Chat model: [bold]{resolved_model}[/bold]\n"
-        f"Base: {base}\n"
-        f"Tool loop limit: {settings['tool_loop_limit']}\n"
-        f"Default max lines: {settings['default_max_lines']}\n"
-        f"Allowed read roots:\n{roots_str}\n"
-        f"{mcp_line}\n\n"
-        f"Commands: /read <path> [lines A-B], /search <q>, /quit",
-        title="amcp chat",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"Chat model: [bold]{resolved_model}[/bold]\n"
+            f"Base: {base}\n"
+            f"Tool loop limit: {settings['tool_loop_limit']}\n"
+            f"Default max lines: {settings['default_max_lines']}\n"
+            f"Allowed read roots:\n{roots_str}\n"
+            f"{mcp_line}\n\n"
+            f"Commands: /read <path> [lines A-B], /search <q>, /quit",
+            title="amcp chat",
+            border_style="green",
+        )
+    )
 
     messages: list[dict[str, str]] = []
     if system_prompt:
@@ -562,7 +614,7 @@ def chat_repl(
                 console.print(f"[yellow]File intent parse/read warning:[/yellow] {e}")
 
         if text.startswith("/search "):
-            q = text[len("/search "):].strip()
+            q = text[len("/search ") :].strip()
             try:
                 result = do_exa_search(mcp_server, q)
                 console.print(Panel(Markdown(result), title="exa search", border_style="magenta"))
@@ -573,7 +625,15 @@ def chat_repl(
         messages.append({"role": "user", "content": text})
         try:
             extra_tools, registry = _build_mcp_tools_and_registry(load_config(), load_config().chat, None)
-            reply = _chat_with_tools(client, resolved_model, messages, stream=stream, settings_override=overrides, extra_tools=extra_tools, tool_registry=registry)
+            reply = _chat_with_tools(
+                client,
+                resolved_model,
+                messages,
+                stream=stream,
+                settings_override=overrides,
+                extra_tools=extra_tools,
+                tool_registry=registry,
+            )
             messages.append({"role": "assistant", "content": reply})
         except Exception as e:
             console.print(f"[red]Chat error:[/red] {e}")

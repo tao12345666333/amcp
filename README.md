@@ -1,21 +1,9 @@
----
-title: AMCP
-emoji: 🤖
-colorFrom: blue
-colorTo: yellow
-sdk: gradio
-sdk_version: 6.0.1
-app_file: app.py
-python_version: "3.11"
-pinned: false
-license: apache-2.0
-tags:
-- building-mcp-track-creative
-- mcp-in-action-track-consumer
-- mcp-in-action-track-creative
----
-
 # AMCP
+
+[![CI](https://github.com/tao12345666333/amcp/workflows/CI/badge.svg)](https://github.com/tao12345666333/amcp/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 tags:
 - building-mcp-track-creative
 - mcp-in-action-track-consumer
@@ -107,10 +95,54 @@ write_tool_enabled = true  # Enable/disable built-in write_file tool
 edit_tool_enabled = true   # Enable/disable built-in edit_file tool
 ```
 
+## Development
+
+### Setup Development Environment
+
+```bash
+# Clone the repository
+git clone <repo-url>
+cd AMCP
+
+# Install with development dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage
+make test-cov
+
+# Run specific test
+pytest tests/test_tools.py -v
+```
+
+### Code Quality
+
+```bash
+# Lint code
+make lint
+
+# Format code
+make format
+
+# Type check
+make type-check
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
+
 ## Notes
 - `rg` (ripgrep) must be installed and on PATH for the grep tool.
 - MCP servers must be installed separately and runnable (stdio transport).
 
 ## License
 
-MIT
+Apache-2.0

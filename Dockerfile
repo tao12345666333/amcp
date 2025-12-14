@@ -20,8 +20,5 @@ RUN mkdir -p /root/.config/amcp
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Expose port for Gradio
-EXPOSE 7860
-
-# Run Gradio app
-CMD ["python", "app.py"]
+# Default command
+CMD ["amcp", "--help"]

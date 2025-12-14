@@ -1,0 +1,9 @@
+# Ruff configuration
+line-length = 120
+
+[lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = ["E501"]  # Ignore line length for now
+
+[lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]

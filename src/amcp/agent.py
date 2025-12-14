@@ -1,32 +1,31 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.status import Status
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
-from .chat import _chat_with_tools, _make_client, _resolve_base_url, _resolve_api_key
-from .config import AMCPConfig, load_config
+from .chat import _make_client, _resolve_api_key, _resolve_base_url
+from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
-from .tools import ToolRegistry, ToolResult
+from .tools import ToolRegistry
 
 
 class AgentExecutionError(Exception):
     """Raised when agent execution fails."""
+
     pass
 
 
 class MaxStepsReached(Exception):
     """Raised when agent reaches maximum execution steps."""
+
     pass
 
 
@@ -42,21 +41,21 @@ class Agent:
     - Conversation history persistence
     """
 
-    def __init__(self, agent_spec: Optional[ResolvedAgentSpec] = None, session_id: Optional[str] = None):
+    def __init__(self, agent_spec: ResolvedAgentSpec | None = None, session_id: str | None = None):
         self.agent_spec = agent_spec or get_default_agent_spec()
         self.console = Console()
         self.tool_registry = ToolRegistry()
-        self.execution_context: Dict[str, Any] = {}
+        self.execution_context: dict[str, Any] = {}
         self.step_count = 0
-        self.tool_calls_history: List[Dict[str, Any]] = []
+        self.tool_calls_history: list[dict[str, Any]] = []
 
         # Conversation history management
         self.session_id = session_id or self._generate_session_id()
-        self.conversation_history: List[Dict[str, Any]] = []
+        self.conversation_history: list[dict[str, Any]] = []
         self.session_file = Path.home() / ".config" / "amcp" / "sessions" / f"{self.session_id}.json"
 
         # Tool call tracking for per-conversation and per-session limits
-        self.current_conversation_tool_calls: List[Dict[str, Any]] = []
+        self.current_conversation_tool_calls: list[dict[str, Any]] = []
 
         # Load existing conversation history if available
         self._load_conversation_history()
@@ -68,6 +67,7 @@ class Agent:
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
         import uuid
+
         return str(uuid.uuid4())[:8]
 
     def _ensure_sessions_dir(self) -> None:
@@ -80,12 +80,14 @@ class Agent:
         try:
             if self.session_file.exists():
                 self._ensure_sessions_dir()
-                with open(self.session_file, 'r', encoding='utf-8') as f:
+                with open(self.session_file, encoding="utf-8") as f:
                     data = json.load(f)
-                    self.conversation_history = data.get('conversation_history', [])
-                    self.tool_calls_history = data.get('tool_calls_history', [])
-                    self.current_conversation_tool_calls = data.get('current_conversation_tool_calls', [])
-                    self.console.print(f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]")
+                    self.conversation_history = data.get("conversation_history", [])
+                    self.tool_calls_history = data.get("tool_calls_history", [])
+                    self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
+                    self.console.print(
+                        f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
+                    )
         except Exception as e:
             self.console.print(f"[yellow]Warning: Could not load conversation history: {e}[/yellow]")
             self.conversation_history = []
@@ -96,14 +98,14 @@ class Agent:
         try:
             self._ensure_sessions_dir()
             data = {
-                'session_id': self.session_id,
-                'agent_name': self.name,
-                'created_at': datetime.now().isoformat(),
-                'conversation_history': self.conversation_history,
-                'tool_calls_history': self.tool_calls_history,
-                'current_conversation_tool_calls': self.current_conversation_tool_calls,
+                "session_id": self.session_id,
+                "agent_name": self.name,
+                "created_at": datetime.now().isoformat(),
+                "conversation_history": self.conversation_history,
+                "tool_calls_history": self.tool_calls_history,
+                "current_conversation_tool_calls": self.current_conversation_tool_calls,
             }
-            with open(self.session_file, 'w', encoding='utf-8') as f:
+            with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             self.console.print(f"[yellow]Warning: Could not save conversation history: {e}[/yellow]")
@@ -119,15 +121,15 @@ class Agent:
         except Exception as e:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
 
-    def get_conversation_summary(self) -> Dict[str, Any]:
+    def get_conversation_summary(self) -> dict[str, Any]:
         """Get summary of the conversation."""
         return {
-            'session_id': self.session_id,
-            'agent_name': self.name,
-            'message_count': len(self.conversation_history),
-            'tool_calls_count': len(self.tool_calls_history),
-            'current_conversation_tool_calls': len(self.current_conversation_tool_calls),
-            'session_file': str(self.session_file),
+            "session_id": self.session_id,
+            "agent_name": self.name,
+            "message_count": len(self.conversation_history),
+            "tool_calls_count": len(self.tool_calls_history),
+            "current_conversation_tool_calls": len(self.current_conversation_tool_calls),
+            "session_file": str(self.session_file),
         }
 
     @property
@@ -138,7 +140,7 @@ class Agent:
     def max_steps(self) -> int:
         return self.agent_spec.max_steps
 
-    def _get_system_prompt(self, work_dir: Optional[Path] = None) -> str:
+    def _get_system_prompt(self, work_dir: Path | None = None) -> str:
         """Get resolved system prompt with template variables."""
         current_time = datetime.now().isoformat()
         work_dir_str = str(work_dir.resolve()) if work_dir else str(Path.cwd())
@@ -159,7 +161,7 @@ class Agent:
             self.console.print(f"[yellow]Warning: Missing template variable {e}[/yellow]")
             return self.agent_spec.system_prompt
 
-    async def _get_mcp_tools_info(self, cfg) -> List[Dict[str, Any]]:
+    async def _get_mcp_tools_info(self, cfg) -> list[dict[str, Any]]:
         """Get information about available MCP tools."""
         tools_info = []
 
@@ -167,11 +169,13 @@ class Agent:
             try:
                 tools = await list_mcp_tools(server)
                 for tool in tools:
-                    tools_info.append({
-                        "name": f"mcp.{server_name}.{tool['name']}",
-                        "description": tool.get("description", ""),
-                        "server": server_name,
-                    })
+                    tools_info.append(
+                        {
+                            "name": f"mcp.{server_name}.{tool['name']}",
+                            "description": tool.get("description", ""),
+                            "server": server_name,
+                        }
+                    )
             except Exception as e:
                 self.console.print(f"[yellow]Warning: Could not load tools from {server_name}: {e}[/yellow]")
 
@@ -180,7 +184,9 @@ class Agent:
     def _should_limit_tool_calls(self, tool_name: str) -> bool:
         """Check if a tool should be limited to prevent infinite loops."""
         # Per-tool limits (each tool tracked separately)
-        current_conversation_calls = sum(1 for call in self.current_conversation_tool_calls if call.get("tool") == tool_name)
+        current_conversation_calls = sum(
+            1 for call in self.current_conversation_tool_calls if call.get("tool") == tool_name
+        )
 
         # read_file: 10 per conversation, 600 per session
         if tool_name == "read_file":
@@ -209,7 +215,7 @@ class Agent:
         """Add context information for tool execution."""
         self.execution_context[key] = value
 
-    def _get_context_vars(self) -> Dict[str, str]:
+    def _get_context_vars(self) -> dict[str, str]:
         """Get context variables for system prompt."""
         return {
             "step_count": str(self.step_count),
@@ -219,11 +225,7 @@ class Agent:
         }
 
     async def run(
-        self,
-        user_input: str,
-        work_dir: Optional[Path] = None,
-        stream: bool = True,
-        show_progress: bool = True
+        self, user_input: str, work_dir: Path | None = None, stream: bool = True, show_progress: bool = True
     ) -> str:
         """
         Run the agent with the given user input.
@@ -254,7 +256,11 @@ class Agent:
                 messages = [{"role": "system", "content": system_prompt}]
 
                 # Add conversation history (limit to last 20 messages to avoid context overflow)
-                history_to_add = self.conversation_history[-20:] if len(self.conversation_history) > 20 else self.conversation_history
+                history_to_add = (
+                    self.conversation_history[-20:]
+                    if len(self.conversation_history) > 20
+                    else self.conversation_history
+                )
                 messages.extend(history_to_add)
 
                 # Add current user input
@@ -266,11 +272,7 @@ class Agent:
 
                 # Run chat with tools
                 result = await self._run_with_tools(
-                    messages=messages,
-                    tools=tools,
-                    tool_registry=tool_registry,
-                    stream=stream,
-                    status=status
+                    messages=messages, tools=tools, tool_registry=tool_registry, stream=stream, status=status
                 )
 
                 # Save conversation exchange
@@ -286,16 +288,17 @@ class Agent:
             self.console.print(f"[red]Agent execution failed:[/red] {e}")
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
 
-    async def _build_tools(self) -> List[Dict[str, Any]]:
+    async def _build_tools(self) -> list[dict[str, Any]]:
         """Build list of available tools."""
         tools = []
 
         # Add all built-in tools from registry
         from .tools import get_tool_registry
+
         registry = get_tool_registry()
         for tool_name in registry.list_tools():
             tool = registry.get_tool(tool_name)
-            if tool and hasattr(tool, 'get_spec'):
+            if tool and hasattr(tool, "get_spec"):
                 tools.append(tool.get_spec())
 
         # Load MCP tools
@@ -321,20 +324,22 @@ class Agent:
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
                     params = info.get("inputSchema") or {"type": "object"}
-                    tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": oname,
-                            "description": info.get("description", ""),
-                            "parameters": params
-                        },
-                    })
+                    tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": oname,
+                                "description": info.get("description", ""),
+                                "parameters": params,
+                            },
+                        }
+                    )
             except Exception as e:
                 self.console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
 
         return tools
 
-    async def _build_tool_registry(self) -> Dict[str, Any]:
+    async def _build_tool_registry(self) -> dict[str, Any]:
         """Build tool registry for MCP tool dispatch."""
         registry = {}
 
@@ -360,12 +365,12 @@ class Agent:
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
                     registry[oname] = (name, tname)
-            except Exception as e:
+            except Exception:
                 pass  # Already logged in _build_tools
 
         return registry
 
-    def _get_read_file_tool_spec(self) -> Dict[str, Any]:
+    def _get_read_file_tool_spec(self) -> dict[str, Any]:
         """Get read_file tool specification."""
         return {
             "type": "function",
@@ -377,18 +382,18 @@ class Agent:
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to a specific FILE (not directory). Use relative paths like 'src/amcp/readfile.py', NEVER directories like 'src/amcp'. COMMON FILES: 'src/amcp/readfile.py', 'src/amcp/rg.py', 'src/amcp/cli.py', 'src/amcp/chat.py', 'README.md', 'pyproject.toml'. Always include the file extension (.py, .md, .toml, etc)."
+                            "description": "Path to a specific FILE (not directory). Use relative paths like 'src/amcp/readfile.py', NEVER directories like 'src/amcp'. COMMON FILES: 'src/amcp/readfile.py', 'src/amcp/rg.py', 'src/amcp/cli.py', 'src/amcp/chat.py', 'README.md', 'pyproject.toml'. Always include the file extension (.py, .md, .toml, etc).",
                         },
                         "ranges": {
                             "type": "array",
                             "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
-                            "description": "Optional list of line ranges like '1-200'. Use only if you need specific line ranges. For general file analysis, omit this to get the full file."
+                            "description": "Optional list of line ranges like '1-200'. Use only if you need specific line ranges. For general file analysis, omit this to get the full file.",
                         },
                         "max_lines": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 5000,
-                            "description": "Safety cap for lines returned per block (default 400)"
+                            "description": "Safety cap for lines returned per block (default 400)",
                         },
                     },
                     "required": ["path"],
@@ -399,11 +404,11 @@ class Agent:
 
     async def _run_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        tool_registry: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        tool_registry: dict[str, Any],
         stream: bool,
-        status: Status
+        status: Status,
     ) -> str:
         """Run chat with tools and enhanced tracking."""
         cfg = load_config()
@@ -420,22 +425,22 @@ class Agent:
             tools=tools,
             tool_registry=tool_registry,
             stream=stream,
-            status=status
+            status=status,
         )
 
     async def _enhanced_chat_with_tools(
         self,
         client,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        tool_registry: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        tool_registry: dict[str, Any],
         stream: bool,
         status: Status,
-        max_steps: Optional[int] = None
+        max_steps: int | None = None,
     ) -> str:
         """Enhanced version of _chat_with_tools with better tracking."""
-        from .chat import _get_chat_runtime_settings, _dispatch_tool_call
+        from .chat import _get_chat_runtime_settings
 
         max_steps = max_steps or self.max_steps
 
@@ -471,13 +476,17 @@ class Agent:
                         limited_tools.append(tool_name)
 
                 if limited_tools:
-                    status.update(f"[bold]Agent {self.name}[/bold] - Tools {limited_tools} limited, forcing response...")
+                    status.update(
+                        f"[bold]Agent {self.name}[/bold] - Tools {limited_tools} limited, forcing response..."
+                    )
                     self.console.print(f"[yellow]Tools {limited_tools} limited, forcing response[/yellow]")
                     # Add system message to force response
-                    messages.append({
-                        "role": "system",
-                        "content": f"You have already called the following tools too many times: {', '.join(limited_tools)}. Please analyze the information you have and provide your response without calling these tools again."
-                    })
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": f"You have already called the following tools too many times: {', '.join(limited_tools)}. Please analyze the information you have and provide your response without calling these tools again.",
+                        }
+                    )
                     # Get a final response from the LLM with the current messages
                     try:
                         final_resp = client.chat.completions.create(
@@ -529,11 +538,13 @@ class Agent:
                                             parts.append(c.get("text", ""))
                                     tool_result_text = "\\n\\n".join(parts) or json.dumps(mcp_resp, ensure_ascii=False)
 
-                                    self.console.print(Panel(
-                                        f"✅ MCP tool {tool_name} executed successfully",
-                                        title="Tool Result",
-                                        border_style="green"
-                                    ))
+                                    self.console.print(
+                                        Panel(
+                                            f"✅ MCP tool {tool_name} executed successfully",
+                                            title="Tool Result",
+                                            border_style="green",
+                                        )
+                                    )
                                 else:
                                     tool_result_text = f"Error: Unknown MCP server {server_name}"
                             else:
@@ -541,6 +552,7 @@ class Agent:
                         else:
                             # Handle built-in tools
                             from .tools import get_tool_registry
+
                             registry = get_tool_registry()
                             args = json.loads(tc.function.arguments or "{}")
 
@@ -549,42 +561,48 @@ class Agent:
                             if tool_result.success:
                                 tool_result_text = tool_result.content
                                 preview = tool_result_text[:200] if len(tool_result_text) > 200 else tool_result_text
-                                self.console.print(Panel(
-                                    preview,
-                                    title=f"Tool: {tool_name}",
-                                    border_style="blue"
-                                ))
+                                self.console.print(Panel(preview, title=f"Tool: {tool_name}", border_style="blue"))
                             else:
                                 tool_result_text = f"Error: {tool_result.error}"
-                                self.console.print(Panel(
-                                    tool_result_text,
-                                    title=f"Tool Error: {tool_name}",
-                                    border_style="red"
-                                ))
+                                self.console.print(
+                                    Panel(tool_result_text, title=f"Tool Error: {tool_name}", border_style="red")
+                                )
 
                         # Add tool result to messages
-                        messages.append({
-                            "role": "assistant",
-                            "content": msg.content or "",
-                            "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"}}]
-                        })
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tool_name,
-                            "content": tool_result_text,
-                        })
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": msg.content or "",
+                                "tool_calls": [
+                                    {
+                                        "id": tc.id,
+                                        "type": "function",
+                                        "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
+                                    }
+                                ],
+                            }
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tool_name,
+                                "content": tool_result_text,
+                            }
+                        )
 
                     except Exception as e:
                         error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
                         self.console.print(f"[red]{error_msg}[/red]")
 
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tool_name,
-                            "content": error_msg,
-                        })
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tool_name,
+                                "content": error_msg,
+                            }
+                        )
 
                 continue
             else:
@@ -608,7 +626,7 @@ class Agent:
         else:
             return typer.ctx.obj or typer.Context.NULL
 
-    def get_execution_summary(self) -> Dict[str, Any]:
+    def get_execution_summary(self) -> dict[str, Any]:
         """Get summary of agent execution."""
         return {
             "agent_name": self.name,
