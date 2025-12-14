@@ -188,10 +188,10 @@ class Agent:
             1 for call in self.current_conversation_tool_calls if call.get("tool") == tool_name
         )
 
-        # read_file: 10 per conversation, 600 per session
+        # read_file: 100 per conversation, 600 per session
         if tool_name == "read_file":
-            if current_conversation_calls >= 10:
-                self.console.print("[yellow]Per-conversation read_file limit reached (10 calls)[/yellow]")
+            if current_conversation_calls >= 100:
+                self.console.print("[yellow]Per-conversation read_file limit reached (100 calls)[/yellow]")
                 return True
 
             total_session_calls = sum(1 for call in self.tool_calls_history if call.get("tool") == "read_file")
@@ -200,9 +200,9 @@ class Agent:
                 return True
             return False
 
-        # MCP tools: 10 per tool per conversation
+        # MCP tools: 100 per tool per conversation
         if tool_name.startswith("mcp."):
-            if current_conversation_calls >= 10:
+            if current_conversation_calls >= 100:
                 return True
 
         return False
@@ -243,6 +243,9 @@ class Agent:
             AgentExecutionError: If execution fails
             MaxStepsReached: If max steps exceeded
         """
+        # Save user input to conversation history immediately to preserve context
+        self.conversation_history.append({"role": "user", "content": user_input})
+        
         try:
             with self._create_progress_context(show_progress) as status:
                 status.update(f"[bold]Agent {self.name}[/bold] thinking...")
@@ -263,9 +266,6 @@ class Agent:
                 )
                 messages.extend(history_to_add)
 
-                # Add current user input
-                messages.append({"role": "user", "content": user_input})
-
                 # Build tools
                 tools = await self._build_tools()
                 tool_registry = await self._build_tool_registry()
@@ -275,8 +275,7 @@ class Agent:
                     messages=messages, tools=tools, tool_registry=tool_registry, stream=stream, status=status
                 )
 
-                # Save conversation exchange
-                self.conversation_history.append({"role": "user", "content": user_input})
+                # Save assistant response
                 self.conversation_history.append({"role": "assistant", "content": result})
 
                 # Save to file
@@ -285,6 +284,13 @@ class Agent:
                 return result
 
         except Exception as e:
+            # Save error information to conversation history to maintain context
+            error_msg = f"Agent execution failed: {e}"
+            self.conversation_history.append({"role": "assistant", "content": f"[Error] {error_msg}"})
+            
+            # Save conversation history even on failure to preserve context
+            self._save_conversation_history()
+            
             self.console.print(f"[red]Agent execution failed:[/red] {e}")
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
 
