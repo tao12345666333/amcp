@@ -7,7 +7,6 @@ from typing import Any
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.status import Status
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
@@ -16,6 +15,7 @@ from .compaction import Compactor
 from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .tools import ToolRegistry
+from .ui import LiveUI
 
 
 class AgentExecutionError(Exception):
@@ -518,113 +518,99 @@ class Agent:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
                         return f"Error: Could not get final response: {e}"
 
-                # Process tool calls
-                for tc in tool_calls:
-                    tool_name = tc.function.name
+                # Process tool calls with Live UI
+                with LiveUI() as live_ui:
+                    for tc in tool_calls:
+                        tool_name = tc.function.name
+                        args = json.loads(tc.function.arguments or "{}")
 
-                    # Check if we should limit this tool call
-                    # Tool already checked for limits above
+                        # Record tool call
+                        tool_call_record = {
+                            "step": self.step_count,
+                            "tool": tool_name,
+                            "args": tc.function.arguments,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        self.tool_calls_history.append(tool_call_record)
+                        self.current_conversation_tool_calls.append(tool_call_record)
 
-                    # Record tool call in both session history and current conversation
-                    tool_call_record = {
-                        "step": self.step_count,
-                        "tool": tool_name,
-                        "args": tc.function.arguments,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                    self.tool_calls_history.append(tool_call_record)
-                    self.current_conversation_tool_calls.append(tool_call_record)
+                        # Add tool block to UI
+                        block = live_ui.add_tool(tool_name, args)
 
-                    # Execute tool
-                    try:
-                        # Load config for tool execution
-                        cfg = load_config()
-                        if tool_name.startswith("mcp."):
-                            # Handle MCP tools
-                            server_name, inner_name = tool_registry.get(tool_name, (None, None))
-                            if server_name and inner_name:
-                                server = cfg.servers.get(server_name)
-                                if server:
-                                    args = json.loads(tc.function.arguments or "{}")
-                                    mcp_resp = await call_mcp_tool(server, inner_name, args)
-
-                                    # Format response
-                                    parts = []
-                                    for c in mcp_resp.get("content", []) or []:
-                                        if c.get("type") == "text":
-                                            parts.append(c.get("text", ""))
-                                    tool_result_text = "\\n\\n".join(parts) or json.dumps(mcp_resp, ensure_ascii=False)
-
-                                    self.console.print(
-                                        Panel(
-                                            f"✅ MCP tool {tool_name} executed successfully",
-                                            title="Tool Result",
-                                            border_style="green",
-                                        )
-                                    )
+                        # Execute tool
+                        try:
+                            cfg = load_config()
+                            if tool_name.startswith("mcp."):
+                                # Handle MCP tools
+                                server_name, inner_name = tool_registry.get(tool_name, (None, None))
+                                if server_name and inner_name:
+                                    server = cfg.servers.get(server_name)
+                                    if server:
+                                        mcp_resp = await call_mcp_tool(server, inner_name, args)
+                                        parts = []
+                                        for c in mcp_resp.get("content", []) or []:
+                                            if c.get("type") == "text":
+                                                parts.append(c.get("text", ""))
+                                        tool_result_text = "\n\n".join(parts) or json.dumps(mcp_resp, ensure_ascii=False)
+                                        live_ui.finish_tool(block, success=True, result=tool_result_text)
+                                    else:
+                                        tool_result_text = f"Error: Unknown MCP server {server_name}"
+                                        live_ui.finish_tool(block, success=False, result=tool_result_text)
                                 else:
-                                    tool_result_text = f"Error: Unknown MCP server {server_name}"
+                                    tool_result_text = f"Error: Unknown MCP tool {tool_name}"
+                                    live_ui.finish_tool(block, success=False, result=tool_result_text)
                             else:
-                                tool_result_text = f"Error: Unknown MCP tool {tool_name}"
-                        else:
-                            # Handle built-in tools
-                            from .tools import get_tool_registry
+                                # Handle built-in tools
+                                from .tools import get_tool_registry
+                                registry = get_tool_registry()
+                                tool_result = registry.execute_tool(tool_name, **args)
 
-                            registry = get_tool_registry()
-                            args = json.loads(tc.function.arguments or "{}")
+                                if tool_result.success:
+                                    tool_result_text = tool_result.content
+                                    live_ui.finish_tool(block, success=True, result=tool_result_text)
+                                else:
+                                    tool_result_text = f"Error: {tool_result.error}"
+                                    live_ui.finish_tool(block, success=False, result=tool_result_text)
 
-                            tool_result = registry.execute_tool(tool_name, **args)
+                            # Add tool result to messages (truncate large results)
+                            MAX_TOOL_RESULT_LEN = 8000
+                            truncated_result = tool_result_text
+                            if len(tool_result_text) > MAX_TOOL_RESULT_LEN:
+                                truncated_result = tool_result_text[:MAX_TOOL_RESULT_LEN] + "\n... [truncated]"
 
-                            if tool_result.success:
-                                tool_result_text = tool_result.content
-                                preview = tool_result_text[:200] if len(tool_result_text) > 200 else tool_result_text
-                                self.console.print(Panel(preview, title=f"Tool: {tool_name}", border_style="blue"))
-                            else:
-                                tool_result_text = f"Error: {tool_result.error}"
-                                self.console.print(
-                                    Panel(tool_result_text, title=f"Tool Error: {tool_name}", border_style="red")
-                                )
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": msg.content or "",
+                                    "tool_calls": [
+                                        {
+                                            "id": tc.id,
+                                            "type": "function",
+                                            "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
+                                        }
+                                    ],
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "name": tool_name,
+                                    "content": truncated_result,
+                                }
+                            )
 
-                        # Add tool result to messages (truncate large results)
-                        MAX_TOOL_RESULT_LEN = 8000
-                        truncated_result = tool_result_text
-                        if len(tool_result_text) > MAX_TOOL_RESULT_LEN:
-                            truncated_result = tool_result_text[:MAX_TOOL_RESULT_LEN] + "\n... [truncated]"
-
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": msg.content or "",
-                                "tool_calls": [
-                                    {
-                                        "id": tc.id,
-                                        "type": "function",
-                                        "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
-                                    }
-                                ],
-                            }
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "name": tool_name,
-                                "content": truncated_result,
-                            }
-                        )
-
-                    except Exception as e:
-                        error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
-                        self.console.print(f"[red]{error_msg}[/red]")
-
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "name": tool_name,
-                                "content": error_msg,
-                            }
-                        )
+                        except Exception as e:
+                            error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
+                            live_ui.finish_tool(block, success=False, result=error_msg)
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "name": tool_name,
+                                    "content": error_msg,
+                                }
+                            )
 
                 continue
             else:

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.json import JSON
 from rich.markdown import Markdown
@@ -196,9 +198,14 @@ def main(
             console.print("[dim]Commands: 'exit' to quit, 'clear' to clear history, 'info' for session info[/dim]")
             console.print()
 
+            # Setup prompt_toolkit with history
+            history_file = Path.home() / ".config" / "amcp" / "history.txt"
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            session: PromptSession[str] = PromptSession(history=FileHistory(str(history_file)))
+
             while True:
                 try:
-                    user_input = console.input("[bold]You:[/bold] ").strip()
+                    user_input = session.prompt("You: ").strip()
 
                     if user_input.lower() in ["exit", "quit", "q"]:
                         console.print("[green]Goodbye! 👋[/green]")
