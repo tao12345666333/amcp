@@ -32,6 +32,7 @@ class ChatConfig:
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
+    api_type: str | None = None  # "openai" (default) or "anthropic"
     # Tool calling settings
     tool_loop_limit: int | None = None
     default_max_lines: int | None = None
@@ -88,6 +89,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     base_url = raw.get("base_url")
     model = raw.get("model")
     api_key = raw.get("api_key")
+    api_type = raw.get("api_type")
     tool_loop_limit = raw.get("tool_loop_limit")
     default_max_lines = raw.get("default_max_lines")
     read_roots = raw.get("read_roots")
@@ -99,6 +101,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         base_url=str(base_url) if base_url is not None else None,
         model=str(model) if model is not None else None,
         api_key=str(api_key) if api_key is not None else None,
+        api_type=str(api_type) if api_type is not None else None,
         tool_loop_limit=int(tool_loop_limit) if tool_loop_limit is not None else None,
         default_max_lines=int(default_max_lines) if default_max_lines is not None else None,
         read_roots=[str(p) for p in (read_roots or [])] if read_roots is not None else None,
@@ -141,6 +144,8 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["model"] = c.model
     if c.api_key:
         out["api_key"] = c.api_key
+    if c.api_type:
+        out["api_type"] = c.api_type
     if c.tool_loop_limit is not None:
         out["tool_loop_limit"] = int(c.tool_loop_limit)
     if c.default_max_lines is not None:

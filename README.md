@@ -124,7 +124,7 @@ Generate a starter config:
 amcp init
 ```
 
-Example:
+Example (OpenAI-compatible API):
 
 ```toml
 [servers.exa]
@@ -136,13 +136,34 @@ args = ["-y", "@some/mcp-server"]
 env.API_KEY = "your-key"
 
 [chat]
-base_url = "https://inference.baseten.co/v1"
-model = "DeepSeek-V3.1-Terminus"
+api_type = "openai"  # "openai" (default) or "anthropic"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o"
 api_key = "your-api-key"
 mcp_tools_enabled = true
 write_tool_enabled = true  # Enable/disable built-in write_file tool
 edit_tool_enabled = true   # Enable/disable built-in edit_file tool
 ```
+
+Example (OpenAI Responses API):
+
+```toml
+[chat]
+api_type = "openai_responses"
+model = "gpt-4o"
+api_key = "your-api-key"
+```
+
+Example (Anthropic Claude):
+
+```toml
+[chat]
+api_type = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key = "your-anthropic-api-key"  # or set ANTHROPIC_API_KEY env var
+```
+
+To use Anthropic, install with: `pip install amcp[anthropic]`
 
 ## Development
 

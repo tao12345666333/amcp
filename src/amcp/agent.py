@@ -425,15 +425,18 @@ class Agent:
     ) -> str:
         """Run chat with tools and enhanced tracking."""
         cfg = load_config()
-        base = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
-        model = self.agent_spec.model or (cfg.chat.model if cfg.chat else "") or "DeepSeek-V3.1-Terminus"
-        key = _resolve_api_key(None, cfg.chat)
-        client = _make_client(base, key)
+
+        # Use new LLM client abstraction
+        from .llm import create_llm_client
+        llm_client = create_llm_client(cfg.chat)
+
+        # Override model if specified in agent spec
+        if self.agent_spec.model:
+            llm_client.model = self.agent_spec.model
 
         # Override the chat function to add our tracking
         return await self._enhanced_chat_with_tools(
-            client=client,
-            model=model,
+            llm_client=llm_client,
             messages=messages,
             tools=tools,
             tool_registry=tool_registry,
@@ -443,8 +446,7 @@ class Agent:
 
     async def _enhanced_chat_with_tools(
         self,
-        client,
-        model: str,
+        llm_client,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_registry: dict[str, Any],
@@ -463,25 +465,17 @@ class Agent:
             self.step_count = step + 1
             status.update(f"[bold]Agent {self.name}[/bold] - Step {self.step_count}/{max_steps}")
 
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-                stream=False,
-            )
+            resp = llm_client.chat(messages=messages, tools=tools)
 
-            msg = resp.choices[0].message
-            tool_calls = getattr(msg, "tool_calls", None)
-
-            if tool_calls:
+            if resp.tool_calls:
+                tool_calls = resp.tool_calls
                 used_tools = True
                 status.update(f"[bold]Agent {self.name}[/bold] - Executing {len(tool_calls)} tool(s)...")
 
                 # Check if any tool should be limited before processing
                 limited_tools = []
                 for tc in tool_calls:
-                    tool_name = tc.function.name
+                    tool_name = tc["name"]
                     if self._should_limit_tool_calls(tool_name):
                         limited_tools.append(tool_name)
 
@@ -499,12 +493,8 @@ class Agent:
                     )
                     # Get a final response from the LLM with the current messages
                     try:
-                        final_resp = client.chat.completions.create(
-                            model=model,
-                            messages=messages,
-                            stream=False,
-                        )
-                        final_text = final_resp.choices[0].message.content or ""
+                        final_resp = llm_client.chat(messages=messages)
+                        final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
                         return final_text
                     except Exception as e:
@@ -514,14 +504,15 @@ class Agent:
                 # Process tool calls with Live UI
                 with LiveUI() as live_ui:
                     for tc in tool_calls:
-                        tool_name = tc.function.name
-                        args = json.loads(tc.function.arguments or "{}")
+                        tool_name = tc["name"]
+                        tool_id = tc["id"]
+                        args = json.loads(tc["arguments"] or "{}")
 
                         # Record tool call
                         tool_call_record = {
                             "step": self.step_count,
                             "tool": tool_name,
-                            "args": tc.function.arguments,
+                            "args": tc["arguments"],
                             "timestamp": datetime.now().isoformat(),
                         }
                         self.tool_calls_history.append(tool_call_record)
@@ -577,12 +568,12 @@ class Agent:
                             messages.append(
                                 {
                                     "role": "assistant",
-                                    "content": msg.content or "",
+                                    "content": resp.content or "",
                                     "tool_calls": [
                                         {
-                                            "id": tc.id,
+                                            "id": tool_id,
                                             "type": "function",
-                                            "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
+                                            "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
                                         }
                                     ],
                                 }
@@ -590,7 +581,7 @@ class Agent:
                             messages.append(
                                 {
                                     "role": "tool",
-                                    "tool_call_id": tc.id,
+                                    "tool_call_id": tool_id,
                                     "name": tool_name,
                                     "content": truncated_result,
                                 }
@@ -602,7 +593,7 @@ class Agent:
                             messages.append(
                                 {
                                     "role": "tool",
-                                    "tool_call_id": tc.id,
+                                    "tool_call_id": tool_id,
                                     "name": tool_name,
                                     "content": error_msg,
                                 }
@@ -611,7 +602,7 @@ class Agent:
                 continue
             else:
                 # No tool calls, return the response
-                final_text = msg.content or ""
+                final_text = resp.content or ""
                 if stream and not used_tools:
                     # For streaming, we'll implement a simple version
                     pass
