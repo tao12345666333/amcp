@@ -57,8 +57,8 @@ _DEFAULT = {
         }
     },
     "chat": {
-        "base_url": "https://api.sambanova.ai/v1",
-        "model": "DeepSeek-V3.1-Terminus",
+        "base_url": "https://inference.baseten.co/v1",
+        "model": "zai-org/GLM-4.6",
         # "api_key": ""  # optional; users can add this if they want config-based auth
         "tool_loop_limit": 5,
         "default_max_lines": 400,

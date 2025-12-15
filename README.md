@@ -87,7 +87,7 @@ args = ["-y", "@some/mcp-server"]
 env.API_KEY = "your-key"
 
 [chat]
-base_url = "https://api.sambanova.ai/v1"
+base_url = "https://inference.baseten.co/v1"
 model = "DeepSeek-V3.1-Terminus"
 api_key = "your-api-key"
 mcp_tools_enabled = true

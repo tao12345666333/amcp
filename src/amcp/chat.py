@@ -34,7 +34,7 @@ def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
         cli_base
         or (cfg.base_url if cfg and cfg.base_url else None)
         or os.environ.get("AMCP_OPENAI_BASE")
-        or "https://api.sambanova.ai/v1"
+        or "https://inference.baseten.co/v1"
     ).rstrip("/")
     if not base.endswith("/v1"):
         base = base + "/v1"
@@ -47,7 +47,7 @@ def _resolve_api_key(cli_key: str | None, cfg: ChatConfig | None) -> str | None:
         return cli_key
     if cfg and cfg.api_key:
         return cfg.api_key
-    return os.environ.get("SAMBANOVA_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    return os.environ.get("OPENAI_API_KEY")
 
 
 def _make_client(base_url: str, api_key: str | None):
