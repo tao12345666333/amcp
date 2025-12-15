@@ -38,10 +38,10 @@ def _extract_key_arg(tool_name: str, args: dict) -> str | None:
 def _format_preview(content: str) -> str:
     """Format content preview."""
     lines = content.strip().split("\n")
-    
+
     if len(lines) <= MAX_PREVIEW_LINES:
         return content.strip()
-    
+
     preview_lines = lines[:MAX_PREVIEW_LINES]
     remaining = len(lines) - MAX_PREVIEW_LINES
     preview_lines.append(f"... ({remaining} more lines)")
@@ -70,7 +70,7 @@ class ToolBlock:
         # Special handling for think tool
         if self.tool_name == "think":
             return self._render_think()
-        
+
         # Build headline
         if self.finished:
             icon = "[green]✓[/green]" if self.success else "[red]✗[/red]"
@@ -101,12 +101,12 @@ class ToolBlock:
         """Render think tool with special styling."""
         if not self.finished:
             return Group(self._spinner, Text("🤔 Thinking...", style="italic dim"))
-        
+
         # Extract thought content
         thought = self.args.get("thought", "")
         if self.result_preview and "Thinking:" in self.result_preview:
             thought = self.result_preview.split("Thinking:", 1)[-1].strip()
-        
+
         # Show thought in italic gray style
         return Panel(
             Text(thought, style="italic"),

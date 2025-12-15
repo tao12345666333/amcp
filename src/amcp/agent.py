@@ -551,7 +551,9 @@ class Agent:
                                         for c in mcp_resp.get("content", []) or []:
                                             if c.get("type") == "text":
                                                 parts.append(c.get("text", ""))
-                                        tool_result_text = "\n\n".join(parts) or json.dumps(mcp_resp, ensure_ascii=False)
+                                        tool_result_text = "\n\n".join(parts) or json.dumps(
+                                            mcp_resp, ensure_ascii=False
+                                        )
                                         live_ui.finish_tool(block, success=True, result=tool_result_text)
                                     else:
                                         tool_result_text = f"Error: Unknown MCP server {server_name}"
@@ -562,6 +564,7 @@ class Agent:
                             else:
                                 # Handle built-in tools
                                 from .tools import get_tool_registry
+
                                 registry = get_tool_registry()
                                 tool_result = registry.execute_tool(tool_name, **args)
 
