@@ -110,11 +110,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
 
 
 def load_config() -> AMCPConfig:
-    if CONFIG_FILE.exists():
-        data = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    else:
-        # fall back to default in-memory config
-        data = _DEFAULT
+    data = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else _DEFAULT
     servers = {name: _decode_server(name, raw) for name, raw in data.get("servers", {}).items()}
     chat = _decode_chat(data.get("chat"))
     return AMCPConfig(servers=servers, chat=chat)

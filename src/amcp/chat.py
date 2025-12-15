@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -117,9 +118,7 @@ def _attach_file_context(path: Path, ranges: Iterable[str] | None, max_lines: in
     rendered_parts = []
     for b in blocks:
         lines = b["lines"]
-        if not ranges:
-            # truncate if needed
-            if len(lines) > max_lines:
+        if not ranges and len(lines) > max_lines:
                 lines = lines[:max_lines]
                 rendered_parts.append(_fmt_block_for_console(path, b["start"], b["start"] + len(lines) - 1, lines))
                 rendered_parts.append("[...truncated...]")
@@ -132,7 +131,7 @@ def _attach_file_context(path: Path, ranges: Iterable[str] | None, max_lines: in
         if not ranges and len(lines) > max_lines:
             lines = lines[:max_lines]
         llm_context.append(
-            f"FILE: {path} ({b['start']}-{b['start'] + len(lines) - 1})\n" + "\n".join(l for _, l in lines)
+            f"FILE: {path} ({b['start']}-{b['start'] + len(lines) - 1})\n" + "\n".join(line for _, line in lines)
         )
         if not ranges and len(b["lines"]) > max_lines:
             llm_context.append("[...truncated...]")
@@ -315,7 +314,7 @@ def _chat_with_tools(
         tools.extend(extra_tools)
     registry = tool_registry or {}
     read_file_call_count = 0
-    for step in range(max_steps):  # safety loop
+    for _step in range(max_steps):  # safety loop
         # print(f"DEBUG: Step {step + 1}/{max_steps}, messages count: {len(messages)}")
         resp = client.chat.completions.create(
             model=model,
@@ -330,7 +329,7 @@ def _chat_with_tools(
         if tool_calls:
             used_tools = True
             # print(f"DEBUG: Processing {len(tool_calls)} tool calls")
-            for i, tc in enumerate(tool_calls):
+            for _, tc in enumerate(tool_calls):
                 # print(f"DEBUG: Tool call {i+1}: {tc.function.name}, args: {tc.function.arguments}")
                 if tc.function.name == "read_file":
                     read_file_call_count += 1
@@ -348,10 +347,8 @@ def _chat_with_tools(
             for tc in tool_calls:
                 fn = tc.function
                 args = {}
-                try:
+                with contextlib.suppress(Exception):
                     args = json.loads(fn.arguments or "{}")
-                except Exception:
-                    pass
                 assistant_msg["tool_calls"].append(
                     {
                         "id": tc.id,
@@ -559,7 +556,7 @@ def chat_repl(
     registry = {}
     if enabled:
         extra_tools, registry = _build_mcp_tools_and_registry(cfg, chat_cfg, mcp_servers_override)
-    enabled_servers = sorted(set(name.split(".")[1] for name in registry.keys())) if registry else []
+    enabled_servers = sorted(set(name.split(".")[1] for name in registry)) if registry else []
     mcp_line = f"MCP tools: {'on' if extra_tools else 'off'}; servers: {', '.join(enabled_servers) if enabled_servers else '-'}"
     console.print(
         Panel(

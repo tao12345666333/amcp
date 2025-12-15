@@ -202,11 +202,7 @@ class Agent:
             return False
 
         # MCP tools: 100 per tool per conversation
-        if tool_name.startswith("mcp."):
-            if current_conversation_calls >= 100:
-                return True
-
-        return False
+        return tool_name.startswith("mcp.") and current_conversation_calls >= 100
 
     def _reset_current_conversation_tool_calls(self) -> None:
         """Reset the current conversation tool calls counter for a new conversation."""
@@ -457,14 +453,11 @@ class Agent:
         max_steps: int | None = None,
     ) -> str:
         """Enhanced version of _chat_with_tools with better tracking."""
-        from .chat import _get_chat_runtime_settings
-
         max_steps = max_steps or self.max_steps
 
         # Create a working copy of messages
         messages = list(messages)
         used_tools = False
-        settings = _get_chat_runtime_settings()
 
         for step in range(max_steps):
             self.step_count = step + 1

@@ -81,7 +81,7 @@ class BaseTool(ABC):
         """Execute the tool with given parameters."""
         pass
 
-    def validate_parameters(self, **kwargs) -> None:
+    def validate_parameters(self, **kwargs) -> None:  # noqa: B027
         """Validate tool parameters. Override in subclasses."""
         pass
 

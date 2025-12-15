@@ -255,7 +255,7 @@ def main(
 
     except Exception as e:
         console.print(f"[red]Agent failed:[/red] {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 @app.command(help="Enhanced agent chat (alias for default command)")
