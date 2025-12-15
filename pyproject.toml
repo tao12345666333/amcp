@@ -18,10 +18,12 @@ dependencies = [
   "openai>=1.52.0",
   "pyyaml>=6.0",
   "prompt-toolkit>=3.0.0",
+  "agent-client-protocol>=0.7.0",
 ]
 
 [project.scripts]
 amcp = "amcp.cli:app"
+amcp-acp = "amcp.acp_agent:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]

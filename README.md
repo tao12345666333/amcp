@@ -25,6 +25,7 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 - **Conversation History**: Persistent sessions across runs
 - **Flexible Configuration**: YAML-based agent specifications
 - **Tool Calling**: Automatic tool selection and execution
+- **ACP Support**: Full Agent Client Protocol support for IDE integration (Zed, etc.)
 
 ## Install (editable)
 
@@ -55,6 +56,53 @@ amcp --clear  # clear conversation history
 # MCP server management
 amcp mcp tools --server exa
 amcp mcp call --server exa --tool web_search_exa --args '{"query":"rust async"}'
+
+# Run as ACP agent (for IDE integration)
+amcp-acp
+```
+
+## ACP (Agent Client Protocol) Support
+
+AMCP fully supports the [Agent Client Protocol](https://agentclientprotocol.com/) for integration with IDEs like Zed.
+
+### Features
+
+- **Session Management**: Create, load, and list sessions
+- **Session Modes**: Switch between `ask`, `architect`, and `code` modes
+  - `ask`: Request permission before making changes
+  - `architect`: Design and plan without implementation
+  - `code`: Full tool access for implementation
+- **Slash Commands**: `/clear`, `/plan`, `/search`, `/help`
+- **Agent Plans**: Visual execution plans for complex tasks
+- **Permission Requests**: User approval for sensitive operations
+- **Client Capabilities**: Use client's filesystem and terminal when available
+
+### Running as ACP Agent
+
+```bash
+# Start the ACP agent server (stdio transport)
+amcp-acp
+```
+
+### Zed Integration
+
+Add to your Zed settings (`~/.config/zed/settings.json`):
+
+```json
+{
+  "agent": {
+    "profiles": {
+      "amcp": {
+        "name": "AMCP",
+        "provider": {
+          "type": "acp",
+          "command": "amcp-acp"
+        }
+      }
+    },
+    "default_profile": "amcp"
+  }
+}
 ```
 
 ## Built-in Tools
@@ -63,6 +111,7 @@ amcp mcp call --server exa --tool web_search_exa --args '{"query":"rust async"}'
 - **grep**: Search for patterns in files using ripgrep
 - **bash**: Execute bash commands for file operations and system tasks
 - **think**: Internal reasoning and planning
+- **todo**: Manage a todo list to track tasks during complex operations
 - **write_file**: Write content to files (can be disabled via config)
 - **edit_file**: Edit files with search and replace (can be disabled via config)
 

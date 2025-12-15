@@ -496,6 +496,99 @@ class EditFileTool(BaseTool):
         }
 
 
+class TodoTool(BaseTool):
+    """Tool for managing a todo list to track tasks."""
+
+    # Shared state across all instances
+    _todos: list[dict[str, str]] = []
+
+    @property
+    def name(self) -> str:
+        return "todo"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Manage a todo list to track tasks. Use action='read' to view current todos, "
+            "action='write' with a complete list to update. Helps organize complex multi-step tasks."
+        )
+
+    def execute(self, action: str, todos: list[dict[str, str]] | None = None) -> ToolResult:
+        """Execute todo operations."""
+        if action == "read":
+            return self._read_todos()
+        elif action == "write":
+            return self._write_todos(todos or [])
+        else:
+            return ToolResult(success=False, content="", error=f"Invalid action '{action}'. Use 'read' or 'write'.")
+
+    def _read_todos(self) -> ToolResult:
+        if not TodoTool._todos:
+            return ToolResult(success=True, content="No todos.", metadata={"count": 0})
+
+        lines = ["## Todo List", ""]
+        for todo in TodoTool._todos:
+            status = todo.get("status", "pending")
+            content = todo.get("content", "")
+            tid = todo.get("id", "")
+            icon = {"pending": "⬜", "in_progress": "🔄", "completed": "✅", "cancelled": "❌"}.get(status, "⬜")
+            lines.append(f"{icon} [{tid}] {content} ({status})")
+
+        return ToolResult(success=True, content="\n".join(lines), metadata={"count": len(TodoTool._todos)})
+
+    def _write_todos(self, todos: list[dict[str, str]]) -> ToolResult:
+        # Validate todos
+        valid_statuses = {"pending", "in_progress", "completed", "cancelled"}
+        for i, todo in enumerate(todos):
+            if "id" not in todo or "content" not in todo:
+                return ToolResult(success=False, content="", error=f"Todo {i} missing 'id' or 'content'")
+            if todo.get("status", "pending") not in valid_statuses:
+                return ToolResult(success=False, content="", error=f"Invalid status for todo {todo['id']}")
+
+        # Check unique IDs
+        ids = [t["id"] for t in todos]
+        if len(ids) != len(set(ids)):
+            return ToolResult(success=False, content="", error="Todo IDs must be unique")
+
+        TodoTool._todos = todos
+        return ToolResult(
+            success=True,
+            content=f"Updated {len(todos)} todos.",
+            metadata={"count": len(todos)},
+        )
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "write"],
+                    "description": "Action to perform: 'read' to view todos, 'write' to update the list",
+                },
+                "todos": {
+                    "type": "array",
+                    "description": "Complete list of todos (required for 'write' action)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Unique identifier for the todo"},
+                            "content": {"type": "string", "description": "Description of the task"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed", "cancelled"],
+                                "description": "Status of the todo (default: pending)",
+                            },
+                        },
+                        "required": ["id", "content"],
+                    },
+                },
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        }
+
+
 # Initialize default tool registry
 def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = True) -> ToolRegistry:
     """Create a tool registry with default tools."""
@@ -506,6 +599,7 @@ def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = 
     registry.register(GrepTool())
     registry.register(ThinkTool())
     registry.register(BashTool())
+    registry.register(TodoTool())
 
     if enable_write:
         registry.register(WriteFileTool())
