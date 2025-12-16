@@ -428,6 +428,7 @@ class Agent:
 
         # Use new LLM client abstraction
         from .llm import create_llm_client
+
         llm_client = create_llm_client(cfg.chat)
 
         # Override model if specified in agent spec

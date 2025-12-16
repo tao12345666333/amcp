@@ -119,10 +119,10 @@ def _attach_file_context(path: Path, ranges: Iterable[str] | None, max_lines: in
     for b in blocks:
         lines = b["lines"]
         if not ranges and len(lines) > max_lines:
-                lines = lines[:max_lines]
-                rendered_parts.append(_fmt_block_for_console(path, b["start"], b["start"] + len(lines) - 1, lines))
-                rendered_parts.append("[...truncated...]")
-                continue
+            lines = lines[:max_lines]
+            rendered_parts.append(_fmt_block_for_console(path, b["start"], b["start"] + len(lines) - 1, lines))
+            rendered_parts.append("[...truncated...]")
+            continue
         rendered_parts.append(_fmt_block_for_console(path, b["start"], b["end"], lines))
     # For LLM context, we send plain text without markdown fences to reduce tokens
     llm_context = []

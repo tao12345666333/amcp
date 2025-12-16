@@ -14,6 +14,7 @@ from .config import ChatConfig
 @dataclass
 class LLMResponse:
     """Unified response from LLM."""
+
     content: str | None
     tool_calls: list[dict[str, Any]] | None = None
     stop_reason: str | None = None
@@ -33,6 +34,7 @@ class OpenAIClient(BaseLLMClient):
 
     def __init__(self, base_url: str, api_key: str | None, model: str):
         from openai import OpenAI
+
         self.client = OpenAI(base_url=base_url, api_key=api_key or "")
         self.model = model
 
@@ -48,8 +50,7 @@ class OpenAIClient(BaseLLMClient):
         tool_calls = None
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             tool_calls = [
-                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
-                for tc in msg.tool_calls
+                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments} for tc in msg.tool_calls
             ]
 
         return LLMResponse(content=msg.content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason)
@@ -60,6 +61,7 @@ class OpenAIResponsesClient(BaseLLMClient):
 
     def __init__(self, base_url: str, api_key: str | None, model: str):
         from openai import OpenAI
+
         self.client = OpenAI(base_url=base_url, api_key=api_key or "")
         self.model = model
 
@@ -68,7 +70,12 @@ class OpenAIResponsesClient(BaseLLMClient):
         resp_tools = None
         if tools:
             resp_tools = [
-                {"type": "function", "name": t["function"]["name"], "description": t["function"].get("description", ""), "parameters": t["function"].get("parameters", {})}
+                {
+                    "type": "function",
+                    "name": t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "parameters": t["function"].get("parameters", {}),
+                }
                 for t in tools
             ]
 
@@ -131,26 +138,36 @@ class AnthropicClient(BaseLLMClient):
                     if content:
                         blocks.append({"type": "text", "text": content})
                     for tc in msg["tool_calls"]:
-                        blocks.append({
-                            "type": "tool_use",
-                            "id": tc["id"],
-                            "name": tc["function"]["name"],
-                            "input": json.loads(tc["function"]["arguments"] or "{}"),
-                        })
+                        blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": tc["id"],
+                                "name": tc["function"]["name"],
+                                "input": json.loads(tc["function"]["arguments"] or "{}"),
+                            }
+                        )
                     anthropic_messages.append({"role": "assistant", "content": blocks})
                 else:
                     anthropic_messages.append({"role": "assistant", "content": content})
             elif role == "tool":
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [{"type": "tool_result", "tool_use_id": msg.get("tool_call_id"), "content": content}],
-                })
+                anthropic_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": msg.get("tool_call_id"), "content": content}
+                        ],
+                    }
+                )
 
         # Convert tools to Anthropic format
         anthropic_tools = None
         if tools:
             anthropic_tools = [
-                {"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}})}
+                {
+                    "name": t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}}),
+                }
                 for t in tools
             ]
 
@@ -180,7 +197,7 @@ class AnthropicClient(BaseLLMClient):
 
 def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
     """Create appropriate LLM client based on config.
-    
+
     api_type options:
     - "openai" (default): OpenAI Chat Completions API
     - "openai_responses": OpenAI Responses API

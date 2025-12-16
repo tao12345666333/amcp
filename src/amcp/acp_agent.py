@@ -71,8 +71,16 @@ AVAILABLE_MODES = [
 # Slash commands
 AVAILABLE_COMMANDS = [
     AvailableCommand(name="clear", description="Clear conversation history"),
-    AvailableCommand(name="plan", description="Create a detailed implementation plan", input=AvailableCommandInput(UnstructuredCommandInput(hint="description of what to plan"))),
-    AvailableCommand(name="search", description="Search for patterns in files", input=AvailableCommandInput(UnstructuredCommandInput(hint="pattern to search"))),
+    AvailableCommand(
+        name="plan",
+        description="Create a detailed implementation plan",
+        input=AvailableCommandInput(UnstructuredCommandInput(hint="description of what to plan")),
+    ),
+    AvailableCommand(
+        name="search",
+        description="Search for patterns in files",
+        input=AvailableCommandInput(UnstructuredCommandInput(hint="pattern to search")),
+    ),
     AvailableCommand(name="help", description="Show available commands"),
 ]
 
@@ -96,12 +104,14 @@ class ACPSession:
         self.conversation_history.append({"role": "assistant", "content": content})
 
     def add_tool_call(self, tool_name: str, args: dict[str, Any], result: str) -> None:
-        self.tool_calls_history.append({
-            "tool": tool_name,
-            "args": args,
-            "result": result,
-            "timestamp": datetime.now().isoformat(),
-        })
+        self.tool_calls_history.append(
+            {
+                "tool": tool_name,
+                "args": args,
+                "result": result,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
 
 class AMCPAgent(Agent):
@@ -169,6 +179,7 @@ class AMCPAgent(Agent):
         """Send available slash commands to client."""
         if self._conn:
             from acp.schema import AvailableCommandsUpdate
+
             await self._conn.session_update(
                 session_id=session_id,
                 update=AvailableCommandsUpdate(
@@ -208,6 +219,7 @@ class AMCPAgent(Agent):
             for msg in session.conversation_history:
                 if msg["role"] == "user":
                     from acp.schema import UserMessageChunk
+
                     await self._conn.session_update(
                         session_id=session_id,
                         update=UserMessageChunk(
@@ -315,6 +327,7 @@ class AMCPAgent(Agent):
         # Send initial plan
         if self._conn:
             from acp.schema import Plan
+
             await self._conn.session_update(
                 session_id=session.session_id,
                 update=Plan(
@@ -331,13 +344,17 @@ class AMCPAgent(Agent):
         session.add_assistant_message(response)
 
         # Parse response into plan entries
-        lines = [l.strip() for l in response.split("\n") if l.strip() and (l.strip().startswith("-") or l.strip()[0].isdigit())]
+        lines = [
+            l.strip()
+            for l in response.split("\n")
+            if l.strip() and (l.strip().startswith("-") or l.strip()[0].isdigit())
+        ]
         entries = [
-            PlanEntry(content=l.lstrip("-0123456789. "), priority="medium", status="pending")
-            for l in lines[:10]
+            PlanEntry(content=l.lstrip("-0123456789. "), priority="medium", status="pending") for l in lines[:10]
         ]
         if entries and self._conn:
             from acp.schema import Plan
+
             await self._conn.session_update(
                 session_id=session.session_id,
                 update=Plan(session_update="plan", entries=entries),
@@ -373,7 +390,14 @@ class AMCPAgent(Agent):
                 update=update_tool_call(
                     tool_call_id=tool_call_id,
                     status=ToolCallStatus.completed if result.success else ToolCallStatus.failed,
-                    content=[{"type": "content", "content": text_block(result.content if result.success else result.error or "Search failed")}],
+                    content=[
+                        {
+                            "type": "content",
+                            "content": text_block(
+                                result.content if result.success else result.error or "Search failed"
+                            ),
+                        }
+                    ],
                 ),
             )
 
@@ -395,6 +419,7 @@ class AMCPAgent(Agent):
                 session.current_mode_id = mode_id
                 if self._conn:
                     from acp.schema import CurrentModeUpdate
+
                     await self._conn.session_update(
                         session_id=session_id,
                         update=CurrentModeUpdate(session_update="current_mode_update", mode_id=mode_id),
@@ -407,6 +432,7 @@ class AMCPAgent(Agent):
     async def list_sessions(self, cursor: str | None = None, cwd: str | None = None, **kwargs: Any):
         """List available sessions."""
         from acp.schema import ListSessionsResponse, SessionInfo
+
         sessions = []
         for sid, session in self._sessions.items():
             sessions.append(SessionInfo(session_id=sid, title=f"Session {sid[:8]}", cwd=session.cwd))
@@ -493,13 +519,24 @@ class AMCPAgent(Agent):
                 if session.current_mode_id == "ask" and tool_name in ("write_file", "edit_file", "bash"):
                     permission = await self._request_permission(session, tool_call_id, tool_name, args)
                     if not permission:
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "name": tool_name, "content": "Permission denied by user"})
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tool_name,
+                                "content": "Permission denied by user",
+                            }
+                        )
                         continue
 
                 if self._conn:
                     await self._conn.session_update(
                         session_id=session.session_id,
-                        update=start_tool_call(tool_call_id=tool_call_id, title=f"Executing {tool_name}", kind=self._get_tool_kind(tool_name)),
+                        update=start_tool_call(
+                            tool_call_id=tool_call_id,
+                            title=f"Executing {tool_name}",
+                            kind=self._get_tool_kind(tool_name),
+                        ),
                     )
 
                 result = await self._execute_tool(tool_name, args, tool_registry, cfg, session)
@@ -515,16 +552,26 @@ class AMCPAgent(Agent):
                         ),
                     )
 
-                messages.append({
-                    "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"}}],
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": msg.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
+                            }
+                        ],
+                    }
+                )
                 messages.append({"role": "tool", "tool_call_id": tc.id, "name": tool_name, "content": result[:8000]})
 
         return "Maximum steps reached. Please try a simpler request."
 
-    async def _request_permission(self, session: ACPSession, tool_call_id: str, tool_name: str, args: dict[str, Any]) -> bool:
+    async def _request_permission(
+        self, session: ACPSession, tool_call_id: str, tool_name: str, args: dict[str, Any]
+    ) -> bool:
         """Request permission from user for tool execution."""
         if not self._conn:
             return True
@@ -607,10 +654,16 @@ class AMCPAgent(Agent):
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
                     params = info.get("inputSchema") or {"type": "object"}
-                    tools.append({
-                        "type": "function",
-                        "function": {"name": oname, "description": info.get("description", ""), "parameters": params},
-                    })
+                    tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": oname,
+                                "description": info.get("description", ""),
+                                "parameters": params,
+                            },
+                        }
+                    )
             except Exception:
                 pass
         return tools

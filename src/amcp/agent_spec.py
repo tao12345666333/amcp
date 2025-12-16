@@ -126,7 +126,7 @@ Current working directory: {work_dir}
 Current time: {current_time}""",
         tools=[],
         exclude_tools=[],
-        max_steps=100,
+        max_steps=300,
         model="",
         base_url="",
     )

@@ -61,7 +61,7 @@ _DEFAULT = {
         "base_url": "https://inference.baseten.co/v1",
         "model": "zai-org/GLM-4.6",
         # "api_key": ""  # optional; users can add this if they want config-based auth
-        "tool_loop_limit": 5,
+        "tool_loop_limit": 300,
         "default_max_lines": 400,
         # "read_roots": ["."]  # optional; defaults to current working directory when unset
         "mcp_tools_enabled": True,
