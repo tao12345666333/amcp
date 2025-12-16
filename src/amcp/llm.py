@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
 from .config import ChatConfig
+
+
+def _extract_think_tags(content: str) -> tuple[str | None, str]:
+    """Extract content from <think> tags and return (thinking, remaining_content)."""
+    pattern = r"<think>(.*?)</think>"
+    matches = re.findall(pattern, content, re.DOTALL)
+    if matches:
+        thinking = "\n".join(m.strip() for m in matches)
+        remaining = re.sub(pattern, "", content, flags=re.DOTALL).strip()
+        return thinking, remaining
+    return None, content
 
 
 @dataclass
@@ -18,6 +30,7 @@ class LLMResponse:
     content: str | None
     tool_calls: list[dict[str, Any]] | None = None
     stop_reason: str | None = None
+    thinking: str | None = None  # Reasoning/thinking content from LLM
 
 
 class BaseLLMClient(ABC):
@@ -53,7 +66,20 @@ class OpenAIClient(BaseLLMClient):
                 {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments} for tc in msg.tool_calls
             ]
 
-        return LLMResponse(content=msg.content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason)
+        # Extract thinking content
+        thinking = None
+        content = msg.content
+
+        # Check for reasoning_content field (DeepSeek, some OpenAI-compatible APIs)
+        if hasattr(msg, "reasoning_content") and msg.reasoning_content:
+            thinking = msg.reasoning_content
+        # Check for <think> tags in content
+        elif content:
+            thinking, content = _extract_think_tags(content)
+
+        return LLMResponse(
+            content=content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason, thinking=thinking
+        )
 
 
 class OpenAIResponsesClient(BaseLLMClient):
@@ -181,10 +207,14 @@ class AnthropicClient(BaseLLMClient):
 
         content_parts = []
         tool_calls = []
+        thinking_parts = []
 
         for block in resp.content:
             if block.type == "text":
                 content_parts.append(block.text)
+            elif block.type == "thinking":
+                # Anthropic extended thinking block
+                thinking_parts.append(getattr(block, "thinking", ""))
             elif block.type == "tool_use":
                 tool_calls.append({"id": block.id, "name": block.name, "arguments": json.dumps(block.input)})
 
@@ -192,6 +222,7 @@ class AnthropicClient(BaseLLMClient):
             content="\n".join(content_parts) if content_parts else None,
             tool_calls=tool_calls if tool_calls else None,
             stop_reason=resp.stop_reason,
+            thinking="\n".join(thinking_parts) if thinking_parts else None,
         )
 
 

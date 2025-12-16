@@ -29,6 +29,7 @@ from acp import (
     start_tool_call,
     text_block,
     update_agent_message,
+    update_agent_thought,
     update_tool_call,
 )
 from acp.interfaces import Client
@@ -55,8 +56,8 @@ from acp.schema import (
 )
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
-from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .config import load_config
+from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .tools import ToolResult, get_tool_registry
 
@@ -473,10 +474,7 @@ class AMCPAgent(Agent):
     async def _process_prompt(self, session: ACPSession, user_text: str) -> str:
         """Process prompt with LLM and tools."""
         cfg = load_config()
-        base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
-        api_key = _resolve_api_key(None, cfg.chat)
-        client = _make_client(base_url, api_key)
-        model = cfg.chat.model if cfg.chat else "DeepSeek-V3.1-Terminus"
+        llm_client = create_llm_client(cfg.chat)
 
         system_prompt = self._get_system_prompt(session)
         messages = [{"role": "system", "content": system_prompt}]
@@ -490,19 +488,17 @@ class AMCPAgent(Agent):
             if session.session_id in self._cancelled_sessions:
                 raise asyncio.CancelledError()
 
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools if tools else None,
-                tool_choice="auto" if tools else None,
-                stream=False,
-            )
+            resp = llm_client.chat(messages=messages, tools=tools if tools else None)
 
-            msg = resp.choices[0].message
-            tool_calls = getattr(msg, "tool_calls", None)
+            # Send thinking content if available
+            if resp.thinking and self._conn:
+                await self._conn.session_update(
+                    session_id=session.session_id,
+                    update=update_agent_thought(text_block(resp.thinking)),
+                )
 
-            if not tool_calls:
-                final_text = msg.content or ""
+            if not resp.tool_calls:
+                final_text = resp.content or ""
                 if self._conn:
                     await self._conn.session_update(
                         session_id=session.session_id,
@@ -510,9 +506,9 @@ class AMCPAgent(Agent):
                     )
                 return final_text
 
-            for tc in tool_calls:
-                tool_name = tc.function.name
-                args = json.loads(tc.function.arguments or "{}")
+            for tc in resp.tool_calls:
+                tool_name = tc["name"]
+                args = json.loads(tc["arguments"] or "{}")
                 tool_call_id = f"call_{uuid4().hex[:8]}"
 
                 # Request permission in "ask" mode for write operations
@@ -522,7 +518,7 @@ class AMCPAgent(Agent):
                         messages.append(
                             {
                                 "role": "tool",
-                                "tool_call_id": tc.id,
+                                "tool_call_id": tc["id"],
                                 "name": tool_name,
                                 "content": "Permission denied by user",
                             }
@@ -555,17 +551,17 @@ class AMCPAgent(Agent):
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": msg.content or "",
+                        "content": resp.content or "",
                         "tool_calls": [
                             {
-                                "id": tc.id,
+                                "id": tc["id"],
                                 "type": "function",
-                                "function": {"name": tool_name, "arguments": tc.function.arguments or "{}"},
+                                "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
                             }
                         ],
                     }
                 )
-                messages.append({"role": "tool", "tool_call_id": tc.id, "name": tool_name, "content": result[:8000]})
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "name": tool_name, "content": result[:8000]})
 
         return "Maximum steps reached. Please try a simpler request."
 
