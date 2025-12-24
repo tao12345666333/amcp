@@ -7,6 +7,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .config import load_config as load_app_config
+from .multi_agent import AgentMode
 
 
 class AgentSpecError(Exception):
@@ -20,6 +21,7 @@ class AgentSpec(BaseModel):
 
     name: str = Field(description="Agent name")
     description: str = Field(default="", description="Agent description")
+    mode: str = Field(default="primary", description="Agent mode: 'primary' or 'subagent'")
     system_prompt: str = Field(description="System prompt for the agent")
     system_prompt_template: str = Field(default="", description="System prompt template with variables")
     system_prompt_vars: dict[str, str] = Field(default_factory=dict, description="Variables for system prompt template")
@@ -28,6 +30,7 @@ class AgentSpec(BaseModel):
     max_steps: int = Field(default=5, description="Maximum tool execution steps")
     model: str = Field(default="", description="Preferred model name")
     base_url: str = Field(default="", description="Preferred base URL")
+    can_delegate: bool = Field(default=True, description="Whether agent can spawn subagents")
 
     class Config:
         extra = "allow"
@@ -39,12 +42,14 @@ class ResolvedAgentSpec:
 
     name: str
     description: str
+    mode: AgentMode
     system_prompt: str
     tools: list[str]
     exclude_tools: list[str]
     max_steps: int
     model: str
     base_url: str
+    can_delegate: bool = True
 
 
 def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
@@ -89,15 +94,25 @@ def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
     elif spec.system_prompt_template:
         system_prompt = spec.system_prompt_template
 
+    # Parse mode
+    mode = AgentMode.PRIMARY if spec.mode == "primary" else AgentMode.SUBAGENT
+
+    # Subagents cannot delegate by default
+    can_delegate = spec.can_delegate
+    if mode == AgentMode.SUBAGENT:
+        can_delegate = False
+
     return ResolvedAgentSpec(
         name=spec.name,
         description=spec.description,
+        mode=mode,
         system_prompt=system_prompt,
         tools=spec.tools or [],
         exclude_tools=spec.exclude_tools or [],
         max_steps=spec.max_steps,
         model=spec.model or default_model,
         base_url=spec.base_url or default_base_url,
+        can_delegate=can_delegate,
     )
 
 
@@ -106,6 +121,7 @@ def get_default_agent_spec() -> ResolvedAgentSpec:
     return ResolvedAgentSpec(
         name="default",
         description="Default AMCP agent",
+        mode=AgentMode.PRIMARY,
         system_prompt="""You are AMCP, a Lego-style coding agent CLI. You help users with software engineering tasks using the available tools.
 
 Available tools:
@@ -129,6 +145,7 @@ Current time: {current_time}""",
         max_steps=300,
         model="",
         base_url="",
+        can_delegate=True,
     )
 
 

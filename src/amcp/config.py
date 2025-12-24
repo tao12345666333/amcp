@@ -43,6 +43,12 @@ class ChatConfig:
     # Built-in file modification tools
     write_tool_enabled: bool | None = None
     edit_tool_enabled: bool | None = None
+    # Agent settings
+    default_agent: str | None = None  # default agent to use: "coder", "explorer", etc.
+    # Queue settings
+    enable_queue: bool | None = None  # enable message queue (default: True)
+    max_queue_size: int | None = None  # max queued messages per session (default: 100)
+
 
 
 @dataclass
@@ -97,6 +103,11 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     mcp_servers = raw.get("mcp_servers")
     write_tool_enabled = raw.get("write_tool_enabled")
     edit_tool_enabled = raw.get("edit_tool_enabled")
+    # Agent settings
+    default_agent = raw.get("default_agent")
+    # Queue settings
+    enable_queue = raw.get("enable_queue")
+    max_queue_size = raw.get("max_queue_size")
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
         model=str(model) if model is not None else None,
@@ -109,6 +120,9 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         mcp_servers=[str(s) for s in (mcp_servers or [])] if mcp_servers is not None else None,
         write_tool_enabled=bool(write_tool_enabled) if write_tool_enabled is not None else None,
         edit_tool_enabled=bool(edit_tool_enabled) if edit_tool_enabled is not None else None,
+        default_agent=str(default_agent) if default_agent is not None else None,
+        enable_queue=bool(enable_queue) if enable_queue is not None else None,
+        max_queue_size=int(max_queue_size) if max_queue_size is not None else None,
     )
 
 
@@ -160,6 +174,14 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["write_tool_enabled"] = bool(c.write_tool_enabled)
     if c.edit_tool_enabled is not None:
         out["edit_tool_enabled"] = bool(c.edit_tool_enabled)
+    # Agent settings
+    if c.default_agent:
+        out["default_agent"] = c.default_agent
+    # Queue settings
+    if c.enable_queue is not None:
+        out["enable_queue"] = bool(c.enable_queue)
+    if c.max_queue_size is not None:
+        out["max_queue_size"] = int(c.max_queue_size)
     return out
 
 

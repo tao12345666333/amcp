@@ -13,11 +13,13 @@ from rich.console import Console
 from rich.json import JSON
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
 
-from .agent import Agent
+from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
 from .config import AMCPConfig, load_config, save_default_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
+from .multi_agent import get_agent_registry
 
 app = typer.Typer(add_completion=False, context_settings={"help_option_names": ["-h", "--help"]})
 console = Console()
@@ -101,6 +103,10 @@ def main(
     ctx: typer.Context,
     message: Annotated[str | None, typer.Option("--once", help="Send one message and exit")] = None,
     agent_file: Annotated[str | None, typer.Option("--agent", help="Path to agent specification file")] = None,
+    agent_type: Annotated[
+        str | None,
+        typer.Option("--agent-type", "-t", help="Built-in agent type: coder, explorer, planner, focused_coder"),
+    ] = None,
     work_dir: Annotated[
         Path | None,
         typer.Option(
@@ -109,6 +115,9 @@ def main(
     ] = None,
     no_progress: Annotated[bool, typer.Option("--no-progress", help="Disable progress indicators")] = False,
     list_agents: Annotated[bool, typer.Option("--list", help="List available agent specifications")] = False,
+    list_agent_types: Annotated[
+        bool, typer.Option("--list-types", help="List available built-in agent types")
+    ] = False,
     session_id: Annotated[
         str | None, typer.Option("--session", help="Use specific session ID for conversation continuity")
     ] = None,
@@ -121,6 +130,33 @@ def main(
 
     # If a subcommand is invoked, don't run the agent
     if ctx.invoked_subcommand is not None:
+        return
+
+    # Handle list agent types
+    if list_agent_types:
+        registry = get_agent_registry()
+        table = Table(title="Available Built-in Agent Types")
+        table.add_column("Name", style="cyan")
+        table.add_column("Mode", style="magenta")
+        table.add_column("Description", style="green")
+        table.add_column("Can Delegate", style="yellow")
+        table.add_column("Max Steps", style="blue")
+
+        for name in registry.list_agents():
+            config = registry.get(name)
+            if config:
+                table.add_row(
+                    config.name,
+                    config.mode.value,
+                    config.description[:50] + "..." if len(config.description) > 50 else config.description,
+                    "✅" if config.can_delegate else "❌",
+                    str(config.max_steps),
+                )
+
+        console.print(table)
+        console.print()
+        console.print("[dim]Use --agent-type <name> or -t <name> to select an agent type[/dim]")
+        console.print("[dim]Example: amcp -t explorer --once 'Find all TODO comments'[/dim]")
         return
 
     # Handle session listing
@@ -155,11 +191,11 @@ def main(
         agents_dir = Path(os.path.expanduser("~/.config/amcp/agents"))
         local_agents_dir = Path("agents")
 
-        agent_files = list_available_agents(agents_dir)
+        agent_files_list = list_available_agents(agents_dir)
         local_agent_files = list_available_agents(local_agents_dir)
 
         # Combine both lists
-        all_agent_files = agent_files + local_agent_files
+        all_agent_files = agent_files_list + local_agent_files
 
         if not all_agent_files:
             console.print(
@@ -168,40 +204,70 @@ def main(
             return
 
         console.print("[bold]Available Agent Specifications:[/bold]")
-        for agent_file in all_agent_files:
+        for agent_file_path in all_agent_files:
             try:
-                spec = load_agent_spec(agent_file)
-                console.print(f"📄 {agent_file.name}")
+                spec = load_agent_spec(agent_file_path)
+                console.print(f"📄 {agent_file_path.name}")
                 console.print(f"   Name: {spec.name}")
+                console.print(f"   Mode: {spec.mode.value}")
                 console.print(f"   Description: {spec.description}")
                 console.print(f"   Tools: {len(spec.tools)}")
                 console.print()
             except Exception as e:
-                console.print(f"❌ {agent_file.name}: {e}")
+                console.print(f"❌ {agent_file_path.name}: {e}")
 
         # Also show default agent
         default_spec = get_default_agent_spec()
         console.print("[bold]Default Agent:[/bold]")
         console.print(f"   Name: {default_spec.name}")
+        console.print(f"   Mode: {default_spec.mode.value}")
         console.print(f"   Description: {default_spec.description}")
         console.print(f"   Tools: {len(default_spec.tools)}")
         return
 
+    # Load configuration
+    cfg = load_config()
+
     try:
-        # Load agent specification
+        # Determine agent to use (priority: --agent > --agent-type > config.default_agent > default)
+        agent = None
+
         if agent_file:
+            # Load from YAML file
             agent_path = Path(agent_file).expanduser()
             if not agent_path.exists():
                 console.print(f"[red]Agent file not found: {agent_path}[/red]")
                 raise typer.Exit(1)
             agent_spec = load_agent_spec(agent_path)
-            console.print(f"[green]Loaded agent: {agent_spec.name}[/green]")
-        else:
-            agent_spec = get_default_agent_spec()
-            console.print(f"[green]Using default agent: {agent_spec.name}[/green]")
+            agent = Agent(agent_spec, session_id=session_id)
+            console.print(f"[green]Loaded agent from file: {agent_spec.name} ({agent_spec.mode.value})[/green]")
 
-        # Create agent with session management
-        agent = Agent(agent_spec, session_id=session_id)
+        elif agent_type:
+            # Use built-in agent type
+            registry = get_agent_registry()
+            if agent_type not in registry.list_agents():
+                console.print(f"[red]Unknown agent type: {agent_type}[/red]")
+                console.print(f"[dim]Available types: {', '.join(registry.list_agents())}[/dim]")
+                raise typer.Exit(1)
+            agent = create_agent_by_name(agent_type, session_id=session_id)
+            console.print(f"[green]Using agent: {agent.name} ({agent.agent_spec.mode.value})[/green]")
+
+        elif cfg.chat and cfg.chat.default_agent:
+            # Use agent from config
+            registry = get_agent_registry()
+            if cfg.chat.default_agent in registry.list_agents():
+                agent = create_agent_by_name(cfg.chat.default_agent, session_id=session_id)
+                console.print(f"[green]Using configured agent: {agent.name} ({agent.agent_spec.mode.value})[/green]")
+            else:
+                console.print(f"[yellow]Warning: Configured agent '{cfg.chat.default_agent}' not found, using default[/yellow]")
+                agent_spec = get_default_agent_spec()
+                agent = Agent(agent_spec, session_id=session_id)
+
+        else:
+            # Use default agent
+            agent_spec = get_default_agent_spec()
+            agent = Agent(agent_spec, session_id=session_id)
+            console.print(f"[green]Using default agent: {agent_spec.name}[/green]")
 
         # Handle session clearing
         if clear_session:
@@ -233,8 +299,8 @@ def main(
         else:
             # Interactive mode
             console.print(f"[bold]🤖 Agent {agent.name} - Interactive Mode[/bold]")
-            console.print(f"[dim]Description: {agent_spec.description}[/dim]")
-            console.print(f"[dim]Max steps: {agent_spec.max_steps} | Session: {agent.session_id}[/dim]")
+            console.print(f"[dim]Description: {agent.agent_spec.description}[/dim]")
+            console.print(f"[dim]Max steps: {agent.agent_spec.max_steps} | Mode: {agent.agent_spec.mode.value} | Session: {agent.session_id}[/dim]")
             console.print("[dim]Commands: 'exit' to quit, 'clear' to clear history, 'info' for session info[/dim]")
             console.print()
 
@@ -299,11 +365,14 @@ def main(
 
 
 @app.command(help="Enhanced agent chat (alias for default command)")
-@app.command(help="Enhanced agent chat (alias for default command)")
 def agent(
     ctx: typer.Context,
     message: Annotated[str | None, typer.Option("--once", help="Send one message and exit")] = None,
     agent_file: Annotated[str | None, typer.Option("--agent", help="Path to agent specification file")] = None,
+    agent_type: Annotated[
+        str | None,
+        typer.Option("--agent-type", "-t", help="Built-in agent type: coder, explorer, planner, focused_coder"),
+    ] = None,
     work_dir: Annotated[
         Path | None,
         typer.Option(
@@ -312,6 +381,9 @@ def agent(
     ] = None,
     no_progress: Annotated[bool, typer.Option("--no-progress", help="Disable progress indicators")] = False,
     list_agents: Annotated[bool, typer.Option("--list", help="List available agent specifications")] = False,
+    list_agent_types: Annotated[
+        bool, typer.Option("--list-types", help="List available built-in agent types")
+    ] = False,
     session_id: Annotated[
         str | None, typer.Option("--session", help="Use specific session ID for conversation continuity")
     ] = None,
@@ -325,9 +397,11 @@ def agent(
         main,
         message=message,
         agent_file=agent_file,
+        agent_type=agent_type,
         work_dir=work_dir,
         no_progress=no_progress,
         list_agents=list_agents,
+        list_agent_types=list_agent_types,
         session_id=session_id,
         clear_session=clear_session,
         list_sessions=list_sessions,

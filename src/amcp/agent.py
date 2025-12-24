@@ -14,6 +14,8 @@ from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .compaction import Compactor
 from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
+from .message_queue import MessagePriority, get_message_queue_manager
+from .multi_agent import AgentMode
 from .tools import ToolRegistry
 from .ui import LiveUI
 
@@ -26,6 +28,12 @@ class AgentExecutionError(Exception):
 
 class MaxStepsReached(Exception):
     """Raised when agent reaches maximum execution steps."""
+
+    pass
+
+
+class BusyError(Exception):
+    """Raised when agent session is busy processing another request."""
 
     pass
 
@@ -222,7 +230,13 @@ class Agent:
         }
 
     async def run(
-        self, user_input: str, work_dir: Path | None = None, stream: bool = True, show_progress: bool = True
+        self,
+        user_input: str,
+        work_dir: Path | None = None,
+        stream: bool = True,
+        show_progress: bool = True,
+        priority: MessagePriority = MessagePriority.NORMAL,
+        queue_if_busy: bool = True,
     ) -> str:
         """
         Run the agent with the given user input.
@@ -232,6 +246,8 @@ class Agent:
             work_dir: Working directory for context
             stream: Whether to stream responses
             show_progress: Whether to show progress indicators
+            priority: Message priority (for queuing)
+            queue_if_busy: Whether to queue the message if session is busy
 
         Returns:
             Agent's response
@@ -239,6 +255,77 @@ class Agent:
         Raises:
             AgentExecutionError: If execution fails
             MaxStepsReached: If max steps exceeded
+            BusyError: If session is busy and queue_if_busy is False
+        """
+        queue_manager = get_message_queue_manager()
+
+        # Check if session is busy
+        if queue_manager.is_busy(self.session_id):
+            if queue_if_busy:
+                # Queue the message for later processing
+                await queue_manager.enqueue(
+                    session_id=self.session_id,
+                    prompt=user_input,
+                    priority=priority,
+                    work_dir=str(work_dir) if work_dir else None,
+                    stream=stream,
+                    show_progress=show_progress,
+                )
+                self.console.print(
+                    f"[dim]Message queued ({queue_manager.queued_count(self.session_id)} in queue)[/dim]"
+                )
+                return "[Message queued for later processing]"
+            else:
+                raise BusyError(f"Session {self.session_id} is busy processing another request")
+
+        # Acquire session lock
+        acquired = await queue_manager.acquire(self.session_id)
+        if not acquired:
+            # Race condition - queue it
+            if queue_if_busy:
+                await queue_manager.enqueue(
+                    session_id=self.session_id,
+                    prompt=user_input,
+                    priority=priority,
+                )
+                return "[Message queued for later processing]"
+            else:
+                raise BusyError(f"Session {self.session_id} is busy processing another request")
+
+        try:
+            # Process the current message
+            result = await self._process_message(user_input, work_dir, stream, show_progress)
+
+            # Process any queued messages
+            while True:
+                next_msg = await queue_manager.dequeue(self.session_id)
+                if not next_msg:
+                    break
+
+                # Process queued message
+                self.console.print(f"[dim]Processing queued message...[/dim]")
+                queued_work_dir = Path(next_msg.metadata.get("work_dir")) if next_msg.metadata.get("work_dir") else work_dir
+                await self._process_message(
+                    next_msg.prompt,
+                    queued_work_dir,
+                    next_msg.metadata.get("stream", stream),
+                    next_msg.metadata.get("show_progress", show_progress),
+                )
+
+            return result
+
+        finally:
+            # Always release the session lock
+            queue_manager.release(self.session_id)
+
+    async def _process_message(
+        self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool
+    ) -> str:
+        """
+        Process a single message (internal implementation).
+
+        This is the core message processing logic, extracted from run()
+        to support queue-based processing.
         """
         # Save user input to conversation history immediately to preserve context
         self.conversation_history.append({"role": "user", "content": user_input})
@@ -246,10 +333,6 @@ class Agent:
         try:
             with self._create_progress_context(show_progress) as status:
                 status.update(f"[bold]Agent {self.name}[/bold] thinking...")
-
-                # DO NOT reset current conversation tool calls counter here
-                # It should persist across multiple calls within the same session
-                # Reset only when explicitly requested or when starting a completely new session
 
                 # Prepare messages with conversation history
                 system_prompt = self._get_system_prompt(work_dir)
@@ -300,6 +383,27 @@ class Agent:
 
             self.console.print(f"[red]Agent execution failed:[/red] {e}")
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
+
+    def is_busy(self) -> bool:
+        """Check if this agent's session is currently busy."""
+        return get_message_queue_manager().is_busy(self.session_id)
+
+    def queued_count(self) -> int:
+        """Get the number of queued messages for this session."""
+        return get_message_queue_manager().queued_count(self.session_id)
+
+    def queued_prompts(self) -> list[str]:
+        """Get list of queued prompts for this session."""
+        return get_message_queue_manager().queued_prompts(self.session_id)
+
+    async def clear_queue(self) -> int:
+        """Clear all queued messages for this session."""
+        return await get_message_queue_manager().clear_queue(self.session_id)
+
+    def get_queue_status(self) -> dict[str, Any]:
+        """Get queue status for this session."""
+        return get_message_queue_manager().get_queue_status(self.session_id)
+
 
     async def _build_tools(self) -> list[dict[str, Any]]:
         """Build list of available tools."""
@@ -626,9 +730,151 @@ class Agent:
         """Get summary of agent execution."""
         return {
             "agent_name": self.name,
+            "agent_mode": self.agent_spec.mode.value,
             "steps_taken": self.step_count,
             "max_steps": self.max_steps,
             "tools_called": len(self.tool_calls_history),
             "tool_calls": self.tool_calls_history,
             "context_vars": self._get_context_vars(),
+            "can_delegate": self.agent_spec.can_delegate,
+            "is_busy": self.is_busy(),
+            "queued_count": self.queued_count(),
         }
+
+
+# Factory functions for creating agents from multi-agent configurations
+
+
+def create_agent_from_config(
+    config: "AgentConfig",
+    session_id: str | None = None,
+) -> Agent:
+    """
+    Create an Agent from an AgentConfig.
+
+    This is the primary way to instantiate agents using the multi-agent system.
+
+    Args:
+        config: AgentConfig from the multi_agent module
+        session_id: Optional session ID for conversation persistence
+
+    Returns:
+        Configured Agent instance
+    """
+    from .multi_agent import AgentConfig
+
+    # Convert AgentConfig to ResolvedAgentSpec
+    from .agent_spec import ResolvedAgentSpec
+
+    spec = ResolvedAgentSpec(
+        name=config.name,
+        description=config.description,
+        mode=config.mode,
+        system_prompt=config.system_prompt,
+        tools=config.tools,
+        exclude_tools=config.excluded_tools,
+        max_steps=config.max_steps,
+        model="",  # Use default from config
+        base_url="",  # Use default from config
+        can_delegate=config.can_delegate,
+    )
+
+    return Agent(agent_spec=spec, session_id=session_id)
+
+
+def create_agent_by_name(
+    name: str,
+    session_id: str | None = None,
+) -> Agent:
+    """
+    Create an Agent by looking up its name in the registry.
+
+    Args:
+        name: Name of the agent in the registry (e.g., "coder", "explorer", "planner")
+        session_id: Optional session ID for conversation persistence
+
+    Returns:
+        Configured Agent instance
+
+    Raises:
+        ValueError: If agent name is not found in registry
+    """
+    from .multi_agent import get_agent_config
+
+    config = get_agent_config(name)
+    if config is None:
+        from .multi_agent import get_agent_registry
+        available = get_agent_registry().list_agents()
+        raise ValueError(f"Unknown agent: {name}. Available agents: {', '.join(available)}")
+
+    return create_agent_from_config(config, session_id)
+
+
+def create_subagent(
+    parent_agent: Agent,
+    task_description: str,
+    tools: list[str] | None = None,
+) -> Agent:
+    """
+    Create a subagent for a specific task.
+
+    This creates a new agent that inherits the session from the parent
+    but has a focused task and possibly restricted tools.
+
+    Args:
+        parent_agent: The parent agent creating this subagent
+        task_description: Description of the task for the subagent
+        tools: Optional list of tools for the subagent
+
+    Returns:
+        New Agent configured as a subagent
+
+    Raises:
+        ValueError: If parent agent cannot delegate
+    """
+    if not parent_agent.agent_spec.can_delegate:
+        raise ValueError(f"Agent '{parent_agent.name}' cannot delegate to subagents")
+
+    from .multi_agent import create_subagent_config
+
+    config = create_subagent_config(
+        parent_name=parent_agent.name,
+        task_description=task_description,
+        tools=tools,
+    )
+
+    # Create subagent with a new session (isolated from parent)
+    return create_agent_from_config(config)
+
+
+def list_available_agents() -> list[str]:
+    """
+    List all available agent names.
+
+    Returns:
+        List of agent names from the registry
+    """
+    from .multi_agent import get_agent_registry
+    return get_agent_registry().list_agents()
+
+
+def list_primary_agents() -> list[str]:
+    """
+    List all primary (main) agent names.
+
+    Returns:
+        List of primary agent names
+    """
+    from .multi_agent import get_agent_registry
+    return get_agent_registry().list_primary_agents()
+
+
+def list_subagent_types() -> list[str]:
+    """
+    List all available subagent types.
+
+    Returns:
+        List of subagent names
+    """
+    from .multi_agent import get_agent_registry
+    return get_agent_registry().list_subagents()
