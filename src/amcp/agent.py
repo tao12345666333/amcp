@@ -724,7 +724,16 @@ class Agent:
         if show_progress:
             return Status("[bold]Agent starting...[/bold]", console=self.console)
         else:
-            return typer.ctx.obj or typer.Context.NULL
+            # Return a null context manager for silent operation
+            from contextlib import nullcontext
+
+            class NullStatus:
+                """Null status object that does nothing."""
+
+                def update(self, *args, **kwargs):
+                    pass
+
+            return nullcontext(NullStatus())
 
     def get_execution_summary(self) -> dict[str, Any]:
         """Get summary of agent execution."""

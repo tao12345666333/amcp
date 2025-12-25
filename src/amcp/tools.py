@@ -589,9 +589,159 @@ class TodoTool(BaseTool):
         }
 
 
+class ParallelTaskTool(BaseTool):
+    """Tool for spawning parallel sub-agent tasks.
+
+    This tool allows the agent to delegate work to sub-agents that execute
+    tasks in parallel, enabling more efficient handling of complex requests.
+    """
+
+    def __init__(self, session_id: str | None = None):
+        super().__init__()
+        self.session_id = session_id
+
+    @property
+    def name(self) -> str:
+        return "task"
+
+    @property
+    def description(self) -> str:
+        return """Spawn and manage parallel sub-agent tasks.
+
+This tool allows you to delegate work to specialized sub-agents that
+run in parallel. Use this for:
+- Exploring multiple files simultaneously
+- Running analysis while continuing other work
+- Breaking complex tasks into smaller parallel pieces
+
+Actions:
+- create: Create a new task for a sub-agent to execute
+- status: Check the status of a task
+- wait: Wait for a task to complete and get results
+- cancel: Cancel a running task
+- list: List all tasks
+
+Agent Types:
+- explorer: Fast read-only codebase exploration (50 steps max)
+- planner: Analysis and planning (30 steps max)
+- focused_coder: Specific implementation tasks (100 steps max)
+
+Examples:
+  Create: {"action": "create", "description": "Find all TODO comments", "agent_type": "explorer"}
+  Check:  {"action": "status", "task_id": "abc123"}
+  Wait:   {"action": "wait", "task_id": "abc123", "timeout": 60}
+  List:   {"action": "list"}
+"""
+
+    def execute(
+        self,
+        action: str,
+        description: str | None = None,
+        agent_type: str = "focused_coder",
+        task_id: str | None = None,
+        timeout: float | None = None,
+    ) -> ToolResult:
+        """Execute the task tool."""
+        import asyncio
+
+        from .task import TaskTool
+
+        tool = TaskTool(session_id=self.session_id)
+
+        async def run_task():
+            return await tool.execute(
+                action=action,
+                description=description,
+                agent_type=agent_type,
+                task_id=task_id,
+                timeout=timeout,
+            )
+
+        try:
+            # Check if we're already in an async context
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, create a task and wait
+                # Use nest_asyncio if available, otherwise use a different approach
+                try:
+                    import nest_asyncio
+
+                    nest_asyncio.apply()
+                    result = asyncio.run(run_task())
+                except ImportError:
+                    # Create task and get result via future
+                    future = asyncio.ensure_future(run_task())
+                    # We can't block here, so return a message about the task
+                    if action == "create":
+                        # For create action, we can run it synchronously
+                        # by creating a new thread
+                        import concurrent.futures
+
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, run_task())
+                            result = future.result(timeout=30)
+                    else:
+                        # For other actions, try to run in the current loop
+                        import concurrent.futures
+
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, run_task())
+                            result = future.result(timeout=timeout or 30)
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run
+                result = asyncio.run(run_task())
+
+            return ToolResult(success=True, content=result)
+        except Exception as e:
+            return ToolResult(success=False, content="", error=str(e))
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "status", "wait", "cancel", "list"],
+                    "description": "Action to perform",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Task description (required for 'create' action)",
+                },
+                "agent_type": {
+                    "type": "string",
+                    "enum": ["explorer", "planner", "focused_coder"],
+                    "description": "Type of agent for the task (default: focused_coder)",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (required for status/wait/cancel actions)",
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Timeout in seconds for wait action",
+                },
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        }
+
+
 # Initialize default tool registry
-def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = True) -> ToolRegistry:
-    """Create a tool registry with default tools."""
+def create_default_tool_registry(
+    enable_write: bool = True,
+    enable_edit: bool = True,
+    enable_task: bool = True,
+    session_id: str | None = None,
+) -> ToolRegistry:
+    """Create a tool registry with default tools.
+
+    Args:
+        enable_write: Enable write_file tool
+        enable_edit: Enable edit_file tool
+        enable_task: Enable task tool for parallel sub-agents
+        session_id: Session ID for task tool
+    """
     registry = ToolRegistry()
 
     # Register built-in tools
@@ -605,6 +755,8 @@ def create_default_tool_registry(enable_write: bool = True, enable_edit: bool = 
         registry.register(WriteFileTool())
     if enable_edit:
         registry.register(EditFileTool())
+    if enable_task:
+        registry.register(ParallelTaskTool(session_id=session_id))
 
     return registry
 
