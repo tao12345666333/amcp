@@ -28,11 +28,31 @@ class Server:
 
 
 @dataclass
+class ModelConfig:
+    """Configuration for a specific model."""
+
+    # Model identification
+    provider_id: str | None = None  # Provider ID from models.dev (e.g., "openai", "anthropic")
+    model_id: str | None = None  # Model ID (e.g., "gpt-4o", "claude-3.5-sonnet")
+
+    # Custom settings (override database values)
+    context_window: int | None = None  # Override context window size
+    output_limit: int | None = None  # Override output limit
+
+    # Whether this is a custom model (not from models.dev database)
+    is_custom: bool = False
+
+
+@dataclass
 class ChatConfig:
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     api_type: str | None = None  # "openai" (default) or "anthropic"
+
+    # Model configuration (from models.dev or custom)
+    model_config: ModelConfig | None = None
+
     # Tool calling settings
     tool_loop_limit: int | None = None
     default_max_lines: int | None = None
@@ -48,7 +68,6 @@ class ChatConfig:
     # Queue settings
     enable_queue: bool | None = None  # enable message queue (default: True)
     max_queue_size: int | None = None  # max queued messages per session (default: 100)
-
 
 
 @dataclass
@@ -89,6 +108,19 @@ def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
     return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
 
 
+def _decode_model_config(raw: Mapping[str, object] | None) -> ModelConfig | None:
+    """Decode model_config section from TOML."""
+    if not raw:
+        return None
+    return ModelConfig(
+        provider_id=str(raw["provider_id"]) if raw.get("provider_id") else None,
+        model_id=str(raw["model_id"]) if raw.get("model_id") else None,
+        context_window=int(raw["context_window"]) if raw.get("context_window") else None,
+        output_limit=int(raw["output_limit"]) if raw.get("output_limit") else None,
+        is_custom=bool(raw.get("is_custom", False)),
+    )
+
+
 def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     if not raw:
         return None
@@ -108,11 +140,15 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     # Queue settings
     enable_queue = raw.get("enable_queue")
     max_queue_size = raw.get("max_queue_size")
+    # Model config
+    model_config = _decode_model_config(raw.get("model_config"))  # type: ignore
+
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
         model=str(model) if model is not None else None,
         api_key=str(api_key) if api_key is not None else None,
         api_type=str(api_type) if api_type is not None else None,
+        model_config=model_config,
         tool_loop_limit=int(tool_loop_limit) if tool_loop_limit is not None else None,
         default_max_lines=int(default_max_lines) if default_max_lines is not None else None,
         read_roots=[str(p) for p in (read_roots or [])] if read_roots is not None else None,
@@ -148,6 +184,24 @@ def _encode_server(s: Server) -> dict:
     return out
 
 
+def _encode_model_config(m: ModelConfig | None) -> dict | None:
+    """Encode ModelConfig to TOML-compatible dict."""
+    if m is None:
+        return None
+    out: dict = {}
+    if m.provider_id:
+        out["provider_id"] = m.provider_id
+    if m.model_id:
+        out["model_id"] = m.model_id
+    if m.context_window is not None:
+        out["context_window"] = m.context_window
+    if m.output_limit is not None:
+        out["output_limit"] = m.output_limit
+    if m.is_custom:
+        out["is_custom"] = True
+    return out if out else None
+
+
 def _encode_chat(c: ChatConfig | None) -> dict | None:
     if c is None:
         return None
@@ -160,6 +214,10 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["api_key"] = c.api_key
     if c.api_type:
         out["api_type"] = c.api_type
+    # Model config
+    model_config_dict = _encode_model_config(c.model_config)
+    if model_config_dict:
+        out["model_config"] = model_config_dict
     if c.tool_loop_limit is not None:
         out["tool_loop_limit"] = int(c.tool_loop_limit)
     if c.default_max_lines is not None:

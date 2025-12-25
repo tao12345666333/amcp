@@ -349,7 +349,7 @@ class EventBus:
         # Store in history
         self._history.append(event)
         if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
+            self._history = self._history[-self._max_history :]
 
         results = []
         handlers_to_remove = []
@@ -396,7 +396,7 @@ class EventBus:
         # Store in history
         self._history.append(event)
         if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
+            self._history = self._history[-self._max_history :]
 
         handlers_to_remove = []
 
@@ -490,9 +490,7 @@ class EventBus:
         if event_type is None:
             return len(self._handlers)
 
-        return sum(
-            1 for h in self._handlers if h.event_types is None or event_type in h.event_types
-        )
+        return sum(1 for h in self._handlers if h.event_types is None or event_type in h.event_types)
 
     def get_stats(self) -> dict[str, Any]:
         """Get event bus statistics."""
@@ -500,9 +498,7 @@ class EventBus:
             "total_handlers": len(self._handlers),
             "history_size": len(self._history),
             "max_history": self._max_history,
-            "handlers_by_priority": {
-                p.name: sum(1 for h in self._handlers if h.priority == p) for p in EventPriority
-            },
+            "handlers_by_priority": {p.name: sum(1 for h in self._handlers if h.priority == p) for p in EventPriority},
         }
 
 

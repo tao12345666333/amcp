@@ -304,7 +304,9 @@ class Agent:
 
                 # Process queued message
                 self.console.print(f"[dim]Processing queued message...[/dim]")
-                queued_work_dir = Path(next_msg.metadata.get("work_dir")) if next_msg.metadata.get("work_dir") else work_dir
+                queued_work_dir = (
+                    Path(next_msg.metadata.get("work_dir")) if next_msg.metadata.get("work_dir") else work_dir
+                )
                 await self._process_message(
                     next_msg.prompt,
                     queued_work_dir,
@@ -318,9 +320,7 @@ class Agent:
             # Always release the session lock
             queue_manager.release(self.session_id)
 
-    async def _process_message(
-        self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool
-    ) -> str:
+    async def _process_message(self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool) -> str:
         """
         Process a single message (internal implementation).
 
@@ -403,7 +403,6 @@ class Agent:
     def get_queue_status(self) -> dict[str, Any]:
         """Get queue status for this session."""
         return get_message_queue_manager().get_queue_status(self.session_id)
-
 
     async def _build_tools(self) -> list[dict[str, Any]]:
         """Build list of available tools."""
@@ -813,6 +812,7 @@ def create_agent_by_name(
     config = get_agent_config(name)
     if config is None:
         from .multi_agent import get_agent_registry
+
         available = get_agent_registry().list_agents()
         raise ValueError(f"Unknown agent: {name}. Available agents: {', '.join(available)}")
 
@@ -864,6 +864,7 @@ def list_available_agents() -> list[str]:
         List of agent names from the registry
     """
     from .multi_agent import get_agent_registry
+
     return get_agent_registry().list_agents()
 
 
@@ -875,6 +876,7 @@ def list_primary_agents() -> list[str]:
         List of primary agent names
     """
     from .multi_agent import get_agent_registry
+
     return get_agent_registry().list_primary_agents()
 
 
@@ -886,4 +888,5 @@ def list_subagent_types() -> list[str]:
         List of subagent names
     """
     from .multi_agent import get_agent_registry
+
     return get_agent_registry().list_subagents()

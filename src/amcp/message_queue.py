@@ -453,8 +453,7 @@ class MessageQueueManager:
             "busy_sessions": self.get_busy_sessions(),
             "total_queued": sum(len(q) for q in self._session_queues.values()),
             "sessions": {
-                sid: self.get_queue_status(sid)
-                for sid in set(self._session_queues.keys()) | self._busy_sessions
+                sid: self.get_queue_status(sid) for sid in set(self._session_queues.keys()) | self._busy_sessions
             },
         }
 

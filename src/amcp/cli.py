@@ -25,10 +25,25 @@ app = typer.Typer(add_completion=False, context_settings={"help_option_names": [
 console = Console()
 
 
-@app.command(help="Initialize default config at ~/.config/amcp/config.toml if missing")
-def init() -> None:
-    path = save_default_config()
-    console.print(f"Wrote default config to {path}")
+@app.command(help="Initialize AMCP configuration with interactive wizard")
+def init(
+    quick: Annotated[
+        bool,
+        typer.Option("--quick", "-q", help="Skip interactive wizard and use default config"),
+    ] = False,
+) -> None:
+    """Initialize AMCP configuration.
+
+    By default, runs an interactive wizard to help you configure your AI provider.
+    Use --quick to skip the wizard and create a default config file.
+    """
+    if quick:
+        path = save_default_config()
+        console.print(f"[green]Wrote default config to {path}[/green]")
+    else:
+        from .init_wizard import run_init_wizard
+
+        run_init_wizard()
 
 
 mcp = typer.Typer(help="MCP utilities (stdio client)")
@@ -115,9 +130,7 @@ def main(
     ] = None,
     no_progress: Annotated[bool, typer.Option("--no-progress", help="Disable progress indicators")] = False,
     list_agents: Annotated[bool, typer.Option("--list", help="List available agent specifications")] = False,
-    list_agent_types: Annotated[
-        bool, typer.Option("--list-types", help="List available built-in agent types")
-    ] = False,
+    list_agent_types: Annotated[bool, typer.Option("--list-types", help="List available built-in agent types")] = False,
     session_id: Annotated[
         str | None, typer.Option("--session", help="Use specific session ID for conversation continuity")
     ] = None,
@@ -259,7 +272,9 @@ def main(
                 agent = create_agent_by_name(cfg.chat.default_agent, session_id=session_id)
                 console.print(f"[green]Using configured agent: {agent.name} ({agent.agent_spec.mode.value})[/green]")
             else:
-                console.print(f"[yellow]Warning: Configured agent '{cfg.chat.default_agent}' not found, using default[/yellow]")
+                console.print(
+                    f"[yellow]Warning: Configured agent '{cfg.chat.default_agent}' not found, using default[/yellow]"
+                )
                 agent_spec = get_default_agent_spec()
                 agent = Agent(agent_spec, session_id=session_id)
 
@@ -300,7 +315,9 @@ def main(
             # Interactive mode
             console.print(f"[bold]🤖 Agent {agent.name} - Interactive Mode[/bold]")
             console.print(f"[dim]Description: {agent.agent_spec.description}[/dim]")
-            console.print(f"[dim]Max steps: {agent.agent_spec.max_steps} | Mode: {agent.agent_spec.mode.value} | Session: {agent.session_id}[/dim]")
+            console.print(
+                f"[dim]Max steps: {agent.agent_spec.max_steps} | Mode: {agent.agent_spec.mode.value} | Session: {agent.session_id}[/dim]"
+            )
             console.print("[dim]Commands: 'exit' to quit, 'clear' to clear history, 'info' for session info[/dim]")
             console.print()
 
@@ -381,9 +398,7 @@ def agent(
     ] = None,
     no_progress: Annotated[bool, typer.Option("--no-progress", help="Disable progress indicators")] = False,
     list_agents: Annotated[bool, typer.Option("--list", help="List available agent specifications")] = False,
-    list_agent_types: Annotated[
-        bool, typer.Option("--list-types", help="List available built-in agent types")
-    ] = False,
+    list_agent_types: Annotated[bool, typer.Option("--list-types", help="List available built-in agent types")] = False,
     session_id: Annotated[
         str | None, typer.Option("--session", help="Use specific session ID for conversation continuity")
     ] = None,

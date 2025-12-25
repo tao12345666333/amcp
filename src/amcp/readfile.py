@@ -23,15 +23,28 @@ def _parse_range(spec: str) -> Range:
     """
     try:
         spec = spec.strip()
+        if not spec:
+            raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+
         if "-" in spec:
-            s, e = spec.split("-", 1)
-            start = int(s.strip())
-            end = int(e.strip())
+            # Check if it's a valid range format (not just "-" or "1-" or "-10")
+            parts = spec.split("-", 1)
+            s, e = parts[0].strip(), parts[1].strip()
+
+            # Handle edge cases
+            if not s or not e:
+                raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+
+            start = int(s)
+            end = int(e)
         else:
             # Single line number
             start = end = int(spec)
+    except ValueError:
+        raise
     except Exception as e:  # noqa: BLE001
         raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from e
+
     if start < 1 or end < start:
         raise ValueError(f"Invalid range: {spec!r}")
     return Range(start, end)

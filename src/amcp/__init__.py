@@ -37,9 +37,27 @@ __all__ = [
     "TaskPriority",
     "TaskTool",
     "get_task_manager",
+    # Smart compaction
+    "SmartCompactor",
+    "CompactionConfig",
+    "CompactionStrategy",
+    "CompactionResult",
+    "get_model_context_window",
+    "estimate_tokens",
+    "create_compactor",
+    # Models database
+    "ModelsDatabase",
+    "ModelInfo",
+    "ProviderInfo",
+    "get_models_database",
+    "get_context_window_from_database",
+    # Config
+    "AMCPConfig",
+    "ChatConfig",
+    "ModelConfig",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Lazy imports for cleaner namespace
 from .agent import (
@@ -54,6 +72,20 @@ from .agent import (
     list_primary_agents,
     list_subagent_types,
 )
+from .compaction import (
+    CompactionConfig,
+    CompactionResult,
+    CompactionStrategy,
+    SmartCompactor,
+    create_compactor,
+    estimate_tokens,
+    get_model_context_window,
+)
+from .config import (
+    AMCPConfig,
+    ChatConfig,
+    ModelConfig,
+)
 from .event_bus import (
     Event,
     EventBus,
@@ -66,6 +98,13 @@ from .message_queue import (
     MessageQueueManager,
     QueuedMessage,
     get_message_queue_manager,
+)
+from .models_db import (
+    ModelInfo,
+    ModelsDatabase,
+    ProviderInfo,
+    get_context_window_from_database,
+    get_models_database,
 )
 from .multi_agent import (
     AgentConfig,

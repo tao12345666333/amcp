@@ -144,7 +144,7 @@ class TestBuiltinAgents:
         planner = BUILTIN_AGENTS["planner"]
         assert planner.mode == AgentMode.SUBAGENT
         assert planner.can_delegate is False
-        assert planner.max_steps == 30
+        assert planner.max_steps == 150
 
     def test_focused_coder_agent(self):
         """Test focused_coder agent configuration."""

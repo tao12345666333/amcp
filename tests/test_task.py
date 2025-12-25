@@ -169,12 +169,8 @@ class TestTaskManager:
     @pytest.mark.asyncio
     async def test_list_tasks_by_session(self, task_manager):
         """Test filtering tasks by session."""
-        await task_manager.create_task(
-            "Task 1", "explorer", parent_session_id="s1", auto_start=False
-        )
-        await task_manager.create_task(
-            "Task 2", "explorer", parent_session_id="s2", auto_start=False
-        )
+        await task_manager.create_task("Task 1", "explorer", parent_session_id="s1", auto_start=False)
+        await task_manager.create_task("Task 2", "explorer", parent_session_id="s2", auto_start=False)
 
         s1_tasks = task_manager.list_tasks(parent_session_id="s1")
         assert len(s1_tasks) == 1
