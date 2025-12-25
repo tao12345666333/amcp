@@ -163,7 +163,7 @@ BUILTIN_AGENTS: dict[str, AgentConfig] = {
         system_prompt=EXPLORER_SYSTEM_PROMPT,
         tools=["read_file", "grep", "glob", "think"],
         excluded_tools=["write_file", "edit_file", "bash"],
-        max_steps=50,
+        max_steps=100,
         can_delegate=False,
     ),
     "planner": AgentConfig(
@@ -173,7 +173,7 @@ BUILTIN_AGENTS: dict[str, AgentConfig] = {
         system_prompt=PLANNER_SYSTEM_PROMPT,
         tools=["read_file", "grep", "glob", "think"],
         excluded_tools=["write_file", "edit_file", "bash"],
-        max_steps=30,
+        max_steps=150,
         can_delegate=False,
     ),
     "focused_coder": AgentConfig(
@@ -183,7 +183,7 @@ BUILTIN_AGENTS: dict[str, AgentConfig] = {
         system_prompt=CODER_SYSTEM_PROMPT,
         tools=["read_file", "grep", "write_file", "edit_file", "bash", "think"],
         excluded_tools=[],
-        max_steps=100,
+        max_steps=200,
         can_delegate=False,
     ),
 }

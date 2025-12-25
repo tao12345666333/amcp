@@ -15,12 +15,23 @@ _DEF_BLOCK_SIZE = 5000
 
 
 def _parse_range(spec: str) -> Range:
+    """Parse a range specification like '1-100' or single line like '1'.
+
+    Supports:
+        - "1-100": lines 1 to 100
+        - "1": just line 1 (same as "1-1")
+    """
     try:
-        s, e = spec.split("-", 1)
-        start = int(s)
-        end = int(e)
+        spec = spec.strip()
+        if "-" in spec:
+            s, e = spec.split("-", 1)
+            start = int(s.strip())
+            end = int(e.strip())
+        else:
+            # Single line number
+            start = end = int(spec)
     except Exception as e:  # noqa: BLE001
-        raise ValueError(f"Invalid range: {spec!r}, expected start-end") from e
+        raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from e
     if start < 1 or end < start:
         raise ValueError(f"Invalid range: {spec!r}")
     return Range(start, end)
