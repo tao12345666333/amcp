@@ -55,6 +55,10 @@ __all__ = [
     "AMCPConfig",
     "ChatConfig",
     "ModelConfig",
+    # Project rules
+    "ProjectRulesLoader",
+    "load_project_rules",
+    "get_project_rules_info",
 ]
 
 __version__ = "0.4.0"
@@ -112,6 +116,11 @@ from .multi_agent import (
     AgentRegistry,
     get_agent_config,
     get_agent_registry,
+)
+from .project_rules import (
+    ProjectRulesLoader,
+    get_project_rules_info,
+    load_project_rules,
 )
 from .task import (
     Task,

@@ -16,6 +16,7 @@ from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentMode
+from .project_rules import ProjectRulesLoader
 from .tools import ToolRegistry
 from .ui import LiveUI
 
@@ -48,6 +49,7 @@ class Agent:
     - Error handling and retries
     - Status reporting and progress indication
     - Conversation history persistence
+    - Project rules loading from AGENTS.md
     """
 
     def __init__(self, agent_spec: ResolvedAgentSpec | None = None, session_id: str | None = None):
@@ -65,6 +67,9 @@ class Agent:
 
         # Tool call tracking for per-conversation and per-session limits
         self.current_conversation_tool_calls: list[dict[str, Any]] = []
+
+        # Project rules loader (will be initialized with work_dir during run)
+        self._project_rules_loader: ProjectRulesLoader | None = None
 
         # Load existing conversation history if available
         self._load_conversation_history()
@@ -150,9 +155,10 @@ class Agent:
         return self.agent_spec.max_steps
 
     def _get_system_prompt(self, work_dir: Path | None = None) -> str:
-        """Get resolved system prompt with template variables."""
+        """Get resolved system prompt with template variables and project rules."""
         current_time = datetime.now().isoformat()
-        work_dir_str = str(work_dir.resolve()) if work_dir else str(Path.cwd())
+        resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
+        work_dir_str = str(resolved_work_dir)
 
         # Note: MCP tools info will be loaded asynchronously during execution
         mcp_tools_info = []
@@ -164,11 +170,53 @@ class Agent:
             "mcp_tools": json.dumps(mcp_tools_info, indent=2),
         }
 
+        # Build base system prompt
         try:
-            return self.agent_spec.system_prompt.format(**prompt_vars)
+            base_prompt = self.agent_spec.system_prompt.format(**prompt_vars)
         except KeyError as e:
             self.console.print(f"[yellow]Warning: Missing template variable {e}[/yellow]")
-            return self.agent_spec.system_prompt
+            base_prompt = self.agent_spec.system_prompt
+
+        # Load project rules from AGENTS.md files
+        project_rules = self._load_project_rules(resolved_work_dir)
+
+        if project_rules:
+            return base_prompt + "\n\n" + project_rules
+        return base_prompt
+
+    def _load_project_rules(self, work_dir: Path) -> str:
+        """Load project rules from AGENTS.md files.
+
+        Args:
+            work_dir: Working directory to search from
+
+        Returns:
+            Combined project rules content or empty string
+        """
+        # Initialize or update the project rules loader
+        if self._project_rules_loader is None or self._project_rules_loader.work_dir != work_dir:
+            self._project_rules_loader = ProjectRulesLoader(work_dir)
+
+        rules = self._project_rules_loader.load_rules()
+
+        # Log loaded files
+        if rules:
+            loaded_files = self._project_rules_loader.get_loaded_files()
+            if loaded_files:
+                file_names = [f.name for f in loaded_files]
+                self.console.print(f"[dim]📋 Loaded project rules: {', '.join(file_names)}[/dim]")
+
+        return rules
+
+    def get_project_rules_info(self) -> dict[str, Any]:
+        """Get information about loaded project rules.
+
+        Returns:
+            Dictionary with rules information
+        """
+        if self._project_rules_loader:
+            return self._project_rules_loader.get_rules_summary()
+        return {"has_rules": False, "files_loaded": []}
 
     async def _get_mcp_tools_info(self, cfg) -> list[dict[str, Any]]:
         """Get information about available MCP tools."""

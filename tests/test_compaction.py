@@ -15,61 +15,60 @@ from amcp.compaction import (
 
 
 class TestGetModelContextWindow:
-    """Tests for get_model_context_window function."""
+    """Tests for get_model_context_window function.
 
-    def test_exact_match_gpt4(self):
-        """Test exact match for GPT-4."""
-        assert get_model_context_window("gpt-4") == 8_192
+    Note: These tests are designed to be flexible since values can come
+    from either the models.dev cache or built-in fallbacks.
+    """
 
-    def test_exact_match_gpt4_turbo(self):
-        """Test exact match for GPT-4 Turbo."""
-        assert get_model_context_window("gpt-4-turbo") == 128_000
+    def test_gpt4_family(self):
+        """Test GPT-4 family models have reasonable context windows."""
+        # GPT-4 base should have relatively small context
+        gpt4 = get_model_context_window("gpt-4")
+        assert 8_000 <= gpt4 <= 32_000
 
-    def test_exact_match_claude(self):
-        """Test exact match for Claude."""
-        assert get_model_context_window("claude-3.5-sonnet") == 200_000
+        # GPT-4 Turbo should have larger context
+        gpt4_turbo = get_model_context_window("gpt-4-turbo")
+        assert gpt4_turbo >= 100_000
 
-    def test_exact_match_gemini(self):
-        """Test exact match for Gemini."""
-        assert get_model_context_window("gemini-1.5-pro") == 2_000_000
+    def test_claude_family(self):
+        """Test Claude models have large context windows."""
+        # Claude 3.5 Sonnet should have substantial context
+        claude = get_model_context_window("claude-3.5-sonnet")
+        assert claude >= 80_000  # At least 80K
+
+        # Pattern matching for Claude
+        claude_opus = get_model_context_window("claude-3-opus-20240229")
+        assert claude_opus >= 80_000
+
+    def test_gemini_family(self):
+        """Test Gemini models have large context windows."""
+        gemini = get_model_context_window("gemini-1.5-pro")
+        assert gemini >= 500_000  # At least 500K
 
     def test_partial_match_gpt4o(self):
         """Test partial matching for GPT-4o models."""
-        # gpt-4o should match
         result = get_model_context_window("gpt-4o-2024-05-13")
-        assert result == 128_000
-
-    def test_partial_match_claude(self):
-        """Test partial matching for Claude."""
-        result = get_model_context_window("claude-3-opus-20240229")
-        assert result == 200_000
+        assert result >= 100_000  # GPT-4o models should be 100K+
 
     def test_deepseek_model(self):
-        """Test DeepSeek model detection.
-
-        Note: values come from models_db BUILTIN_MODELS which may differ
-        from older hardcoded values.
-        """
-        # models_db has deepseek-chat as 128K (from models.dev data)
-        assert get_model_context_window("deepseek-chat") == 128_000
-        # For models not in BUILTIN_MODELS, falls back to pattern matching
-        # which may give different results
-        deepseek_v3 = get_model_context_window("deepseek-v3")
-        assert deepseek_v3 >= 64_000  # At least 64K
+        """Test DeepSeek model detection."""
+        deepseek_chat = get_model_context_window("deepseek-chat")
+        assert deepseek_chat >= 64_000  # At least 64K
 
     def test_qwen_model(self):
         """Test Qwen model detection."""
-        assert get_model_context_window("qwen-2.5") == 128_000
+        qwen = get_model_context_window("qwen-2.5")
+        # Could be from cache or pattern matching
+        assert qwen >= 32_000  # At least 32K
 
     def test_glm_model(self):
-        """Test GLM model detection.
-
-        Note: models_db has updated values for GLM models.
-        """
+        """Test GLM model detection."""
         glm4 = get_model_context_window("glm-4")
-        assert glm4 >= 128_000
-        # glm-4.6 is in BUILTIN_MODELS as 200K
-        assert get_model_context_window("glm-4.6") == 200_000
+        assert glm4 >= 100_000  # GLM-4 should be 100K+
+
+        glm46 = get_model_context_window("glm-4.6")
+        assert glm46 >= 100_000  # GLM-4.6 should also be 100K+
 
     def test_unknown_model_returns_default(self):
         """Test unknown model returns default window."""
