@@ -61,7 +61,7 @@ __all__ = [
     "get_project_rules_info",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # Lazy imports for cleaner namespace
 from .agent import (
