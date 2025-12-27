@@ -149,7 +149,7 @@ class AMCPAgent(Agent):
             agent_info=Implementation(
                 name="amcp",
                 title="AMCP Agent",
-                version="0.1.0",
+                version="0.4.0",
             ),
         )
 

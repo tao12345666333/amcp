@@ -1,5 +1,6 @@
 # AMCP
 
+[![PyPI version](https://badge.fury.io/py/amcp-agent.svg)](https://badge.fury.io/py/amcp-agent)
 [![CI](https://github.com/tao12345666333/amcp/workflows/CI/badge.svg)](https://github.com/tao12345666333/amcp/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -31,9 +32,35 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 - **Multi-Agent System**: Primary/Subagent architecture with built-in agent types (coder, explorer, planner)
 - **Event Bus**: Publish/subscribe system for agent communication and extensibility
 
-## Install (editable)
+## Installation
+
+### Quick Run with uvx (no install needed)
 
 ```bash
+# Run directly without installation (like npx)
+uvx amcp-agent
+```
+
+### From PyPI
+
+```bash
+# Install from PyPI
+pip install amcp-agent
+
+# Or with uv
+uv pip install amcp-agent
+
+# With Anthropic Claude support
+pip install amcp-agent[anthropic]
+```
+
+### From Source (development)
+
+```bash
+# Clone the repository
+git clone https://github.com/tao12345666333/amcp.git
+cd amcp
+
 # using uv (recommended)
 uv venv && source .venv/bin/activate
 uv pip install -e .
@@ -168,7 +195,7 @@ model = "claude-sonnet-4-20250514"
 api_key = "your-anthropic-api-key"  # or set ANTHROPIC_API_KEY env var
 ```
 
-To use Anthropic, install with: `pip install amcp[anthropic]`
+To use Anthropic, install with: `pip install amcp-agent[anthropic]`
 
 ## Development
 
