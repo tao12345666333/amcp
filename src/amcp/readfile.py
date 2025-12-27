@@ -42,7 +42,7 @@ def _parse_range(spec: str) -> Range:
             start = end = int(spec)
     except ValueError:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from e
 
     if start < 1 or end < start:

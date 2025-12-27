@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import typer
 from rich.console import Console
 from rich.status import Status
 
@@ -15,7 +14,7 @@ from .compaction import Compactor
 from .config import load_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .message_queue import MessagePriority, get_message_queue_manager
-from .multi_agent import AgentMode
+from .multi_agent import AgentConfig
 from .project_rules import ProjectRulesLoader
 from .tools import ToolRegistry
 from .ui import LiveUI
@@ -351,7 +350,7 @@ class Agent:
                     break
 
                 # Process queued message
-                self.console.print(f"[dim]Processing queued message...[/dim]")
+                self.console.print("[dim]Processing queued message...[/dim]")
                 queued_work_dir = (
                     Path(next_msg.metadata.get("work_dir")) if next_msg.metadata.get("work_dir") else work_dir
                 )
@@ -802,7 +801,7 @@ class Agent:
 
 
 def create_agent_from_config(
-    config: "AgentConfig",
+    config: AgentConfig,
     session_id: str | None = None,
 ) -> Agent:
     """
@@ -817,7 +816,6 @@ def create_agent_from_config(
     Returns:
         Configured Agent instance
     """
-    from .multi_agent import AgentConfig
 
     # Convert AgentConfig to ResolvedAgentSpec
     from .agent_spec import ResolvedAgentSpec

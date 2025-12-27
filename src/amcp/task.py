@@ -40,6 +40,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -48,10 +49,8 @@ from enum import Enum
 from typing import Any
 
 from .event_bus import (
-    Event,
     EventType,
     emit_task_event,
-    get_event_bus,
 )
 from .multi_agent import AgentMode, create_subagent_config, get_agent_registry
 
@@ -119,7 +118,7 @@ class Task:
         priority: TaskPriority = TaskPriority.NORMAL,
         parent_session_id: str | None = None,
         **metadata: Any,
-    ) -> "Task":
+    ) -> Task:
         """Create a new task.
 
         Args:
@@ -404,10 +403,8 @@ class TaskManager:
 
         if task._task is not None:
             task._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task._task
-            except asyncio.CancelledError:
-                pass
             return True
 
         return False
@@ -511,7 +508,7 @@ class TaskManager:
         )
 
         if not done:
-            raise asyncio.TimeoutError("No task completed within timeout")
+            raise TimeoutError("No task completed within timeout")
 
         first_future = next(iter(done))
         task_id = future_to_task[first_future]
@@ -807,7 +804,7 @@ Result:
             else:
                 return f"Task {task.id} is {task.state.value}"
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return f"Timeout waiting for task {task_id}"
         except Exception as e:
             return f"Error waiting for task: {e}"

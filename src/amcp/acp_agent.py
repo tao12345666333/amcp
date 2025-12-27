@@ -61,7 +61,6 @@ from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .tools import ToolResult, get_tool_registry
 
-
 # Session modes
 AVAILABLE_MODES = [
     SessionMode(id="ask", name="Ask", description="Request permission before making any changes"),
@@ -346,12 +345,12 @@ class AMCPAgent(Agent):
 
         # Parse response into plan entries
         lines = [
-            l.strip()
-            for l in response.split("\n")
-            if l.strip() and (l.strip().startswith("-") or l.strip()[0].isdigit())
+            line.strip()
+            for line in response.split("\n")
+            if line.strip() and (line.strip().startswith("-") or line.strip()[0].isdigit())
         ]
         entries = [
-            PlanEntry(content=l.lstrip("-0123456789. "), priority="medium", status="pending") for l in lines[:10]
+            PlanEntry(content=line.lstrip("-0123456789. "), priority="medium", status="pending") for line in lines[:10]
         ]
         if entries and self._conn:
             from acp.schema import Plan
@@ -484,7 +483,7 @@ class AMCPAgent(Agent):
         tool_registry = await self._build_tool_registry()
 
         max_steps = self.agent_spec.max_steps
-        for step in range(max_steps):
+        for _step in range(max_steps):
             if session.session_id in self._cancelled_sessions:
                 raise asyncio.CancelledError()
 
@@ -619,10 +618,7 @@ class AMCPAgent(Agent):
         tools = []
 
         # In architect mode, only provide read tools
-        if session.current_mode_id == "architect":
-            allowed = ("read_file", "grep", "think")
-        else:
-            allowed = None
+        allowed = ("read_file", "grep", "think") if session.current_mode_id == "architect" else None
 
         registry = get_tool_registry()
         for tool_name in registry.list_tools():

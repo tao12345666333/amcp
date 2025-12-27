@@ -137,7 +137,7 @@ class AnthropicClient(BaseLLMClient):
         try:
             from anthropic import Anthropic
         except ImportError:
-            raise ImportError("anthropic package not installed. Run: pip install anthropic")
+            raise ImportError("anthropic package not installed. Run: pip install anthropic") from None
 
         kwargs = {"api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", "")}
         if base_url:
@@ -159,7 +159,7 @@ class AnthropicClient(BaseLLMClient):
             elif role == "user":
                 anthropic_messages.append({"role": "user", "content": content})
             elif role == "assistant":
-                if "tool_calls" in msg and msg["tool_calls"]:
+                if msg.get("tool_calls"):
                     blocks = []
                     if content:
                         blocks.append({"type": "text", "text": content})

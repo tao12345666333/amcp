@@ -22,8 +22,6 @@ from .config import (
 from .models_db import (
     ModelsDatabase,
     fetch_models_from_api,
-    get_models_database,
-    has_models_cache,
     save_models_cache,
 )
 

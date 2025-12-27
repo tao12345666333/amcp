@@ -37,8 +37,7 @@ Example:
 from __future__ import annotations
 
 import logging
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -259,7 +258,7 @@ def estimate_tokens(messages: list[dict[str, Any]], use_tiktoken: bool = True) -
                             total += len(enc.encode(item["text"]))
 
                 # Count tool calls
-                if "tool_calls" in msg and msg["tool_calls"]:
+                if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         if isinstance(tc, dict):
                             name = tc.get("name", "") or tc.get("function", {}).get("name", "")
@@ -282,7 +281,7 @@ def estimate_tokens(messages: list[dict[str, Any]], use_tiktoken: bool = True) -
                     total += len(item["text"]) // 4
 
         # Estimate tool calls
-        if "tool_calls" in msg and msg["tool_calls"]:
+        if msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 if isinstance(tc, dict):
                     total += 50  # Overhead per tool call
@@ -303,7 +302,7 @@ def _messages_to_text(messages: list[dict[str, Any]]) -> str:
             parts.append(f"## Message {i + 1} ({role})\n{content}")
 
         # Include tool calls
-        if "tool_calls" in msg and msg["tool_calls"]:
+        if msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 name = tc.get("name", "") or tc.get("function", {}).get("name", "")
                 args = tc.get("arguments", "") or tc.get("function", {}).get("arguments", "")

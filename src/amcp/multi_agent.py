@@ -21,7 +21,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 
 class AgentMode(Enum):
@@ -75,12 +74,8 @@ class AgentConfig:
         Returns:
             List of tool names this agent can use
         """
-        if self.tools:
-            # Use explicit whitelist
-            effective = [t for t in self.tools if t in available_tools]
-        else:
-            # Start with all available tools
-            effective = list(available_tools)
+        # Use explicit whitelist or all available tools
+        effective = [t for t in self.tools if t in available_tools] if self.tools else list(available_tools)
 
         # Apply exclusions
         return [t for t in effective if t not in self.excluded_tools]

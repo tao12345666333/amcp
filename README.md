@@ -20,12 +20,16 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 
 ## Features
 
-- **Built-in Tools**: read_file, grep, bash, think
+- **Built-in Tools**: read_file, grep, bash, think, todo, write_file, edit_file
 - **MCP Integration**: Connect to any MCP server for extended capabilities
 - **Conversation History**: Persistent sessions across runs
 - **Flexible Configuration**: YAML-based agent specifications
 - **Tool Calling**: Automatic tool selection and execution
 - **ACP Support**: Full Agent Client Protocol support for IDE integration (Zed, etc.)
+- **AGENTS.md Support**: Auto-load project-specific rules from `AGENTS.md` files
+- **Smart Context Compaction**: Intelligent context management with dynamic thresholds
+- **Multi-Agent System**: Primary/Subagent architecture with built-in agent types (coder, explorer, planner)
+- **Event Bus**: Publish/subscribe system for agent communication and extensibility
 
 ## Install (editable)
 
@@ -114,6 +118,7 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
 - **todo**: Manage a todo list to track tasks during complex operations
 - **write_file**: Write content to files (can be disabled via config)
 - **edit_file**: Edit files with search and replace (can be disabled via config)
+- **task**: Spawn sub-agents for parallel task execution
 
 ## Config
 

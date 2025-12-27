@@ -42,10 +42,11 @@ import asyncio
 import logging
 import uuid
 import weakref
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +177,7 @@ class EventHandler:
             return False
 
         # Check session filter
-        if self.session_filter is not None and event.session_id != self.session_filter:
-            return False
-
-        return True
+        return not (self.session_filter is not None and event.session_id != self.session_filter)
 
     def get_callback(self) -> Callable | None:
         """Get the callback, resolving weak reference if necessary."""

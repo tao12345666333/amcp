@@ -212,11 +212,11 @@ def _get_chat_runtime_settings(override: dict | None = None) -> dict:
     else:
         roots = [Path.cwd().resolve()]
     if override:
-        if "read_roots" in override and override["read_roots"]:
+        if override.get("read_roots"):
             roots = [Path(r).expanduser().resolve() for r in override["read_roots"]]
-        if "tool_loop_limit" in override and override["tool_loop_limit"]:
+        if override.get("tool_loop_limit"):
             tool_loop_limit = int(override["tool_loop_limit"])
-        if "default_max_lines" in override and override["default_max_lines"]:
+        if override.get("default_max_lines"):
             default_max_lines = int(override["default_max_lines"])
     return {
         "tool_loop_limit": int(tool_loop_limit),

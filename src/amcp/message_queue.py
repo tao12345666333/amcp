@@ -67,7 +67,7 @@ class QueuedMessage:
         attachments: list[dict[str, Any]] | None = None,
         priority: MessagePriority = MessagePriority.NORMAL,
         **metadata: Any,
-    ) -> "QueuedMessage":
+    ) -> QueuedMessage:
         """Create a new queued message.
 
         Args:

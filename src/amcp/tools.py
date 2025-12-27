@@ -302,7 +302,7 @@ class BashTool(BaseTool):
                 "timeout": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 300,
+                    "maximum": 600,
                     "description": "Timeout in seconds (default: 30)",
                 },
             },
@@ -660,7 +660,7 @@ Examples:
         try:
             # Check if we're already in an async context
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # We're in an async context, create a task and wait
                 # Use nest_asyncio if available, otherwise use a different approach
                 try:
