@@ -1,0 +1,56 @@
+# AMCP Hooks Configuration Example
+# This file should be placed at .amcp/hooks.toml in your project directory
+# or ~/.config/amcp/hooks.toml for user-level hooks
+
+# PreToolUse hooks - run before tool execution
+[hooks.PreToolUse]
+[[hooks.PreToolUse.handlers]]
+# Match specific tools using regex patterns
+matcher = "write_file|edit_file"
+type = "command"
+# Command receives hook input via stdin as JSON
+command = "./scripts/validate-file-changes.sh"
+timeout = 30
+enabled = true
+
+[[hooks.PreToolUse.handlers]]
+# Log all tool calls to a file
+matcher = "*"
+type = "python"
+script = "./scripts/log_tool_calls.py"
+timeout = 5
+enabled = true
+
+# PostToolUse hooks - run after tool execution
+[hooks.PostToolUse]
+[[hooks.PostToolUse.handlers]]
+# Check code quality after file writes
+matcher = "write_file"
+type = "command"
+command = "$AMCP_PROJECT_DIR/scripts/check-code-quality.sh"
+timeout = 60
+enabled = true
+
+# UserPromptSubmit hooks - run when user submits a prompt
+[hooks.UserPromptSubmit]
+[[hooks.UserPromptSubmit.handlers]]
+type = "python"
+script = "./scripts/validate_prompt.py"
+timeout = 5
+enabled = true
+
+# SessionStart hooks - run when a new session begins
+[hooks.SessionStart]
+[[hooks.SessionStart.handlers]]
+type = "command"
+command = "echo 'Session started' >> /tmp/amcp_sessions.log"
+timeout = 5
+enabled = true
+
+# SessionEnd hooks - run when a session ends
+[hooks.SessionEnd]
+[[hooks.SessionEnd.handlers]]
+type = "command"
+command = "echo 'Session ended' >> /tmp/amcp_sessions.log"
+timeout = 5
+enabled = true

@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.completion import FuzzyWordCompleter
+from prompt_toolkit.shortcuts import CompleteStyle
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -183,54 +186,125 @@ def select_provider(db: ModelsDatabase) -> tuple[str, str, list[str]] | None:
         if p not in sorted_providers:
             sorted_providers.append(p)
 
-    # Add custom option
-    sorted_providers.append("__custom__")
+    # Build provider display info for search
+    provider_display = {}
+    for pid in all_providers:
+        provider = db.get_provider(pid)
+        if provider:
+            provider_display[pid] = f"{pid} ({provider.name}, {len(provider.models)} models)"
 
     # Show provider selection
     console.print("\n[bold]Select a model provider:[/bold]")
+    console.print(f"[dim]Total providers available: {len(all_providers)}[/dim]")
 
-    # Show table for popular providers
+    # Show table for popular providers (top 10)
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", style="dim")
     table.add_column("Provider ID")
     table.add_column("Name")
     table.add_column("Models")
 
-    for i, pid in enumerate(sorted_providers[:15], 1):
-        if pid == "__custom__":
-            table.add_row(str(i), "[cyan]custom[/cyan]", "Enter custom provider", "-")
-        else:
-            provider = db.get_provider(pid)
-            if provider:
-                table.add_row(str(i), pid, provider.name, str(len(provider.models)))
+    display_count = min(10, len(sorted_providers))
+    for i, pid in enumerate(sorted_providers[:display_count], 1):
+        provider = db.get_provider(pid)
+        if provider:
+            table.add_row(str(i), pid, provider.name, str(len(provider.models)))
 
-    if len(sorted_providers) > 15:
-        table.add_row("...", f"({len(sorted_providers) - 15} more)", "", "")
+    # Add special options
+    table.add_row("[cyan]s[/cyan]", "[cyan]🔍 search[/cyan]", "Search all providers", f"{len(all_providers)} total")
+    table.add_row("[cyan]c[/cyan]", "[cyan]custom[/cyan]", "Enter custom provider", "-")
+
+    if len(sorted_providers) > display_count:
+        console.print(f"[dim]Showing top {display_count} providers. Type 's' to search all {len(all_providers)} providers.[/dim]")
 
     console.print(table)
 
     while True:
-        response = console.input("\nEnter number or provider ID: ").strip()
+        response = console.input("\nEnter number, 's' to search, or 'c' for custom: ").strip().lower()
+
+        if response == "c" or response == "custom":
+            return None
+
+        if response == "s" or response == "search":
+            # Enter fuzzy search mode
+            return _fuzzy_search_provider(db, all_providers, provider_display)
 
         try:
             idx = int(response) - 1
-            if 0 <= idx < len(sorted_providers):
+            if 0 <= idx < display_count:
                 selected = sorted_providers[idx]
-                if selected == "__custom__":
-                    return None
                 provider = db.get_provider(selected)
                 if provider:
                     return (provider.id, provider.api_url, provider.env_vars)
         except ValueError:
             # Try direct ID match
-            if response.lower() == "custom":
-                return None
             if response in all_providers:
                 provider = db.get_provider(response)
                 if provider:
                     return (provider.id, provider.api_url, provider.env_vars)
 
-        console.print("[yellow]Invalid selection. Please try again.[/yellow]")
+        console.print("[yellow]Invalid selection. Enter 1-10, 's' to search, or 'c' for custom.[/yellow]")
+
+
+def _fuzzy_search_provider(
+    db: ModelsDatabase,
+    all_providers: list[str],
+    provider_display: dict[str, str],
+) -> tuple[str, str, list[str]] | None:
+    """Fuzzy search for a provider using prompt_toolkit.
+
+    Returns (provider_id, api_url, env_vars) or None for custom.
+    """
+    console.print("\n[bold]🔍 Provider Search[/bold]")
+    console.print("[dim]Type to search, use Tab/Arrow keys to select, Enter to confirm, Ctrl+C to cancel[/dim]")
+    console.print("[dim]Examples: 'openai', 'deep', 'grok', 'ali'...[/dim]\n")
+
+    # Create fuzzy completer with all provider IDs and display names
+    # Include both provider IDs and their display names for better matching
+    search_items = list(all_providers) + ["__custom__ (Enter custom provider)"]
+    completer = FuzzyWordCompleter(search_items, WORD=True)
+
+    try:
+        while True:
+            result = pt_prompt(
+                "Search provider: ",
+                completer=completer,
+                complete_style=CompleteStyle.MULTI_COLUMN,
+                complete_while_typing=True,
+            ).strip()
+
+            if not result:
+                console.print("[yellow]No selection made. Please try again or press Ctrl+C to cancel.[/yellow]")
+                continue
+
+            # Check for custom
+            if result.startswith("__custom__") or result.lower() == "custom":
+                return None
+
+            # Try exact match first
+            if result in all_providers:
+                provider = db.get_provider(result)
+                if provider:
+                    console.print(f"[green]✓ Selected: {provider.name} ({provider.id})[/green]")
+                    return (provider.id, provider.api_url, provider.env_vars)
+
+            # Try partial/fuzzy match
+            matches = [p for p in all_providers if result.lower() in p.lower()]
+            if len(matches) == 1:
+                provider = db.get_provider(matches[0])
+                if provider:
+                    console.print(f"[green]✓ Selected: {provider.name} ({provider.id})[/green]")
+                    return (provider.id, provider.api_url, provider.env_vars)
+            elif len(matches) > 1:
+                console.print(f"[yellow]Multiple matches: {', '.join(matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]")
+                console.print("[dim]Please be more specific.[/dim]")
+            else:
+                console.print(f"[yellow]'{result}' not found. Try again.[/yellow]")
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[dim]Search cancelled.[/dim]")
+        # Return to main selection
+        return select_provider(db)
 
 
 def select_model(db: ModelsDatabase, provider_id: str) -> tuple[str, int, int] | None:
@@ -251,8 +325,10 @@ def select_model(db: ModelsDatabase, provider_id: str) -> tuple[str, int, int] |
     models.sort(key=lambda m: m.name)
 
     console.print(f"\n[bold]Select a model from {provider.name}:[/bold]")
+    console.print(f"[dim]Total models available: {len(models)}[/dim]")
 
-    # Show table
+    # Show table (limit to 15 for readability)
+    display_count = min(15, len(models))
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", style="dim")
     table.add_column("Model ID")
@@ -260,7 +336,7 @@ def select_model(db: ModelsDatabase, provider_id: str) -> tuple[str, int, int] |
     table.add_column("Context")
     table.add_column("Features")
 
-    for i, model in enumerate(models[:20], 1):
+    for i, model in enumerate(models[:display_count], 1):
         features = []
         if model.tool_call:
             features.append("🔧")
@@ -272,14 +348,23 @@ def select_model(db: ModelsDatabase, provider_id: str) -> tuple[str, int, int] |
         ctx = f"{model.context_window:,}"
         table.add_row(str(i), model.id, model.name, ctx, " ".join(features))
 
-    if len(models) > 20:
-        table.add_row("...", f"({len(models) - 20} more)", "", "", "")
+    # Add search option if there are many models
+    if len(models) > display_count:
+        table.add_row("[cyan]s[/cyan]", "[cyan]🔍 search[/cyan]", f"Search all {len(models)} models", "", "")
 
     console.print(table)
     console.print("[dim]🔧=Tool Call  🧠=Reasoning  📎=Attachments[/dim]")
 
     while True:
-        response = console.input("\nEnter number or model ID: ").strip()
+        prompt_text = "\nEnter number or model ID"
+        if len(models) > display_count:
+            prompt_text += ", 's' to search"
+        prompt_text += ": "
+        response = console.input(prompt_text).strip()
+
+        if response.lower() in ("s", "search") and len(models) > display_count:
+            # Enter fuzzy search mode
+            return _fuzzy_search_model(models)
 
         try:
             idx = int(response) - 1
@@ -293,6 +378,57 @@ def select_model(db: ModelsDatabase, provider_id: str) -> tuple[str, int, int] |
                     return (model.id, model.context_window, model.output_limit)
 
         console.print("[yellow]Invalid selection. Please try again.[/yellow]")
+
+
+def _fuzzy_search_model(models: list) -> tuple[str, int, int] | None:
+    """Fuzzy search for a model using prompt_toolkit.
+
+    Returns (model_id, context_window, output_limit) or None.
+    """
+    console.print("\n[bold]🔍 Model Search[/bold]")
+    console.print("[dim]Type to search, use Tab/Arrow keys to select, Enter to confirm, Ctrl+C to cancel[/dim]\n")
+
+    # Create model ID list for completer
+    model_ids = [m.id for m in models]
+    completer = FuzzyWordCompleter(model_ids, WORD=True)
+
+    # Build lookup map
+    model_map = {m.id.lower(): m for m in models}
+
+    try:
+        while True:
+            result = pt_prompt(
+                "Search model: ",
+                completer=completer,
+                complete_style=CompleteStyle.MULTI_COLUMN,
+                complete_while_typing=True,
+            ).strip()
+
+            if not result:
+                console.print("[yellow]No selection made. Please try again or press Ctrl+C to cancel.[/yellow]")
+                continue
+
+            # Try exact match first
+            if result.lower() in model_map:
+                model = model_map[result.lower()]
+                console.print(f"[green]✓ Selected: {model.name} ({model.id})[/green]")
+                return (model.id, model.context_window, model.output_limit)
+
+            # Try partial match
+            matches = [m for m in models if result.lower() in m.id.lower() or result.lower() in m.name.lower()]
+            if len(matches) == 1:
+                model = matches[0]
+                console.print(f"[green]✓ Selected: {model.name} ({model.id})[/green]")
+                return (model.id, model.context_window, model.output_limit)
+            elif len(matches) > 1:
+                console.print(f"[yellow]Multiple matches: {', '.join(m.id for m in matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]")
+                console.print("[dim]Please be more specific.[/dim]")
+            else:
+                console.print(f"[yellow]'{result}' not found. Try again.[/yellow]")
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[dim]Search cancelled. Returning to list view...[/dim]")
+        return None
 
 
 def configure_custom_provider() -> tuple[str, str, str, int]:

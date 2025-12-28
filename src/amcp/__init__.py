@@ -59,9 +59,24 @@ __all__ = [
     "ProjectRulesLoader",
     "load_project_rules",
     "get_project_rules_info",
+    # Hooks system
+    "HookEvent",
+    "HookDecision",
+    "HookInput",
+    "HookOutput",
+    "HookHandler",
+    "HooksManager",
+    "get_hooks_manager",
+    "run_pre_tool_use_hooks",
+    "run_post_tool_use_hooks",
+    "run_user_prompt_hooks",
+    "run_session_start_hooks",
+    "run_session_end_hooks",
+    "run_stop_hooks",
+    "run_pre_compact_hooks",
 ]
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 # Lazy imports for cleaner namespace
 from .agent import (
@@ -129,4 +144,20 @@ from .task import (
     TaskState,
     TaskTool,
     get_task_manager,
+)
+from .hooks import (
+    HookDecision,
+    HookEvent,
+    HookHandler,
+    HookInput,
+    HookOutput,
+    HooksManager,
+    get_hooks_manager,
+    run_post_tool_use_hooks,
+    run_pre_compact_hooks,
+    run_pre_tool_use_hooks,
+    run_session_end_hooks,
+    run_session_start_hooks,
+    run_stop_hooks,
+    run_user_prompt_hooks,
 )

@@ -52,7 +52,7 @@ class TestGetDefaultAgentSpec:
     def test_default_max_steps(self):
         """Test default max_steps value."""
         spec = get_default_agent_spec()
-        assert spec.max_steps == 300
+        assert spec.max_steps == 1000
 
 
 class TestAgentSpec:

@@ -142,7 +142,7 @@ Current working directory: {work_dir}
 Current time: {current_time}""",
         tools=[],
         exclude_tools=[],
-        max_steps=300,
+        max_steps=1000,
         model="",
         base_url="",
         can_delegate=True,

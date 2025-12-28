@@ -31,6 +31,7 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 - **Smart Context Compaction**: Intelligent context management with dynamic thresholds
 - **Multi-Agent System**: Primary/Subagent architecture with built-in agent types (coder, explorer, planner)
 - **Event Bus**: Publish/subscribe system for agent communication and extensibility
+- **Hooks System**: Extensible hooks for tool validation, logging, and custom behaviors
 
 ## Installation
 
@@ -196,6 +197,34 @@ api_key = "your-anthropic-api-key"  # or set ANTHROPIC_API_KEY env var
 ```
 
 To use Anthropic, install with: `pip install amcp-agent[anthropic]`
+
+## Hooks System
+
+AMCP provides a flexible hooks system to extend and customize agent behavior. Hooks can:
+- Validate and modify tool inputs before execution
+- Process tool outputs after execution
+- Block dangerous operations
+- Log and audit agent activities
+
+### Quick Example
+
+Create `.amcp/hooks.toml` in your project:
+
+```toml
+[hooks.PreToolUse]
+[[hooks.PreToolUse.handlers]]
+matcher = "write_file|edit_file"
+type = "python"
+script = "./scripts/validate-writes.py"
+timeout = 30
+
+[[hooks.PostToolUse.handlers]]
+matcher = "*"
+type = "command"
+command = "echo 'Tool executed' >> /tmp/tool_log.txt"
+```
+
+See [docs/hooks.md](docs/hooks.md) for full documentation.
 
 ## Development
 

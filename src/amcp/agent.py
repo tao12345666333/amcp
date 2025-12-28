@@ -12,6 +12,12 @@ from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .compaction import Compactor
 from .config import load_config
+from .hooks import (
+    HookDecision,
+    run_post_tool_use_hooks,
+    run_pre_tool_use_hooks,
+    run_user_prompt_hooks,
+)
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
@@ -374,6 +380,23 @@ class Agent:
         This is the core message processing logic, extracted from run()
         to support queue-based processing.
         """
+        # Run UserPromptSubmit hooks
+        prompt_hook_output = await run_user_prompt_hooks(
+            session_id=self.session_id,
+            prompt=user_input,
+            project_dir=work_dir,
+        )
+
+        # Check if hook denied the prompt
+        if not prompt_hook_output.continue_execution:
+            if prompt_hook_output.stop_reason:
+                self.console.print(f"[yellow]Prompt blocked: {prompt_hook_output.stop_reason}[/yellow]")
+            return prompt_hook_output.stop_reason or "Prompt blocked by hook"
+
+        # Show hook feedback if any
+        if prompt_hook_output.feedback:
+            self.console.print(f"[dim]Hook: {prompt_hook_output.feedback}[/dim]")
+
         # Save user input to conversation history immediately to preserve context
         self.conversation_history.append({"role": "user", "content": user_input})
 
@@ -659,6 +682,34 @@ class Agent:
                         tool_id = tc["id"]
                         args = json.loads(tc["arguments"] or "{}")
 
+                        # Run PreToolUse hooks
+                        pre_hook_output = await run_pre_tool_use_hooks(
+                            session_id=self.session_id,
+                            tool_name=tool_name,
+                            tool_input=args,
+                            tool_use_id=tool_id,
+                        )
+
+                        # Check hook decision
+                        if pre_hook_output.decision == HookDecision.DENY:
+                            # Tool execution denied by hook
+                            tool_result_text = f"Tool denied by hook: {pre_hook_output.decision_reason or 'No reason given'}"
+                            block = live_ui.add_tool(tool_name, args)
+                            live_ui.finish_tool(block, success=False, result=tool_result_text)
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name,
+                                    "content": tool_result_text,
+                                }
+                            )
+                            continue
+
+                        # Apply any input updates from hooks
+                        if pre_hook_output.updated_input:
+                            args = {**args, **pre_hook_output.updated_input}
+
                         # Record tool call
                         tool_call_record = {
                             "step": self.step_count,
@@ -675,6 +726,8 @@ class Agent:
                         # Execute tool
                         try:
                             cfg = load_config()
+                            tool_response_data = {}  # For hook output
+
                             if tool_name.startswith("mcp."):
                                 # Handle MCP tools
                                 server_name, inner_name = tool_registry.get(tool_name, (None, None))
@@ -682,6 +735,7 @@ class Agent:
                                     server = cfg.servers.get(server_name)
                                     if server:
                                         mcp_resp = await call_mcp_tool(server, inner_name, args)
+                                        tool_response_data = mcp_resp
                                         parts = []
                                         for c in mcp_resp.get("content", []) or []:
                                             if c.get("type") == "text":
@@ -692,9 +746,11 @@ class Agent:
                                         live_ui.finish_tool(block, success=True, result=tool_result_text)
                                     else:
                                         tool_result_text = f"Error: Unknown MCP server {server_name}"
+                                        tool_response_data = {"error": tool_result_text}
                                         live_ui.finish_tool(block, success=False, result=tool_result_text)
                                 else:
                                     tool_result_text = f"Error: Unknown MCP tool {tool_name}"
+                                    tool_response_data = {"error": tool_result_text}
                                     live_ui.finish_tool(block, success=False, result=tool_result_text)
                             else:
                                 # Handle built-in tools
@@ -705,10 +761,29 @@ class Agent:
 
                                 if tool_result.success:
                                     tool_result_text = tool_result.content
+                                    tool_response_data = {"success": True, "content": tool_result_text}
                                     live_ui.finish_tool(block, success=True, result=tool_result_text)
                                 else:
                                     tool_result_text = f"Error: {tool_result.error}"
+                                    tool_response_data = {"success": False, "error": tool_result.error}
                                     live_ui.finish_tool(block, success=False, result=tool_result_text)
+
+                            # Run PostToolUse hooks
+                            post_hook_output = await run_post_tool_use_hooks(
+                                session_id=self.session_id,
+                                tool_name=tool_name,
+                                tool_input=args,
+                                tool_response=tool_response_data,
+                                tool_use_id=tool_id,
+                            )
+
+                            # Apply any response updates from hooks
+                            if post_hook_output.updated_response:
+                                tool_result_text = json.dumps(post_hook_output.updated_response, ensure_ascii=False)
+
+                            # Add hook feedback if any
+                            if post_hook_output.feedback:
+                                tool_result_text += f"\n\n[Hook feedback: {post_hook_output.feedback}]"
 
                             # Add tool result to messages (truncate large results)
                             MAX_TOOL_RESULT_LEN = 8000
