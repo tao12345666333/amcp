@@ -156,7 +156,12 @@ class ToolRegistry:
 
 # Built-in tools
 class ReadFileTool(BaseTool):
-    """Tool for reading files."""
+    """Tool for reading files with slice and indentation-aware modes.
+
+    Supports two modes:
+    - slice (default): Read specific line ranges
+    - indentation: Intelligently expand around an anchor line based on code structure
+    """
 
     @property
     def name(self) -> str:
@@ -164,13 +169,47 @@ class ReadFileTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "Read a text file from the local workspace. Use relative paths from current working directory."
+        return """Read a text file from the local workspace.
 
-    def execute(self, path: str, ranges: list[str] | None = None, max_lines: int | None = None) -> ToolResult:
-        """Execute the read file tool."""
+Modes:
+- slice (default): Read specific line ranges. Use 'ranges' parameter.
+- indentation: Intelligently read a code block around an anchor line.
+  Automatically captures the surrounding context (function, class, etc.).
+  Use 'offset', 'anchor_line', 'max_levels' parameters.
+
+Use relative paths from current working directory."""
+
+    def execute(
+        self,
+        path: str,
+        # Slice mode parameters
+        ranges: list[str] | None = None,
+        max_lines: int | None = None,
+        # Mode selection
+        mode: str = "slice",
+        # Indentation mode parameters
+        offset: int = 1,
+        limit: int = 200,
+        anchor_line: int | None = None,
+        max_levels: int = 2,
+        include_siblings: bool = False,
+        include_header: bool = True,
+    ) -> ToolResult:
+        """Execute the read file tool.
+
+        Args:
+            path: Path to file
+            ranges: Line ranges for slice mode (e.g., ["1-100", "200-250"])
+            max_lines: Maximum lines to return per block
+            mode: "slice" or "indentation"
+            offset: Starting line for indentation mode (1-indexed)
+            limit: Max lines to return in indentation mode
+            anchor_line: Center line for indentation expansion (defaults to offset)
+            max_levels: How many parent indentation levels to include (0=unlimited)
+            include_siblings: Include blocks at same indentation level
+            include_header: Include comments/decorators above the block
+        """
         from pathlib import Path
-
-        from .readfile import read_file_with_ranges
 
         try:
             file_path = Path(path).expanduser().resolve()
@@ -181,35 +220,101 @@ class ReadFileTool(BaseTool):
             if not file_path.is_file():
                 return ToolResult(success=False, content="", error=f"Path is a directory, not a file: {file_path}")
 
-            # Read file with ranges
-            blocks = read_file_with_ranges(file_path, ranges or [])
-
-            # Format result
-            content_parts = []
-            for block in blocks:
-                header = f"{file_path}:{block['start']}-{block['end']}"
-                content_parts.append(f"**{header}**")
-
-                for lineno, line in block["lines"][: max_lines or 400]:
-                    content_parts.append(f"{lineno:>6} | {line}")
-
-                if len(block["lines"]) > (max_lines or 400):
-                    content_parts.append("... (truncated)")
-
-            content = "\\n".join(content_parts)
-
-            return ToolResult(
-                success=True,
-                content=content,
-                metadata={
-                    "file_path": str(file_path),
-                    "blocks_read": len(blocks),
-                    "total_lines": sum(len(block["lines"]) for block in blocks),
-                },
-            )
+            if mode == "indentation":
+                return self._read_indentation_mode(
+                    file_path,
+                    offset=offset,
+                    limit=limit,
+                    anchor_line=anchor_line,
+                    max_levels=max_levels,
+                    include_siblings=include_siblings,
+                    include_header=include_header,
+                    max_lines=max_lines,
+                )
+            else:
+                return self._read_slice_mode(file_path, ranges, max_lines)
 
         except Exception as e:
             return ToolResult(success=False, content="", error=f"Failed to read file: {type(e).__name__}: {e}")
+
+    def _read_slice_mode(
+        self, file_path: Path, ranges: list[str] | None, max_lines: int | None
+    ) -> ToolResult:
+        """Read file using slice mode (line ranges)."""
+        from .readfile import read_file_with_ranges
+
+        blocks = read_file_with_ranges(file_path, ranges or [])
+
+        content_parts = []
+        for block in blocks:
+            header = f"{file_path}:{block['start']}-{block['end']}"
+            content_parts.append(f"**{header}**")
+
+            for lineno, line in block["lines"][: max_lines or 400]:
+                content_parts.append(f"{lineno:>6} | {line}")
+
+            if len(block["lines"]) > (max_lines or 400):
+                content_parts.append("... (truncated)")
+
+        content = "\n".join(content_parts)
+
+        return ToolResult(
+            success=True,
+            content=content,
+            metadata={
+                "file_path": str(file_path),
+                "mode": "slice",
+                "blocks_read": len(blocks),
+                "total_lines": sum(len(block["lines"]) for block in blocks),
+            },
+        )
+
+    def _read_indentation_mode(
+        self,
+        file_path: Path,
+        offset: int,
+        limit: int,
+        anchor_line: int | None,
+        max_levels: int,
+        include_siblings: bool,
+        include_header: bool,
+        max_lines: int | None,
+    ) -> ToolResult:
+        """Read file using indentation-aware mode."""
+        from .readfile import IndentationOptions, read_file_with_indentation
+
+        options = IndentationOptions(
+            anchor_line=anchor_line,
+            max_levels=max_levels,
+            include_siblings=include_siblings,
+            include_header=include_header,
+            max_lines=max_lines,
+        )
+
+        blocks = read_file_with_indentation(file_path, offset, limit, options)
+
+        content_parts = []
+        for block in blocks:
+            anchor_info = f" (anchor: L{block.get('anchor', offset)})" if block.get("anchor") else ""
+            header = f"{file_path}:{block['start']}-{block['end']}{anchor_info}"
+            content_parts.append(f"**{header}** [indentation mode]")
+
+            for lineno, line in block["lines"]:
+                content_parts.append(f"L{lineno}: {line}")
+
+        content = "\n".join(content_parts)
+
+        return ToolResult(
+            success=True,
+            content=content,
+            metadata={
+                "file_path": str(file_path),
+                "mode": "indentation",
+                "anchor_line": anchor_line or offset,
+                "blocks_read": len(blocks),
+                "total_lines": sum(len(block["lines"]) for block in blocks),
+            },
+        )
 
     def get_parameters_schema(self) -> dict[str, Any]:
         return {
@@ -219,16 +324,52 @@ class ReadFileTool(BaseTool):
                     "type": "string",
                     "description": "Path to the file to read (relative to current working directory)",
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["slice", "indentation"],
+                    "description": "Reading mode: 'slice' for line ranges, 'indentation' for smart block reading",
+                },
+                # Slice mode
                 "ranges": {
                     "type": "array",
-                    "items": {"type": "string", "pattern": "^\\d+-\\d+$"},
-                    "description": "Optional list of line ranges like '1-200'",
+                    "items": {"type": "string"},
+                    "description": "[Slice mode] Line ranges like '1-200'",
                 },
                 "max_lines": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 5000,
-                    "description": "Maximum lines to return per block (default 400)",
+                    "description": "Maximum lines to return per block (default 400 for slice, 200 for indentation)",
+                },
+                # Indentation mode
+                "offset": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "[Indentation mode] Starting line number (1-indexed)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000,
+                    "description": "[Indentation mode] Maximum lines to return (default 200)",
+                },
+                "anchor_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "[Indentation mode] Center line for expansion (defaults to offset)",
+                },
+                "max_levels": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "[Indentation mode] Parent indent levels to include. 0=unlimited, 1=immediate parent, etc.",
+                },
+                "include_siblings": {
+                    "type": "boolean",
+                    "description": "[Indentation mode] Include sibling blocks at same indentation",
+                },
+                "include_header": {
+                    "type": "boolean",
+                    "description": "[Indentation mode] Include comments/decorators above the block",
                 },
             },
             "required": ["path"],

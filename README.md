@@ -139,7 +139,9 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
 
 ## Built-in Tools
 
-- **read_file**: Read text files from the workspace
+- **read_file**: Read text files with two modes:
+  - *Slice mode* (default): Read specific line ranges
+  - *Indentation mode*: Intelligently read code blocks around an anchor line, automatically capturing surrounding context (functions, classes)
 - **grep**: Search for patterns in files using ripgrep
 - **bash**: Execute bash commands for file operations and system tasks
 - **think**: Internal reasoning and planning
