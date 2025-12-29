@@ -21,7 +21,7 @@ def _extract_key_arg(tool_name: str, args: dict) -> str | None:
         "grep": "pattern",
         "bash": "command",
         "write_file": "path",
-        "edit_file": "path",
+        "apply_patch": "patch",
     }
     key = key_args.get(tool_name)
     if key and key in args:

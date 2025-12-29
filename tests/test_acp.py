@@ -176,7 +176,7 @@ class TestAMCPAgent:
         agent = AMCPAgent()
         assert agent._get_tool_kind("read_file") == "read"
         assert agent._get_tool_kind("write_file") == "edit"
-        assert agent._get_tool_kind("edit_file") == "edit"
+        assert agent._get_tool_kind("apply_patch") == "edit"
         assert agent._get_tool_kind("bash") == "execute"
         assert agent._get_tool_kind("grep") == "search"
         assert agent._get_tool_kind("think") == "think"

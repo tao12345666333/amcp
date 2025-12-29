@@ -36,7 +36,7 @@ Project-level hooks override user-level hooks.
 ```toml
 [hooks.PreToolUse]
 [[hooks.PreToolUse.handlers]]
-matcher = "write_file|edit_file"  # Regex pattern to match tool names
+matcher = "write_file|apply_patch"  # Regex pattern to match tool names
 type = "command"                  # "command" or "python"
 command = "./scripts/validate-writes.sh"
 timeout = 30                      # Timeout in seconds
@@ -64,7 +64,7 @@ timeout = 60
     "PreToolUse": {
       "handlers": [
         {
-          "matcher": "write_file|edit_file",
+          "matcher": "write_file|apply_patch",
           "type": "command",
           "command": "./scripts/validate-writes.sh",
           "timeout": 30,
@@ -195,7 +195,7 @@ input_data = json.load(sys.stdin)
 tool_name = input_data.get("tool_name", "")
 tool_input = input_data.get("tool_input", {})
 
-if tool_name in ("write_file", "edit_file"):
+if tool_name in ("write_file", "apply_patch"):
     file_path = tool_input.get("path", "").lower()
     for pattern in BLOCKED_PATTERNS:
         if pattern in file_path:
@@ -257,7 +257,7 @@ exit 0
 
 The `matcher` field supports:
 - Exact match: `"write_file"` matches only `write_file`
-- Regex patterns: `"write_file|edit_file"` matches both
+- Regex patterns: `"write_file|apply_patch"` matches both
 - Wildcards: `"mcp\..*"` matches all MCP tools
 - All tools: `"*"` or `""` matches everything
 

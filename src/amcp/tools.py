@@ -448,50 +448,151 @@ class WriteFileTool(BaseTool):
         }
 
 
-class EditFileTool(BaseTool):
-    """Tool for editing files with search and replace."""
+
+class ApplyPatchTool(BaseTool):
+    """Tool for applying diff-based patches to files.
+
+    This tool provides a more efficient and precise way to edit files compared
+    to write_file. It uses a structured patch format that:
+    - Minimizes token usage (only sends diffs, not full files)
+    - Uses context anchors for precise location matching
+    - Supports batch operations (multiple files in one patch)
+    - Provides atomic file operations (add, delete, update, rename)
+    """
 
     @property
     def name(self) -> str:
-        return "edit_file"
+        return "apply_patch"
 
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old_text with new_text. The old_text must match exactly."
+        return """Apply diff-based patches to files. More efficient than write_file for edits.
 
-    def execute(self, path: str, old_text: str, new_text: str) -> ToolResult:
-        """Execute the edit file tool."""
+Patch Format:
+*** Begin Patch
+*** Add File: path/to/new.py
++line 1
++line 2
+
+*** Update File: path/to/existing.py
+@@ class ClassName
+@@ def method_name():
+ context line (space prefix)
+-line to delete (minus prefix)
++line to add (plus prefix)
+ more context
+
+*** Delete File: path/to/obsolete.py
+*** End Patch
+
+Key features:
+- Use @@ anchors to locate the right position (class names, function signatures)
+- Include 3 lines of context before and after changes
+- Prefix context lines with space, deletions with -, additions with +
+- All paths must be relative (never absolute)
+
+Example for fixing a bug:
+*** Begin Patch
+*** Update File: src/calculator.py
+@@ def subtract(a, b):
+     \"\"\"Subtract b from a.\"\"\"
+-    return a + b
++    return a - b
+*** End Patch"""
+
+    def execute(self, patch: str) -> ToolResult:
+        """Execute the apply patch tool.
+
+        Args:
+            patch: The patch content in the apply_patch format
+        """
         from pathlib import Path
 
+        from .apply_patch import PatchApplyError, PatchParseError, apply_patch_text
+
         try:
-            file_path = Path(path).expanduser().resolve()
+            changes = apply_patch_text(patch, Path.cwd())
 
-            if not file_path.exists():
-                return ToolResult(success=False, content="", error=f"File not found: {file_path}")
+            if not changes:
+                return ToolResult(
+                    success=True,
+                    content="Patch applied but no changes were made.",
+                    metadata={"changes": []},
+                )
 
-            content = file_path.read_text(encoding="utf-8")
+            # Format summary
+            summary_parts = ["Patch applied successfully:"]
+            total_additions = 0
+            total_deletions = 0
 
-            if old_text not in content:
-                return ToolResult(success=False, content="", error="old_text not found in file")
+            for change in changes:
+                if change["type"] == "add":
+                    summary_parts.append(f"  + Created: {change['path']} ({change['lines_added']} lines)")
+                    total_additions += change["lines_added"]
+                elif change["type"] == "delete":
+                    summary_parts.append(f"  - Deleted: {change['path']}")
+                elif change["type"] == "update":
+                    additions = change.get("additions", 0)
+                    deletions = change.get("deletions", 0)
+                    target = change.get("target_path")
+                    if target and target != change["path"]:
+                        summary_parts.append(
+                            f"  ~ Updated: {change['path']} -> {target} "
+                            f"(+{additions}/-{deletions})"
+                        )
+                    else:
+                        summary_parts.append(
+                            f"  ~ Updated: {change['path']} (+{additions}/-{deletions})"
+                        )
+                    total_additions += additions
+                    total_deletions += deletions
 
-            new_content = content.replace(old_text, new_text, 1)
-            file_path.write_text(new_content, encoding="utf-8")
+            summary_parts.append(f"\nTotal: +{total_additions}/-{total_deletions} lines")
 
             return ToolResult(
-                success=True, content=f"Successfully edited {file_path}", metadata={"file_path": str(file_path)}
+                success=True,
+                content="\n".join(summary_parts),
+                metadata={
+                    "changes": changes,
+                    "total_additions": total_additions,
+                    "total_deletions": total_deletions,
+                },
+            )
+
+        except PatchParseError as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Patch parse error: {e}. Check the patch format.",
+            )
+        except PatchApplyError as e:
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Patch apply error: {e}. The file may have been modified.",
             )
         except Exception as e:
-            return ToolResult(success=False, content="", error=f"Failed to edit file: {type(e).__name__}: {e}")
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Failed to apply patch: {type(e).__name__}: {e}",
+            )
 
     def get_parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path to the file to edit"},
-                "old_text": {"type": "string", "description": "Text to search for (must match exactly)"},
-                "new_text": {"type": "string", "description": "Text to replace with"},
+                "patch": {
+                    "type": "string",
+                    "description": (
+                        "The patch content. Must start with '*** Begin Patch' and end with "
+                        "'*** End Patch'. Use '*** Add File:', '*** Update File:', or "
+                        "'*** Delete File:' for operations. In hunks, prefix context lines "
+                        "with space, deletions with -, additions with +."
+                    ),
+                },
             },
-            "required": ["path", "old_text", "new_text"],
+            "required": ["patch"],
             "additionalProperties": False,
         }
 
@@ -730,7 +831,7 @@ Examples:
 # Initialize default tool registry
 def create_default_tool_registry(
     enable_write: bool = True,
-    enable_edit: bool = True,
+    enable_apply_patch: bool = True,
     enable_task: bool = True,
     session_id: str | None = None,
 ) -> ToolRegistry:
@@ -738,7 +839,7 @@ def create_default_tool_registry(
 
     Args:
         enable_write: Enable write_file tool
-        enable_edit: Enable edit_file tool
+        enable_apply_patch: Enable apply_patch tool (recommended for file edits)
         enable_task: Enable task tool for parallel sub-agents
         session_id: Session ID for task tool
     """
@@ -753,8 +854,8 @@ def create_default_tool_registry(
 
     if enable_write:
         registry.register(WriteFileTool())
-    if enable_edit:
-        registry.register(EditFileTool())
+    if enable_apply_patch:
+        registry.register(ApplyPatchTool())
     if enable_task:
         registry.register(ParallelTaskTool(session_id=session_id))
 
@@ -765,7 +866,7 @@ def create_default_tool_registry(
 _default_registry: ToolRegistry | None = None
 
 
-def get_tool_registry(enable_write: bool | None = None, enable_edit: bool | None = None) -> ToolRegistry:
+def get_tool_registry(enable_write: bool | None = None) -> ToolRegistry:
     """Get the global tool registry instance."""
     global _default_registry
     if _default_registry is None:
@@ -778,10 +879,8 @@ def get_tool_registry(enable_write: bool | None = None, enable_edit: bool | None
         # Use config values if not explicitly provided
         if enable_write is None:
             enable_write = chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
-        if enable_edit is None:
-            enable_edit = chat_cfg.edit_tool_enabled if chat_cfg and chat_cfg.edit_tool_enabled is not None else True
 
-        _default_registry = create_default_tool_registry(enable_write=enable_write, enable_edit=enable_edit)
+        _default_registry = create_default_tool_registry(enable_write=enable_write)
     return _default_registry
 
 

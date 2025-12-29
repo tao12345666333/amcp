@@ -21,7 +21,7 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 
 ## Features
 
-- **Built-in Tools**: read_file, grep, bash, think, todo, write_file, edit_file
+- **Built-in Tools**: read_file, grep, bash, think, todo, apply_patch, write_file
 - **MCP Integration**: Connect to any MCP server for extended capabilities
 - **Conversation History**: Persistent sessions across runs
 - **Flexible Configuration**: YAML-based agent specifications
@@ -144,8 +144,8 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
 - **bash**: Execute bash commands for file operations and system tasks
 - **think**: Internal reasoning and planning
 - **todo**: Manage a todo list to track tasks during complex operations
-- **write_file**: Write content to files (can be disabled via config)
-- **edit_file**: Edit files with search and replace (can be disabled via config)
+- **apply_patch**: Apply diff-based patches to files (recommended for edits, see [docs/apply-patch.md](docs/apply-patch.md))
+- **write_file**: Write content to files (for creating new small files)
 - **task**: Spawn sub-agents for parallel task execution
 
 ## Config
@@ -175,7 +175,6 @@ model = "gpt-4o"
 api_key = "your-api-key"
 mcp_tools_enabled = true
 write_tool_enabled = true  # Enable/disable built-in write_file tool
-edit_tool_enabled = true   # Enable/disable built-in edit_file tool
 ```
 
 Example (OpenAI Responses API):
@@ -213,7 +212,7 @@ Create `.amcp/hooks.toml` in your project:
 ```toml
 [hooks.PreToolUse]
 [[hooks.PreToolUse.handlers]]
-matcher = "write_file|edit_file"
+matcher = "write_file|apply_patch"
 type = "python"
 script = "./scripts/validate-writes.py"
 timeout = 30

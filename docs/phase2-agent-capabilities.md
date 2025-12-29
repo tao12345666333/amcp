@@ -48,7 +48,7 @@ class AgentConfig:
 | `coder` | PRIMARY | Main coding agent with full capabilities | All |
 | `explorer` | SUBAGENT | Fast read-only codebase exploration | read_file, grep, glob, think |
 | `planner` | SUBAGENT | Analysis and planning (read-only) | read_file, grep, glob, think |
-| `focused_coder` | SUBAGENT | Focused implementation tasks | read_file, grep, write_file, edit_file, bash, think |
+| `focused_coder` | SUBAGENT | Focused implementation tasks | read_file, grep, write_file, apply_patch, bash, think |
 
 ### Usage
 

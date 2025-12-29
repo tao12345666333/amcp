@@ -58,11 +58,42 @@ def main():
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
     
-    # Only process write_file and edit_file tools
-    if tool_name not in ("write_file", "edit_file"):
+    # Only process write_file and apply_patch tools
+    if tool_name not in ("write_file", "apply_patch"):
         # Allow other tools to pass through
         sys.exit(0)
     
+    # For apply_patch, extract paths from the patch content
+    if tool_name == "apply_patch":
+        patch = tool_input.get("patch", "")
+        # Extract file paths from patch headers
+        import re
+        paths = re.findall(r'\*\*\* (?:Add|Update|Delete) File: (.+)', patch)
+        for file_path in paths:
+            blocked, block_reason = should_block(file_path)
+            if blocked:
+                output = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": block_reason,
+                    }
+                }
+                print(json.dumps(output))
+                sys.exit(0)
+            ask, ask_reason = should_ask(file_path)
+            if ask:
+                output = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "ask",
+                        "permissionDecisionReason": ask_reason,
+                    }
+                }
+                print(json.dumps(output))
+                sys.exit(0)
+        sys.exit(0)  # Allow if no path matched
+
     file_path = tool_input.get("path", tool_input.get("file_path", ""))
     
     # Check if should block

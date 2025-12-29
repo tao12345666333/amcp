@@ -6,7 +6,7 @@
 [hooks.PreToolUse]
 [[hooks.PreToolUse.handlers]]
 # Match specific tools using regex patterns
-matcher = "write_file|edit_file"
+matcher = "write_file|apply_patch"
 type = "command"
 # Command receives hook input via stdin as JSON
 command = "./scripts/validate-file-changes.sh"

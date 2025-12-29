@@ -511,7 +511,7 @@ class AMCPAgent(Agent):
                 tool_call_id = f"call_{uuid4().hex[:8]}"
 
                 # Request permission in "ask" mode for write operations
-                if session.current_mode_id == "ask" and tool_name in ("write_file", "edit_file", "bash"):
+                if session.current_mode_id == "ask" and tool_name in ("write_file", "apply_patch", "bash"):
                     permission = await self._request_permission(session, tool_call_id, tool_name, args)
                     if not permission:
                         messages.append(
@@ -756,7 +756,7 @@ class AMCPAgent(Agent):
         kinds = {
             "read_file": "read",
             "write_file": "edit",
-            "edit_file": "edit",
+            "apply_patch": "edit",
             "bash": "execute",
             "grep": "search",
             "think": "think",

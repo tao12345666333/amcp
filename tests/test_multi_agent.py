@@ -135,7 +135,7 @@ class TestBuiltinAgents:
         assert "read_file" in explorer.tools
         assert "grep" in explorer.tools
         assert "write_file" in explorer.excluded_tools
-        assert "edit_file" in explorer.excluded_tools
+        assert "apply_patch" in explorer.excluded_tools
         assert "bash" in explorer.excluded_tools
 
     def test_planner_agent(self):
@@ -152,7 +152,7 @@ class TestBuiltinAgents:
         focused = BUILTIN_AGENTS["focused_coder"]
         assert focused.mode == AgentMode.SUBAGENT
         assert "write_file" in focused.tools
-        assert "edit_file" in focused.tools
+        assert "apply_patch" in focused.tools
         assert "bash" in focused.tools
 
 
