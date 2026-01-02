@@ -17,9 +17,11 @@ from rich.table import Table
 
 from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
+from .commands import CommandResult, get_command_manager
 from .config import AMCPConfig, load_config, save_default_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
+from .skills import get_skill_manager
 
 app = typer.Typer(add_completion=False, context_settings={"help_option_names": ["-h", "--help"]})
 console = Console()
@@ -308,7 +310,7 @@ def main(
             # Show execution summary
             summary = agent.get_execution_summary()
             console.print(
-                f"[dim]Steps: {summary['steps_taken']}/{summary['max_steps']} | Tools called: {summary['tools_called']}[/dim]"
+                f"[dim]LLM Calls: {summary['llm_calls']} | Tools called: {summary['tools_called']}[/dim]"
             )
 
         else:
@@ -318,7 +320,13 @@ def main(
             console.print(
                 f"[dim]Max steps: {agent.agent_spec.max_steps} | Mode: {agent.agent_spec.mode.value} | Session: {agent.session_id}[/dim]"
             )
-            console.print("[dim]Commands: 'exit' to quit, 'clear' to clear history, 'info' for session info[/dim]")
+            console.print("[dim]Commands: /help for commands, /skills for skills, /exit to quit[/dim]")
+
+            # Initialize skills and commands
+            skill_manager = get_skill_manager()
+            skill_manager.discover_skills(work_dir)
+            command_manager = get_command_manager()
+            command_manager.discover_commands(work_dir)
             console.print()
 
             # Setup prompt_toolkit with history
@@ -330,6 +338,63 @@ def main(
                 try:
                     user_input = session.prompt("You: ").strip()
 
+                    if not user_input:
+                        continue
+
+                    # Check for slash commands
+                    if user_input.startswith("/"):
+                        matched_cmd, cmd_args = command_manager.parse_input(user_input)
+                        if matched_cmd:
+                            result = command_manager.execute_command(
+                                matched_cmd, cmd_args, work_dir=work_dir, project_root=work_dir
+                            )
+                            
+                            if result.type == "handled":
+                                # Handle special commands
+                                if result.content == "exit":
+                                    console.print("[green]Goodbye! 👋[/green]")
+                                    break
+                                elif result.content == "clear":
+                                    agent.clear_conversation_history()
+                                    console.print(f"[green]Conversation history cleared for session: {agent.session_id}[/green]")
+                                elif result.content == "info":
+                                    session_info = agent.get_conversation_summary()
+                                    console.print("[bold]Session Info:[/bold]")
+                                    console.print(f"Session ID: {session_info['session_id']}")
+                                    console.print(f"Agent: {session_info['agent_name']}")
+                                    console.print(f"Messages: {session_info['message_count']}")
+                                    console.print(f"Total LLM Calls: {session_info['total_llm_calls']}")
+                                    console.print(f"Total Tool Calls: {session_info['total_tool_calls']}")
+                                    console.print(f"Session file: {session_info['session_file']}")
+                                    # Show active skills
+                                    active_skills = skill_manager.get_active_skills()
+                                    if active_skills:
+                                        console.print(f"Active skills: {', '.join(s.name for s in active_skills)}")
+                                console.print()
+                                continue
+                            
+                            elif result.type == "message":
+                                # Display message
+                                if result.message_type == "error":
+                                    console.print(f"[red]{result.content}[/red]")
+                                elif result.message_type == "success":
+                                    console.print(f"[green]{result.content}[/green]")
+                                else:
+                                    console.print(Panel(Markdown(result.content), border_style="dim"))
+                                console.print()
+                                continue
+                            
+                            elif result.type == "submit_prompt":
+                                # Submit the processed prompt to the agent
+                                user_input = result.content
+                                # Fall through to agent processing
+                        else:
+                            console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
+                            console.print("[dim]Use /help to see available commands[/dim]")
+                            console.print()
+                            continue
+
+                    # Check for legacy commands (for backward compatibility)
                     if user_input.lower() in ["exit", "quit", "q"]:
                         console.print("[green]Goodbye! 👋[/green]")
                         break
@@ -345,12 +410,10 @@ def main(
                         console.print(f"Session ID: {session_info['session_id']}")
                         console.print(f"Agent: {session_info['agent_name']}")
                         console.print(f"Messages: {session_info['message_count']}")
-                        console.print(f"Tool calls: {session_info['tool_calls_count']}")
+                        console.print(f"Total LLM Calls: {session_info['total_llm_calls']}")
+                        console.print(f"Total Tool Calls: {session_info['total_tool_calls']}")
                         console.print(f"Session file: {session_info['session_file']}")
                         console.print()
-                        continue
-
-                    if not user_input:
                         continue
 
                     console.print(f"[bold]🤖 Agent {agent.name}[/bold] - Processing...")
@@ -363,7 +426,7 @@ def main(
                     # Show execution summary
                     summary = agent.get_execution_summary()
                     console.print(
-                        f"[dim]Steps: {summary['steps_taken']}/{summary['max_steps']} | Tools called: {summary['tools_called']} | Session: {agent.session_id}[/dim]"
+                        f"[dim]LLM Calls: {summary['llm_calls']} | Tools called: {summary['tools_called']} | Session: {agent.session_id}[/dim]"
                     )
                     console.print()
 
@@ -371,7 +434,7 @@ def main(
                     console.print("[green]Goodbye! 👋[/green]")
                     break
                 except KeyboardInterrupt:
-                    console.print("\\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
+                    console.print("\\n[yellow]Interrupted. Type /exit to quit.[/yellow]")
                 except Exception as e:
                     console.print(f"[red]Error: {e}[/red]")
                     console.print()

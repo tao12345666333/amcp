@@ -1,0 +1,18 @@
+# Review a file for code quality issues
+
+description = "Review a file for code quality issues"
+
+prompt = """
+Please review the following file for code quality issues:
+
+@{{{args}}}
+
+Focus on:
+1. Code correctness
+2. Best practices
+3. Potential bugs
+4. Performance issues
+5. Security concerns
+
+Provide specific suggestions for improvement.
+"""

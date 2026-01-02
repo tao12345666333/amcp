@@ -95,7 +95,7 @@ class TestAgentSpec:
         assert spec.description == ""
         assert spec.tools == []
         assert spec.exclude_tools == []
-        assert spec.max_steps == 5
+        assert spec.max_steps == 20
         assert spec.model == ""
         assert spec.base_url == ""
 

@@ -1,0 +1,19 @@
+# Generate a conventional commit message based on staged changes
+
+description = "Generate a Git commit message based on staged changes"
+
+prompt = """
+Please generate a Conventional Commit message based on the following git diff:
+
+```diff
+!{git diff --staged}
+```
+
+Follow the Conventional Commits specification:
+- Format: <type>[optional scope]: <description>
+- Types: feat, fix, docs, style, refactor, test, chore
+- Keep the subject line under 72 characters
+- Use imperative mood ("add" not "added")
+
+Provide the commit message only, without any explanation.
+"""

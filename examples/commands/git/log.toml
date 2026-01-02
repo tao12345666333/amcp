@@ -1,0 +1,13 @@
+# Summarize the current git log
+
+description = "Show a summary of recent git commits"
+
+prompt = """
+Please summarize the following recent git commits:
+
+```
+!{git log --oneline -10}
+```
+
+Provide a brief overview of what has been worked on recently.
+"""

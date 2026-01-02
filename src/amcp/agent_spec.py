@@ -27,7 +27,7 @@ class AgentSpec(BaseModel):
     system_prompt_vars: dict[str, str] = Field(default_factory=dict, description="Variables for system prompt template")
     tools: list[str] = Field(default_factory=list, description="Available tools")
     exclude_tools: list[str] = Field(default_factory=list, description="Tools to exclude")
-    max_steps: int = Field(default=5, description="Maximum tool execution steps")
+    max_steps: int = Field(default=20, description="Maximum tool execution steps")
     model: str = Field(default="", description="Preferred model name")
     base_url: str = Field(default="", description="Preferred base URL")
     can_delegate: bool = Field(default=True, description="Whether agent can spawn subagents")

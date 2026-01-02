@@ -1,0 +1,15 @@
+# Explain the given code
+
+description = "Explain code from a file or selected code"
+
+prompt = """
+Please explain the following code in detail:
+
+{{args}}
+
+Provide:
+1. A high-level overview of what the code does
+2. Explanation of key functions and classes
+3. Notable patterns or techniques used
+4. Potential improvements or issues
+"""

@@ -22,6 +22,7 @@ from .mcp_client import call_mcp_tool, list_mcp_tools
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
 from .project_rules import ProjectRulesLoader
+from .skills import get_skill_manager
 from .tools import ToolRegistry
 from .ui import LiveUI
 
@@ -73,6 +74,13 @@ class Agent:
         # Tool call tracking for per-conversation and per-session limits
         self.current_conversation_tool_calls: list[dict[str, Any]] = []
 
+        # Per-request tracking (reset on each new request)
+        self.current_request_tool_calls: int = 0  # Tools called in current request
+        self.current_request_llm_calls: int = 0  # LLM calls in current request
+
+        # Session-level cumulative tracking
+        self.total_llm_calls: int = 0  # Total LLM calls across entire session
+
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
 
@@ -104,6 +112,7 @@ class Agent:
                     self.conversation_history = data.get("conversation_history", [])
                     self.tool_calls_history = data.get("tool_calls_history", [])
                     self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
+                    self.total_llm_calls = data.get("total_llm_calls", 0)
                     self.console.print(
                         f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
                     )
@@ -111,6 +120,7 @@ class Agent:
             self.console.print(f"[yellow]Warning: Could not load conversation history: {e}[/yellow]")
             self.conversation_history = []
             self.tool_calls_history = []
+            self.total_llm_calls = 0
 
     def _save_conversation_history(self) -> None:
         """Save conversation history to session file."""
@@ -123,6 +133,7 @@ class Agent:
                 "conversation_history": self.conversation_history,
                 "tool_calls_history": self.tool_calls_history,
                 "current_conversation_tool_calls": self.current_conversation_tool_calls,
+                "total_llm_calls": self.total_llm_calls,
             }
             with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -134,6 +145,9 @@ class Agent:
         self.conversation_history = []
         self.tool_calls_history = []
         self.current_conversation_tool_calls = []
+        self.total_llm_calls = 0
+        self.current_request_llm_calls = 0
+        self.current_request_tool_calls = 0
         try:
             if self.session_file.exists():
                 self.session_file.unlink()
@@ -141,13 +155,13 @@ class Agent:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
 
     def get_conversation_summary(self) -> dict[str, Any]:
-        """Get summary of the conversation."""
+        """Get summary of the conversation (session-level statistics)."""
         return {
             "session_id": self.session_id,
             "agent_name": self.name,
             "message_count": len(self.conversation_history),
-            "tool_calls_count": len(self.tool_calls_history),
-            "current_conversation_tool_calls": len(self.current_conversation_tool_calls),
+            "total_tool_calls": len(self.tool_calls_history),  # Session total
+            "total_llm_calls": self.total_llm_calls,  # Session total
             "session_file": str(self.session_file),
         }
 
@@ -185,9 +199,18 @@ class Agent:
         # Load project rules from AGENTS.md files
         project_rules = self._load_project_rules(resolved_work_dir)
 
+        # Get active skills content
+        skill_manager = get_skill_manager()
+        skills_content = skill_manager.get_active_skills_content()
+
+        # Combine all parts
+        combined_prompt = base_prompt
         if project_rules:
-            return base_prompt + "\n\n" + project_rules
-        return base_prompt
+            combined_prompt += "\n\n" + project_rules
+        if skills_content:
+            combined_prompt += "\n\n" + skills_content
+
+        return combined_prompt
 
     def _load_project_rules(self, work_dir: Path) -> str:
         """Load project rules from AGENTS.md files.
@@ -631,13 +654,20 @@ class Agent:
         """Enhanced version of _chat_with_tools with better tracking."""
         max_steps = max_steps or self.max_steps
 
+        # Reset per-request counters at the start of each request
+        self.current_request_tool_calls = 0
+        self.current_request_llm_calls = 0
+
         # Create a working copy of messages
         messages = list(messages)
         used_tools = False
 
         for step in range(max_steps):
             self.step_count = step + 1
-            status.update(f"[bold]Agent {self.name}[/bold] - Step {self.step_count}/{max_steps}")
+            # Update LLM call counters (both per-request and session total)
+            self.current_request_llm_calls += 1
+            self.total_llm_calls += 1
+            status.update(f"[bold]Agent {self.name}[/bold] - LLM Call {self.current_request_llm_calls}")
 
             resp = llm_client.chat(messages=messages, tools=tools)
 
@@ -719,6 +749,7 @@ class Agent:
                         }
                         self.tool_calls_history.append(tool_call_record)
                         self.current_conversation_tool_calls.append(tool_call_record)
+                        self.current_request_tool_calls += 1  # Track per-request tool calls
 
                         # Add tool block to UI
                         block = live_ui.add_tool(tool_name, args)
@@ -857,14 +888,13 @@ class Agent:
             return nullcontext(NullStatus())
 
     def get_execution_summary(self) -> dict[str, Any]:
-        """Get summary of agent execution."""
+        """Get summary of agent execution (per-request statistics)."""
         return {
             "agent_name": self.name,
             "agent_mode": self.agent_spec.mode.value,
-            "steps_taken": self.step_count,
-            "max_steps": self.max_steps,
-            "tools_called": len(self.tool_calls_history),
-            "tool_calls": self.tool_calls_history,
+            "llm_calls": self.current_request_llm_calls,  # LLM calls in this request
+            "max_llm_calls": self.max_steps,  # Max LLM calls allowed per request
+            "tools_called": self.current_request_tool_calls,  # Tools called in this request
             "context_vars": self._get_context_vars(),
             "can_delegate": self.agent_spec.can_delegate,
             "is_busy": self.is_busy(),

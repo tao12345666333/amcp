@@ -74,6 +74,15 @@ __all__ = [
     "run_session_end_hooks",
     "run_stop_hooks",
     "run_pre_compact_hooks",
+    # Skills system
+    "SkillMetadata",
+    "SkillManager",
+    "get_skill_manager",
+    # Slash commands system
+    "SlashCommand",
+    "CommandManager",
+    "CommandResult",
+    "get_command_manager",
 ]
 
 __version__ = "0.5.0"
@@ -160,4 +169,15 @@ from .hooks import (
     run_session_start_hooks,
     run_stop_hooks,
     run_user_prompt_hooks,
+)
+from .skills import (
+    SkillManager,
+    SkillMetadata,
+    get_skill_manager,
+)
+from .commands import (
+    CommandManager,
+    CommandResult,
+    SlashCommand,
+    get_command_manager,
 )
