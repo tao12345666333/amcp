@@ -414,9 +414,7 @@ class HooksManager:
                         handler.script = str(base_dir / handler.script)
                     if handler.command:
                         # Replace $AMCP_PROJECT_DIR with actual path
-                        handler.command = handler.command.replace(
-                            "$AMCP_PROJECT_DIR", str(self.project_dir)
-                        )
+                        handler.command = handler.command.replace("$AMCP_PROJECT_DIR", str(self.project_dir))
 
                     self.hooks[event].handlers.append(handler)
 
@@ -498,9 +496,7 @@ class HooksManager:
 
         return combined_output
 
-    async def _execute_command_hook(
-        self, handler: HookHandler, hook_input: HookInput
-    ) -> HookOutput:
+    async def _execute_command_hook(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
         """Execute a command-type hook."""
         if not handler.command:
             return HookOutput()
@@ -547,9 +543,7 @@ class HooksManager:
             logger.error(f"Failed to execute hook command: {e}")
             return HookOutput(success=False, feedback=f"Hook command failed: {e}")
 
-    async def _execute_python_hook(
-        self, handler: HookHandler, hook_input: HookInput
-    ) -> HookOutput:
+    async def _execute_python_hook(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
         """Execute a Python-type hook."""
         if handler.script:
             return await self._execute_python_script(handler, hook_input)
@@ -558,9 +552,7 @@ class HooksManager:
         else:
             return HookOutput()
 
-    async def _execute_python_script(
-        self, handler: HookHandler, hook_input: HookInput
-    ) -> HookOutput:
+    async def _execute_python_script(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
         """Execute a Python script hook."""
         if not handler.script:
             return HookOutput()
@@ -611,9 +603,7 @@ class HooksManager:
             logger.error(f"Failed to execute hook script: {e}")
             return HookOutput(success=False, feedback=f"Hook script failed: {e}")
 
-    async def _execute_python_function(
-        self, handler: HookHandler, hook_input: HookInput
-    ) -> HookOutput:
+    async def _execute_python_function(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
         """Execute a Python function hook."""
         if not handler.function:
             return HookOutput()
@@ -629,6 +619,7 @@ class HooksManager:
 
             # Import the module
             import importlib
+
             module = importlib.import_module(module_name)
             func = getattr(module, func_name)
 

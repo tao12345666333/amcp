@@ -8,7 +8,7 @@ Inspired by OpenAI Codex's read_file tool, this module supports:
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 # Constants
@@ -193,10 +193,7 @@ def read_file_with_indentation(
     anchor_indent = effective_indents[anchor_index]
 
     # Calculate minimum indent to include
-    if options.max_levels == 0:
-        min_indent = 0
-    else:
-        min_indent = max(0, anchor_indent - options.max_levels * TAB_WIDTH)
+    min_indent = 0 if options.max_levels == 0 else max(0, anchor_indent - options.max_levels * TAB_WIDTH)
 
     # Cap limit by options.max_lines
     guard_limit = options.max_lines or limit

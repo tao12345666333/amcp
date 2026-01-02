@@ -215,7 +215,9 @@ def select_provider(db: ModelsDatabase) -> tuple[str, str, list[str]] | None:
     table.add_row("[cyan]c[/cyan]", "[cyan]custom[/cyan]", "Enter custom provider", "-")
 
     if len(sorted_providers) > display_count:
-        console.print(f"[dim]Showing top {display_count} providers. Type 's' to search all {len(all_providers)} providers.[/dim]")
+        console.print(
+            f"[dim]Showing top {display_count} providers. Type 's' to search all {len(all_providers)} providers.[/dim]"
+        )
 
     console.print(table)
 
@@ -296,7 +298,9 @@ def _fuzzy_search_provider(
                     console.print(f"[green]✓ Selected: {provider.name} ({provider.id})[/green]")
                     return (provider.id, provider.api_url, provider.env_vars)
             elif len(matches) > 1:
-                console.print(f"[yellow]Multiple matches: {', '.join(matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]")
+                console.print(
+                    f"[yellow]Multiple matches: {', '.join(matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]"
+                )
                 console.print("[dim]Please be more specific.[/dim]")
             else:
                 console.print(f"[yellow]'{result}' not found. Try again.[/yellow]")
@@ -421,7 +425,9 @@ def _fuzzy_search_model(models: list) -> tuple[str, int, int] | None:
                 console.print(f"[green]✓ Selected: {model.name} ({model.id})[/green]")
                 return (model.id, model.context_window, model.output_limit)
             elif len(matches) > 1:
-                console.print(f"[yellow]Multiple matches: {', '.join(m.id for m in matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]")
+                console.print(
+                    f"[yellow]Multiple matches: {', '.join(m.id for m in matches[:10])}{'...' if len(matches) > 10 else ''}[/yellow]"
+                )
                 console.print("[dim]Please be more specific.[/dim]")
             else:
                 console.print(f"[yellow]'{result}' not found. Try again.[/yellow]")

@@ -119,15 +119,17 @@ class TestHookOutput:
 
     def test_from_exit_code_json_output(self):
         """Test HookOutput parsing JSON from stdout."""
-        json_output = json.dumps({
-            "continue": True,
-            "feedback": "All checks passed",
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": "Approved by policy",
+        json_output = json.dumps(
+            {
+                "continue": True,
+                "feedback": "All checks passed",
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": "Approved by policy",
+                },
             }
-        })
+        )
         output = HookOutput.from_exit_code(0, json_output, "")
         assert output.success is True
         assert output.decision == HookDecision.ALLOW
@@ -135,13 +137,15 @@ class TestHookOutput:
 
     def test_from_exit_code_deny_decision(self):
         """Test HookOutput with deny decision."""
-        json_output = json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "File is in blocklist",
+        json_output = json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "File is in blocklist",
+                }
             }
-        })
+        )
         output = HookOutput.from_exit_code(0, json_output, "")
         assert output.decision == HookDecision.DENY
         assert output.decision_reason == "File is in blocklist"
@@ -287,7 +291,7 @@ class TestHookExecution:
             amcp_dir.mkdir()
 
             # Create a hook that denies writes
-            script_content = '''#!/usr/bin/env python3
+            script_content = """#!/usr/bin/env python3
 import json
 import sys
 input_data = json.load(sys.stdin)
@@ -300,7 +304,7 @@ if input_data.get("tool_name") == "write_file":
         }
     }
     print(json.dumps(output))
-'''
+"""
             script_path = amcp_dir / "deny_writes.py"
             script_path.write_text(script_content)
             script_path.chmod(0o755)

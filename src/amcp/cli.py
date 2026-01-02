@@ -17,7 +17,7 @@ from rich.table import Table
 
 from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
-from .commands import CommandResult, get_command_manager
+from .commands import get_command_manager
 from .config import AMCPConfig, load_config, save_default_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
@@ -309,9 +309,7 @@ def main(
 
             # Show execution summary
             summary = agent.get_execution_summary()
-            console.print(
-                f"[dim]LLM Calls: {summary['llm_calls']} | Tools called: {summary['tools_called']}[/dim]"
-            )
+            console.print(f"[dim]LLM Calls: {summary['llm_calls']} | Tools called: {summary['tools_called']}[/dim]")
 
         else:
             # Interactive mode
@@ -348,7 +346,7 @@ def main(
                             result = command_manager.execute_command(
                                 matched_cmd, cmd_args, work_dir=work_dir, project_root=work_dir
                             )
-                            
+
                             if result.type == "handled":
                                 # Handle special commands
                                 if result.content == "exit":
@@ -356,7 +354,9 @@ def main(
                                     break
                                 elif result.content == "clear":
                                     agent.clear_conversation_history()
-                                    console.print(f"[green]Conversation history cleared for session: {agent.session_id}[/green]")
+                                    console.print(
+                                        f"[green]Conversation history cleared for session: {agent.session_id}[/green]"
+                                    )
                                 elif result.content == "info":
                                     session_info = agent.get_conversation_summary()
                                     console.print("[bold]Session Info:[/bold]")
@@ -372,7 +372,7 @@ def main(
                                         console.print(f"Active skills: {', '.join(s.name for s in active_skills)}")
                                 console.print()
                                 continue
-                            
+
                             elif result.type == "message":
                                 # Display message
                                 if result.message_type == "error":
@@ -383,7 +383,7 @@ def main(
                                     console.print(Panel(Markdown(result.content), border_style="dim"))
                                 console.print()
                                 continue
-                            
+
                             elif result.type == "submit_prompt":
                                 # Submit the processed prompt to the agent
                                 user_input = result.content

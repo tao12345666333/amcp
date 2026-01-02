@@ -328,12 +328,12 @@ class PatchApplier:
         # Check for absolute paths first (before any cleaning)
         if path.startswith("/"):
             raise PatchApplyError(f"Absolute paths not allowed: {path}")
-        
+
         # Remove any leading ./
         clean_path = path
         while clean_path.startswith("./"):
             clean_path = clean_path[2:]
-        
+
         return self.base_dir / clean_path
 
     def _apply_add_file(self, op: FileOperation) -> None:
@@ -453,8 +453,7 @@ class PatchApplier:
 
         if match_start is None:
             raise PatchApplyError(
-                f"Could not find match for hunk in {file_path}. "
-                f"Looking for: {context_and_deletions[:3]}..."
+                f"Could not find match for hunk in {file_path}. Looking for: {context_and_deletions[:3]}..."
             )
 
         # Apply the changes
@@ -488,9 +487,7 @@ class PatchApplier:
 
         return new_lines, deletions, additions
 
-    def _find_hunk_location(
-        self, lines: list[str], hunk: Hunk, pattern: list[str]
-    ) -> int | None:
+    def _find_hunk_location(self, lines: list[str], hunk: Hunk, pattern: list[str]) -> int | None:
         """Find where a hunk should be applied.
 
         Uses anchors and context to locate the exact position.
@@ -528,9 +525,7 @@ class PatchApplier:
 
         return None
 
-    def _fuzzy_find_hunk_location(
-        self, lines: list[str], hunk: Hunk, pattern: list[str]
-    ) -> int | None:
+    def _fuzzy_find_hunk_location(self, lines: list[str], hunk: Hunk, pattern: list[str]) -> int | None:
         """Fuzzy find hunk location by matching subset of pattern."""
         stripped_lines = [line.rstrip("\n\r") for line in lines]
 
@@ -541,14 +536,10 @@ class PatchApplier:
                 for idx, line in enumerate(stripped_lines):
                     if line.rstrip() == target:
                         # Found a potential match, verify with context
-                        return self._verify_and_adjust_position(
-                            stripped_lines, idx, hunk
-                        )
+                        return self._verify_and_adjust_position(stripped_lines, idx, hunk)
         return None
 
-    def _verify_and_adjust_position(
-        self, lines: list[str], candidate: int, hunk: Hunk
-    ) -> int | None:
+    def _verify_and_adjust_position(self, lines: list[str], candidate: int, hunk: Hunk) -> int | None:
         """Verify a candidate position and adjust if needed."""
         # Count context lines before first change
         context_before_count = 0
@@ -562,9 +553,7 @@ class PatchApplier:
         adjusted = candidate - context_before_count
         return max(0, adjusted)
 
-    def _apply_additions_only_hunk(
-        self, lines: list[str], hunk: Hunk, file_path: Path
-    ) -> tuple[list[str], int, int]:
+    def _apply_additions_only_hunk(self, lines: list[str], hunk: Hunk, file_path: Path) -> tuple[list[str], int, int]:
         """Handle hunks that only have additions (no context or deletions)."""
         # Use anchors to find location
         if not hunk.anchors:

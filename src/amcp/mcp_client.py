@@ -191,4 +191,3 @@ async def call_mcp_tool(
         raise Exception(f"MCP tool call failed: {'; '.join(errors)}") from eg
     except Exception as e:
         raise Exception(f"MCP tool call failed: {e}") from e
-

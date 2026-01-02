@@ -723,7 +723,9 @@ class Agent:
                         # Check hook decision
                         if pre_hook_output.decision == HookDecision.DENY:
                             # Tool execution denied by hook
-                            tool_result_text = f"Tool denied by hook: {pre_hook_output.decision_reason or 'No reason given'}"
+                            tool_result_text = (
+                                f"Tool denied by hook: {pre_hook_output.decision_reason or 'No reason given'}"
+                            )
                             block = live_ui.add_tool(tool_name, args)
                             live_ui.finish_tool(block, success=False, result=tool_result_text)
                             messages.append(

@@ -85,15 +85,12 @@ def other():
     pass
 """)
         # Anchor at line 2 (inside hello function)
-        blocks = read_file_with_indentation(
-            file, offset=2, limit=50,
-            options=IndentationOptions(max_levels=1)
-        )
-        
+        blocks = read_file_with_indentation(file, offset=2, limit=50, options=IndentationOptions(max_levels=1))
+
         assert len(blocks) == 1
         lines = blocks[0]["lines"]
         line_numbers = [l[0] for l in lines]
-        
+
         # Should capture the hello function
         assert 1 in line_numbers  # def hello():
         assert 2 in line_numbers  # print("Hello")
@@ -116,11 +113,8 @@ def other():
         return self.value
 """)
         # Anchor at line 7 (self.value += x inside if)
-        blocks = read_file_with_indentation(
-            file, offset=7, limit=50,
-            options=IndentationOptions(max_levels=1)
-        )
-        
+        blocks = read_file_with_indentation(file, offset=7, limit=50, options=IndentationOptions(max_levels=1))
+
         lines = blocks[0]["lines"]
         # Should capture the if block and the add method
         line_numbers = [l[0] for l in lines]
@@ -137,11 +131,8 @@ def other():
         return self.value
 """)
         # Anchor at line 4 (self.value += x), max_levels=2
-        blocks = read_file_with_indentation(
-            file, offset=4, limit=50,
-            options=IndentationOptions(max_levels=2)
-        )
-        
+        blocks = read_file_with_indentation(file, offset=4, limit=50, options=IndentationOptions(max_levels=2))
+
         lines = blocks[0]["lines"]
         line_numbers = [l[0] for l in lines]
         # Should include the class and method
@@ -163,20 +154,18 @@ def third():
 """)
         # Anchor at line 4 (def second)
         blocks_no_siblings = read_file_with_indentation(
-            file, offset=5, limit=50,
-            options=IndentationOptions(include_siblings=False)
+            file, offset=5, limit=50, options=IndentationOptions(include_siblings=False)
         )
-        
+
         blocks_with_siblings = read_file_with_indentation(
-            file, offset=5, limit=50,
-            options=IndentationOptions(include_siblings=True)
+            file, offset=5, limit=50, options=IndentationOptions(include_siblings=True)
         )
-        
+
         # Without siblings should just get second()
         lines_no_sib = [l[0] for l in blocks_no_siblings[0]["lines"]]
         # With siblings should get more
         lines_with_sib = [l[0] for l in blocks_with_siblings[0]["lines"]]
-        
+
         assert len(lines_with_sib) > len(lines_no_sib)
 
     def test_include_header_comments(self, tmp_path):
@@ -190,13 +179,12 @@ def important_function():
 """)
         # Anchor at line 5 (return 42)
         blocks = read_file_with_indentation(
-            file, offset=5, limit=50,
-            options=IndentationOptions(max_levels=1, include_header=True)
+            file, offset=5, limit=50, options=IndentationOptions(max_levels=1, include_header=True)
         )
-        
+
         lines = blocks[0]["lines"]
         line_contents = [l[1] for l in lines]
-        
+
         # Should include the comment header
         assert any("important" in l for l in line_contents)
 
@@ -206,21 +194,15 @@ def important_function():
         file.write_text("line1\nline2\n")
 
         with pytest.raises(ValueError, match="out of range"):
-            read_file_with_indentation(
-                file, offset=100, limit=50,
-                options=IndentationOptions()
-            )
+            read_file_with_indentation(file, offset=100, limit=50, options=IndentationOptions())
 
     def test_empty_file(self, tmp_path):
         """Test reading empty file."""
         file = tmp_path / "empty.py"
         file.write_text("")
 
-        blocks = read_file_with_indentation(
-            file, offset=1, limit=50,
-            options=IndentationOptions()
-        )
-        
+        blocks = read_file_with_indentation(file, offset=1, limit=50, options=IndentationOptions())
+
         assert blocks[0]["lines"] == []
 
     def test_python_class(self, tmp_path):
@@ -249,14 +231,11 @@ def standalone():
     pass
 """)
         # Anchor at line 14 (self.items.append)
-        blocks = read_file_with_indentation(
-            file, offset=14, limit=100,
-            options=IndentationOptions(max_levels=2)
-        )
-        
+        blocks = read_file_with_indentation(file, offset=14, limit=100, options=IndentationOptions(max_levels=2))
+
         lines = blocks[0]["lines"]
         line_numbers = [l[0] for l in lines]
-        
+
         # Should include add_item method definition
         assert 11 in line_numbers  # def add_item
         assert 14 in line_numbers  # self.items.append
@@ -277,14 +256,11 @@ def standalone():
 }
 """)
         # Anchor at line 5 (cache.set)
-        blocks = read_file_with_indentation(
-            file, offset=5, limit=50,
-            options=IndentationOptions(max_levels=1)
-        )
-        
+        blocks = read_file_with_indentation(file, offset=5, limit=50, options=IndentationOptions(max_levels=1))
+
         lines = blocks[0]["lines"]
         line_numbers = [l[0] for l in lines]
-        
+
         # Should capture the if block
         assert 4 in line_numbers  # if (!cache.has(key))
         assert 5 in line_numbers  # cache.set(key, [])
@@ -305,7 +281,7 @@ class TestEffectiveIndents:
         lines = content.splitlines()
         records = _collect_file_lines(lines)
         effective = _compute_effective_indents(records)
-        
+
         # Blank line should inherit indent from line1
         assert effective[2] == 4  # Blank line
         assert effective[3] == 4  # line2

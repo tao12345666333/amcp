@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from rich.console import Console
@@ -237,9 +238,7 @@ Use relative paths from current working directory."""
         except Exception as e:
             return ToolResult(success=False, content="", error=f"Failed to read file: {type(e).__name__}: {e}")
 
-    def _read_slice_mode(
-        self, file_path: Path, ranges: list[str] | None, max_lines: int | None
-    ) -> ToolResult:
+    def _read_slice_mode(self, file_path: Path, ranges: list[str] | None, max_lines: int | None) -> ToolResult:
         """Read file using slice mode (line ranges)."""
         from .readfile import read_file_with_ranges
 
@@ -589,7 +588,6 @@ class WriteFileTool(BaseTool):
         }
 
 
-
 class ApplyPatchTool(BaseTool):
     """Tool for applying diff-based patches to files.
 
@@ -677,14 +675,9 @@ Example for fixing a bug:
                     deletions = change.get("deletions", 0)
                     target = change.get("target_path")
                     if target and target != change["path"]:
-                        summary_parts.append(
-                            f"  ~ Updated: {change['path']} -> {target} "
-                            f"(+{additions}/-{deletions})"
-                        )
+                        summary_parts.append(f"  ~ Updated: {change['path']} -> {target} (+{additions}/-{deletions})")
                     else:
-                        summary_parts.append(
-                            f"  ~ Updated: {change['path']} (+{additions}/-{deletions})"
-                        )
+                        summary_parts.append(f"  ~ Updated: {change['path']} (+{additions}/-{deletions})")
                     total_additions += additions
                     total_deletions += deletions
 
