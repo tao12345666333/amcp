@@ -85,7 +85,7 @@ __all__ = [
     "get_command_manager",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Lazy imports for cleaner namespace
 from .agent import (

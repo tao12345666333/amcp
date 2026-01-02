@@ -1,6 +1,6 @@
 [project]
 name = "amcp-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "amcp: Lego-style coding agent CLI. Core: rg grep/find and read; editing & web search via MCP."
 readme = "README.md"
 requires-python = ">=3.11"
