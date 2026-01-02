@@ -47,6 +47,16 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      - name: Inject git commit hash
+        run: |
+          # Get short commit hash
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "Injecting git commit hash: $GIT_HASH"
+          # Update _version.py with the commit hash
+          sed -i "s/^__git_commit__: str | None = None$/__git_commit__: str | None = \"$GIT_HASH\"/" src/amcp/_version.py
+          # Verify the change
+          cat src/amcp/_version.py
+
       - name: Build package
         run: uv build
 

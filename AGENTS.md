@@ -53,3 +53,18 @@ src/amcp/
 2. **Logging**: Use the `logging` module, not print statements
 3. **Configuration**: Support both config files and environment variables
 4. **Documentation**: Docstrings for all public functions and classes
+
+## Pre-Commit Checks
+
+Before committing code, always run the following checks and ensure they pass:
+
+```bash
+# Format code
+make format
+
+# Check for lint errors
+ruff check src/
+
+# If lint errors are found, fix them with:
+ruff check src/ --fix
+```

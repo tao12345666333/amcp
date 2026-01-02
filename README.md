@@ -38,8 +38,11 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 ### Quick Run with uvx (no install needed)
 
 ```bash
-# Run directly without installation (like npx)
-uvx amcp-agent
+# First time: Initialize configuration (API keys, model settings)
+uvx --from amcp-agent amcp init
+
+# Then: Start interactive mode
+uvx --from amcp-agent amcp
 ```
 
 ### From PyPI
@@ -48,8 +51,9 @@ uvx amcp-agent
 # Install from PyPI
 pip install amcp-agent
 
-# Or with uv
-uv pip install amcp-agent
+# Or with uv (requires virtual environment or --system flag)
+uv pip install amcp-agent              # in a virtual environment
+uv pip install --system amcp-agent     # global install without venv
 
 # With Anthropic Claude support
 pip install amcp-agent[anthropic]

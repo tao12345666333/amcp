@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+from . import __git_commit__, __version__
 from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
 from .commands import get_command_manager
@@ -22,6 +24,43 @@ from .config import AMCPConfig, load_config, save_default_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
 from .skills import get_skill_manager
+
+
+def get_git_commit_hash() -> str | None:
+    """Get the git commit hash.
+
+    First checks for embedded hash (set during release builds),
+    then falls back to running git command (for development).
+    """
+    # Use embedded hash from release build if available
+    if __git_commit__:
+        return __git_commit__
+
+    # Fallback to git command for local development
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def version_callback(value: bool) -> None:
+    """Display version information and exit."""
+    if value:
+        version_str = f"amcp version {__version__}"
+        git_hash = get_git_commit_hash()
+        if git_hash:
+            version_str += f" (git: {git_hash})"
+        typer.echo(version_str)
+        raise typer.Exit()
+
 
 app = typer.Typer(add_completion=False, context_settings={"help_option_names": ["-h", "--help"]})
 console = Console()
@@ -118,6 +157,12 @@ def mcp_call(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "--version", "-v", help="Show version and git commit hash", callback=version_callback, is_eager=True
+        ),
+    ] = None,
     message: Annotated[str | None, typer.Option("--once", help="Send one message and exit")] = None,
     agent_file: Annotated[str | None, typer.Option("--agent", help="Path to agent specification file")] = None,
     agent_type: Annotated[

@@ -83,9 +83,11 @@ __all__ = [
     "CommandManager",
     "CommandResult",
     "get_command_manager",
+    # Version info
+    "__git_commit__",
 ]
 
-__version__ = "0.6.0"
+from ._version import __git_commit__, __version__
 
 # Lazy imports for cleaner namespace
 from .agent import (
