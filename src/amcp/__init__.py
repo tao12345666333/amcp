@@ -100,6 +100,12 @@ from .agent import (
     list_primary_agents,
     list_subagent_types,
 )
+from .commands import (
+    CommandManager,
+    CommandResult,
+    SlashCommand,
+    get_command_manager,
+)
 from .compaction import (
     CompactionConfig,
     CompactionResult,
@@ -120,6 +126,22 @@ from .event_bus import (
     EventPriority,
     EventType,
     get_event_bus,
+)
+from .hooks import (
+    HookDecision,
+    HookEvent,
+    HookHandler,
+    HookInput,
+    HookOutput,
+    HooksManager,
+    get_hooks_manager,
+    run_post_tool_use_hooks,
+    run_pre_compact_hooks,
+    run_pre_tool_use_hooks,
+    run_session_end_hooks,
+    run_session_start_hooks,
+    run_stop_hooks,
+    run_user_prompt_hooks,
 )
 from .message_queue import (
     MessagePriority,
@@ -146,6 +168,11 @@ from .project_rules import (
     get_project_rules_info,
     load_project_rules,
 )
+from .skills import (
+    SkillManager,
+    SkillMetadata,
+    get_skill_manager,
+)
 from .task import (
     Task,
     TaskManager,
@@ -153,31 +180,4 @@ from .task import (
     TaskState,
     TaskTool,
     get_task_manager,
-)
-from .hooks import (
-    HookDecision,
-    HookEvent,
-    HookHandler,
-    HookInput,
-    HookOutput,
-    HooksManager,
-    get_hooks_manager,
-    run_post_tool_use_hooks,
-    run_pre_compact_hooks,
-    run_pre_tool_use_hooks,
-    run_session_end_hooks,
-    run_session_start_hooks,
-    run_stop_hooks,
-    run_user_prompt_hooks,
-)
-from .skills import (
-    SkillManager,
-    SkillMetadata,
-    get_skill_manager,
-)
-from .commands import (
-    CommandManager,
-    CommandResult,
-    SlashCommand,
-    get_command_manager,
 )
