@@ -68,3 +68,69 @@ ruff check src/
 # If lint errors are found, fix them with:
 ruff check src/ --fix
 ```
+
+## Release Workflow
+
+When releasing a new version, follow these steps **in order**:
+
+### 1. Update Version Numbers
+
+Version numbers must be updated in **ALL** of the following locations:
+
+| File | Location | Format |
+|------|----------|--------|
+| `pyproject.toml` | Line 3 | `version = "X.Y.Z"` |
+| `src/amcp/_version.py` | Line 7 | `__version__ = "X.Y.Z"` |
+| `src/amcp/acp_agent.py` | In `initialize()` method | `version="X.Y.Z"` |
+
+**Quick search command to verify all locations are updated:**
+```bash
+grep -rn "X.Y.Z" pyproject.toml src/amcp/_version.py src/amcp/acp_agent.py
+```
+
+### 2. Run Quality Checks
+
+```bash
+# Format code
+ruff format src tests
+
+# Check for lint errors and fix
+ruff check src tests --fix
+
+# Run all tests
+python -m pytest tests/ -q
+```
+
+### 3. Commit and Tag
+
+```bash
+# Add all changes
+git add -A
+
+# Commit with version bump message
+git commit -m "chore: bump version to X.Y.Z
+
+Changes in this release:
+- <list key changes>"
+
+# Create annotated tag
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+
+# Push to remote with tags
+git push origin main --tags
+```
+
+### 4. Verify Release
+
+After pushing, verify the version is correct:
+```bash
+uvx amcp-agent -v
+# Should show: amcp version X.Y.Z (git: <hash>)
+```
+
+### Version Numbering Guidelines
+
+- **Patch (X.Y.Z → X.Y.Z+1)**: Bug fixes, documentation updates
+- **Minor (X.Y.Z → X.Y+1.0)**: New features, non-breaking changes
+- **Major (X.Y.Z → X+1.0.0)**: Breaking changes
+

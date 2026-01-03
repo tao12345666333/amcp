@@ -5,18 +5,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-tags:
-- building-mcp-track-creative
-- mcp-in-action-track-consumer
-- mcp-in-action-track-creative
----
-
-# AMCP
-
 A Lego-style coding agent CLI with built-in tools (grep, read files, bash execution) and MCP server integration for extended capabilities (web search, etc.).
 
-X: https://x.com/zhangjintao9020/status/1995170132973466018?s=20
-Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp=sharing
+**X**: https://x.com/zhangjintao9020/status/1995170132973466018?s=20 | **Demo**: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp=sharing
 
 
 ## Features
@@ -38,11 +29,11 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 ### Quick Run with uvx (no install needed)
 
 ```bash
-# Run directly without installation
-uvx amcp-agent
-
-# Initialize config (API keys, model settings)
+# Initialize config first (API keys, model settings)
 uvx amcp-agent init
+
+# Run the agent
+uvx amcp-agent
 
 # Run as ACP server (for IDE integration)
 uvx amcp-agent acp serve
@@ -241,7 +232,7 @@ See [docs/hooks.md](docs/hooks.md) for full documentation.
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/tao12345666333/amcp.git
 cd AMCP
 
 # Install with development dependencies
