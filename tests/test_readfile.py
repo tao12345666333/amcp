@@ -69,6 +69,27 @@ class TestReadFileWithRanges:
         assert blocks[0]["lines"][0] == (1, "line1")
         assert blocks[1]["lines"][0] == (4, "line4")
 
+    def test_zero_range_auto_corrected(self, tmp_path):
+        """Test that 0 is auto-corrected to 1 (resilient to LLM mistakes)."""
+        file = tmp_path / "test.py"
+        file.write_text("line1\nline2\nline3\n")
+
+        # "0" should be auto-corrected to "1"
+        blocks = read_file_with_ranges(file, ["0"])
+        assert len(blocks) == 1
+        assert blocks[0]["start"] == 1
+        assert blocks[0]["lines"][0] == (1, "line1")
+
+    def test_negative_range_auto_corrected(self, tmp_path):
+        """Test that negative line numbers are auto-corrected to 1."""
+        file = tmp_path / "test.py"
+        file.write_text("line1\nline2\nline3\n")
+
+        # "-5" should be auto-corrected to "1"
+        blocks = read_file_with_ranges(file, ["-5"])
+        assert len(blocks) == 1
+        assert blocks[0]["start"] == 1
+
 
 class TestReadFileWithIndentation:
     """Tests for indentation-aware mode."""

@@ -62,28 +62,41 @@ def _parse_range(spec: str) -> Range:
     Supports:
         - "1-100": lines 1 to 100
         - "1": just line 1 (same as "1-1")
+        - "0" or negative: auto-corrected to 1
     """
     try:
         spec = spec.strip()
         if not spec:
             raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
 
-        if "-" in spec:
-            parts = spec.split("-", 1)
-            s, e = parts[0].strip(), parts[1].strip()
-            if not s or not e:
-                raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
-            start = int(s)
-            end = int(e)
-        else:
+        # First, try to parse as a single integer (handles negative numbers like "-5")
+        try:
             start = end = int(spec)
+        except ValueError:
+            # Not a single integer, try parsing as range format "start-end"
+            if "-" in spec:
+                # Find the last hyphen (to handle cases like "1-100", not "-5")
+                # We need to distinguish between "-5" (negative number) and "1-5" (range)
+                parts = spec.rsplit("-", 1)
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    s, e = parts[0].strip(), parts[1].strip()
+                    start = int(s)
+                    end = int(e)
+                else:
+                    raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+            else:
+                raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
     except ValueError:
         raise
     except Exception as e:
         raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from e
 
-    if start < 1 or end < start:
-        raise ValueError(f"Invalid range: {spec!r}")
+    # Auto-correct invalid start line (0 or negative) to 1
+    # This makes the tool more resilient to LLM mistakes (0-indexed vs 1-indexed confusion)
+    if start < 1:
+        start = 1
+    if end < start:
+        end = start
     return Range(start, end)
 
 
