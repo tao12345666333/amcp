@@ -1,15 +1,16 @@
 """Tests for the agent_spec module."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from amcp.agent_spec import (
     AgentSpec,
     AgentSpecError,
     ResolvedAgentSpec,
     get_default_agent_spec,
-    load_agent_spec,
     list_available_agents,
+    load_agent_spec,
 )
 from amcp.multi_agent import AgentMode
 

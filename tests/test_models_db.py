@@ -198,19 +198,21 @@ class TestCacheFunctions:
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "models.json"
 
-            with patch("amcp.models_db.MODELS_CACHE_FILE", cache_file):
-                with patch("amcp.models_db.CACHE_DIR", Path(tmpdir)):
-                    # Save
-                    save_models_cache(db)
+            with (
+                patch("amcp.models_db.MODELS_CACHE_FILE", cache_file),
+                patch("amcp.models_db.CACHE_DIR", Path(tmpdir)),
+            ):
+                # Save
+                save_models_cache(db)
 
-                    # Verify file exists
-                    assert cache_file.exists()
+                # Verify file exists
+                assert cache_file.exists()
 
-                    # Load
-                    loaded = load_models_cache()
-                    assert loaded is not None
-                    assert loaded.fetched_at == "2024-01-01"
-                    assert "provider" in loaded.providers
+                # Load
+                loaded = load_models_cache()
+                assert loaded is not None
+                assert loaded.fetched_at == "2024-01-01"
+                assert "provider" in loaded.providers
 
     def test_load_returns_none_when_no_cache(self):
         """Test load returns None when no cache file."""

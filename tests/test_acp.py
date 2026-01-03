@@ -23,7 +23,7 @@ class TestACPSession:
         assert session.conversation_history == []
         assert session.tool_calls_history == []
         assert session.created_at is not None
-        assert session.current_mode_id == "ask"
+        assert session.current_mode_id == "full"
         assert session.plan_entries == []
 
     def test_add_user_message(self):
@@ -94,7 +94,7 @@ class TestAMCPAgent:
             fs=FileSystemCapability(read_text_file=True, write_text_file=True),
             terminal=True,
         )
-        response = await agent.initialize(protocol_version=1, client_capabilities=client_caps)
+        await agent.initialize(protocol_version=1, client_capabilities=client_caps)
         assert agent._client_capabilities == client_caps
 
     @pytest.mark.asyncio
@@ -107,8 +107,8 @@ class TestAMCPAgent:
         assert response.session_id in agent._sessions
         # Check session modes are returned
         assert response.modes is not None
-        assert response.modes.current_mode_id == "ask"
-        assert len(response.modes.available_modes) == 3
+        assert response.modes.current_mode_id == "full"
+        assert len(response.modes.available_modes) == 1
 
     @pytest.mark.asyncio
     async def test_cancel_session(self):
@@ -122,16 +122,13 @@ class TestAMCPAgent:
 
     @pytest.mark.asyncio
     async def test_set_session_mode(self):
-        """Test setting session mode."""
+        """Test setting session mode to full."""
         agent = AMCPAgent()
         response = await agent.new_session(cwd="/tmp", mcp_servers=[])
         session_id = response.session_id
 
-        await agent.set_session_mode(mode_id="code", session_id=session_id)
-        assert agent._sessions[session_id].current_mode_id == "code"
-
-        await agent.set_session_mode(mode_id="architect", session_id=session_id)
-        assert agent._sessions[session_id].current_mode_id == "architect"
+        await agent.set_session_mode(mode_id="full", session_id=session_id)
+        assert agent._sessions[session_id].current_mode_id == "full"
 
     @pytest.mark.asyncio
     async def test_set_invalid_session_mode(self):
@@ -141,7 +138,7 @@ class TestAMCPAgent:
         session_id = response.session_id
 
         await agent.set_session_mode(mode_id="invalid", session_id=session_id)
-        assert agent._sessions[session_id].current_mode_id == "ask"  # unchanged
+        assert agent._sessions[session_id].current_mode_id == "full"  # unchanged
 
     def test_extract_text_from_prompt_dict(self):
         """Test extracting text from dict-style prompt blocks."""
@@ -215,11 +212,9 @@ class TestSessionModes:
 
     def test_available_modes(self):
         """Test available modes are defined correctly."""
-        assert len(AVAILABLE_MODES) == 3
+        assert len(AVAILABLE_MODES) == 1
         mode_ids = [m.id for m in AVAILABLE_MODES]
-        assert "ask" in mode_ids
-        assert "architect" in mode_ids
-        assert "code" in mode_ids
+        assert "full" in mode_ids
 
     def test_mode_descriptions(self):
         """Test modes have descriptions."""
@@ -228,12 +223,12 @@ class TestSessionModes:
             assert mode.description is not None
 
     @pytest.mark.asyncio
-    async def test_session_starts_in_ask_mode(self):
-        """Test new sessions start in ask mode."""
+    async def test_session_starts_in_full_mode(self):
+        """Test new sessions start in full mode."""
         agent = AMCPAgent()
         response = await agent.new_session(cwd="/tmp", mcp_servers=[])
         session = agent._sessions[response.session_id]
-        assert session.current_mode_id == "ask"
+        assert session.current_mode_id == "full"
 
 
 class TestSlashCommands:
@@ -269,24 +264,16 @@ class TestACPIntegration:
         agent = AMCPAgent()
         session = ACPSession("test-id", "/home/user/project")
         prompt = agent._get_system_prompt(session)
-        # Should contain mode-specific prompt
-        assert "ask" in prompt.lower() or "permission" in prompt.lower()
+        # Should contain full access mode prompt
+        assert "full access" in prompt.lower() or "implement" in prompt.lower()
 
-    def test_system_prompt_for_architect_mode(self):
-        """Test system prompt for architect mode."""
+    def test_system_prompt_for_full_mode(self):
+        """Test system prompt for full mode."""
         agent = AMCPAgent()
         session = ACPSession("test-id", "/home/user/project")
-        session.current_mode_id = "architect"
+        session.current_mode_id = "full"
         prompt = agent._get_system_prompt(session)
-        assert "architect" in prompt.lower() or "design" in prompt.lower()
-
-    def test_system_prompt_for_code_mode(self):
-        """Test system prompt for code mode."""
-        agent = AMCPAgent()
-        session = ACPSession("test-id", "/home/user/project")
-        session.current_mode_id = "code"
-        prompt = agent._get_system_prompt(session)
-        assert "code" in prompt.lower() or "implement" in prompt.lower()
+        assert "full access" in prompt.lower() or "implement" in prompt.lower()
 
     @pytest.mark.asyncio
     async def test_session_persistence_flow(self):
@@ -321,35 +308,21 @@ class TestACPIntegration:
 
 
 class TestToolBuilding:
-    """Tests for tool building based on session mode."""
+    """Tests for tool building in full permission mode."""
 
     @pytest.mark.asyncio
-    async def test_architect_mode_limits_tools(self):
-        """Test architect mode only provides read tools."""
+    async def test_full_mode_has_all_tools(self):
+        """Test full mode has all tools available."""
         agent = AMCPAgent()
         response = await agent.new_session(cwd="/tmp", mcp_servers=[])
         session = agent._sessions[response.session_id]
-        session.current_mode_id = "architect"
-
-        tools = await agent._build_tools(session)
-        tool_names = [t["function"]["name"] for t in tools]
-
-        # Should have read tools
-        assert "read_file" in tool_names or "grep" in tool_names
-        # Should NOT have write tools
-        assert "write_file" not in tool_names
-        assert "bash" not in tool_names
-
-    @pytest.mark.asyncio
-    async def test_code_mode_has_all_tools(self):
-        """Test code mode has all tools available."""
-        agent = AMCPAgent()
-        response = await agent.new_session(cwd="/tmp", mcp_servers=[])
-        session = agent._sessions[response.session_id]
-        session.current_mode_id = "code"
+        session.current_mode_id = "full"
 
         tools = await agent._build_tools(session)
         tool_names = [t["function"]["name"] for t in tools]
 
         # Should have both read and write tools
         assert len(tool_names) > 0
+        # Check for major tool categories
+        assert "read_file" in tool_names
+        assert "write_file" in tool_names or "bash" in tool_names

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import pytest
-from pathlib import Path
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
 
 from amcp.commands import (
-    CommandManager,
+    CommandContext,
     CommandKind,
+    CommandManager,
     CommandResult,
     SlashCommand,
-    CommandContext,
     get_command_manager,
     reset_command_manager,
 )

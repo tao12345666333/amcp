@@ -17,8 +17,8 @@ from amcp.hooks import (
     HooksManager,
     get_hooks_manager,
     reset_hooks_manager,
-    run_pre_tool_use_hooks,
     run_post_tool_use_hooks,
+    run_pre_tool_use_hooks,
     run_user_prompt_hooks,
 )
 

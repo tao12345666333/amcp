@@ -1,16 +1,17 @@
 """Tests for the indentation-aware reading functionality."""
 
-import pytest
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
+import pytest
 
 from amcp.readfile import (
     IndentationOptions,
+    _collect_file_lines,
+    _compute_effective_indents,
+    _measure_indent,
     read_file_with_indentation,
     read_file_with_ranges,
-    _measure_indent,
-    _compute_effective_indents,
-    _collect_file_lines,
 )
 
 
@@ -54,7 +55,7 @@ class TestReadFileWithRanges:
         assert len(blocks) == 1
         assert blocks[0]["start"] == 2
         assert blocks[0]["end"] == 4
-        assert [(n, l) for n, l in blocks[0]["lines"]] == [
+        assert [(n, line) for n, line in blocks[0]["lines"]] == [
             (2, "line2"),
             (3, "line3"),
             (4, "line4"),
@@ -110,7 +111,7 @@ def other():
 
         assert len(blocks) == 1
         lines = blocks[0]["lines"]
-        line_numbers = [l[0] for l in lines]
+        line_numbers = [ln[0] for ln in lines]
 
         # Should capture the hello function
         assert 1 in line_numbers  # def hello():
@@ -138,7 +139,7 @@ def other():
 
         lines = blocks[0]["lines"]
         # Should capture the if block and the add method
-        line_numbers = [l[0] for l in lines]
+        line_numbers = [ln[0] for ln in lines]
         assert 6 in line_numbers  # if x > 0:
         assert 7 in line_numbers  # self.value += x
 
@@ -155,7 +156,7 @@ def other():
         blocks = read_file_with_indentation(file, offset=4, limit=50, options=IndentationOptions(max_levels=2))
 
         lines = blocks[0]["lines"]
-        line_numbers = [l[0] for l in lines]
+        line_numbers = [ln[0] for ln in lines]
         # Should include the class and method
         assert 2 in line_numbers  # def add(self, x):
         assert 3 in line_numbers  # if x > 0:
@@ -183,9 +184,9 @@ def third():
         )
 
         # Without siblings should just get second()
-        lines_no_sib = [l[0] for l in blocks_no_siblings[0]["lines"]]
+        lines_no_sib = [ln[0] for ln in blocks_no_siblings[0]["lines"]]
         # With siblings should get more
-        lines_with_sib = [l[0] for l in blocks_with_siblings[0]["lines"]]
+        lines_with_sib = [ln[0] for ln in blocks_with_siblings[0]["lines"]]
 
         assert len(lines_with_sib) > len(lines_no_sib)
 
@@ -204,10 +205,10 @@ def important_function():
         )
 
         lines = blocks[0]["lines"]
-        line_contents = [l[1] for l in lines]
+        line_contents = [ln[1] for ln in lines]
 
         # Should include the comment header
-        assert any("important" in l for l in line_contents)
+        assert any("important" in content for content in line_contents)
 
     def test_out_of_range_anchor(self, tmp_path):
         """Test with anchor line out of range."""
@@ -255,7 +256,7 @@ def standalone():
         blocks = read_file_with_indentation(file, offset=14, limit=100, options=IndentationOptions(max_levels=2))
 
         lines = blocks[0]["lines"]
-        line_numbers = [l[0] for l in lines]
+        line_numbers = [ln[0] for ln in lines]
 
         # Should include add_item method definition
         assert 11 in line_numbers  # def add_item
@@ -280,7 +281,7 @@ def standalone():
         blocks = read_file_with_indentation(file, offset=5, limit=50, options=IndentationOptions(max_levels=1))
 
         lines = blocks[0]["lines"]
-        line_numbers = [l[0] for l in lines]
+        line_numbers = [ln[0] for ln in lines]
 
         # Should capture the if block
         assert 4 in line_numbers  # if (!cache.has(key))

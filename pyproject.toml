@@ -1,6 +1,6 @@
 [project]
 name = "amcp-agent"
-version = "0.6.0"
+version = "0.7.0"
 description = "amcp: Lego-style coding agent CLI. Core: rg grep/find and read; editing & web search via MCP."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,7 +47,7 @@ dev = [
 
 [project.scripts]
 amcp = "amcp.cli:app"
-amcp-acp = "amcp.acp_agent:main"
+amcp-agent = "amcp.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/tao12345666333/amcp"

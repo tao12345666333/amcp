@@ -51,7 +51,7 @@ from acp.schema import (
     SessionModeState,
     SseMcpServer,
     TextContentBlock,
-    ToolCallStatus,
+    # ToolCallStatus is a Literal type: 'pending' | 'in_progress' | 'completed' | 'failed'
     UnstructuredCommandInput,
 )
 
@@ -61,11 +61,9 @@ from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .tools import ToolResult, get_tool_registry
 
-# Session modes
+# Session modes - single full permission mode
 AVAILABLE_MODES = [
-    SessionMode(id="ask", name="Ask", description="Request permission before making any changes"),
-    SessionMode(id="architect", name="Architect", description="Design and plan without implementation"),
-    SessionMode(id="code", name="Code", description="Write and modify code with full tool access"),
+    SessionMode(id="full", name="Full", description="Full access to all AMCP tools and capabilities"),
 ]
 
 # Slash commands
@@ -94,7 +92,7 @@ class ACPSession:
         self.conversation_history: list[dict[str, Any]] = []
         self.tool_calls_history: list[dict[str, Any]] = []
         self.created_at = datetime.now().isoformat()
-        self.current_mode_id = "ask"
+        self.current_mode_id = "full"
         self.plan_entries: list[dict[str, Any]] = []
 
     def add_user_message(self, content: str) -> None:
@@ -170,7 +168,7 @@ class AMCPAgent(Agent):
         return NewSessionResponse(
             session_id=session_id,
             modes=SessionModeState(
-                current_mode_id="ask",
+                current_mode_id="full",
                 available_modes=AVAILABLE_MODES,
             ),
         )
@@ -204,7 +202,7 @@ class AMCPAgent(Agent):
                     session = ACPSession(session_id, cwd)
                     session.conversation_history = data.get("conversation_history", [])
                     session.tool_calls_history = data.get("tool_calls_history", [])
-                    session.current_mode_id = data.get("current_mode_id", "ask")
+                    session.current_mode_id = data.get("current_mode_id", "full")
                     self._sessions[session_id] = session
                 except Exception:
                     return None
@@ -389,7 +387,7 @@ class AMCPAgent(Agent):
                 session_id=session.session_id,
                 update=update_tool_call(
                     tool_call_id=tool_call_id,
-                    status=ToolCallStatus.completed if result.success else ToolCallStatus.failed,
+                    status="completed" if result.success else "failed",
                     content=[
                         {
                             "type": "content",
@@ -415,14 +413,15 @@ class AMCPAgent(Agent):
         """Set session mode."""
         if session_id in self._sessions:
             session = self._sessions[session_id]
-            if mode_id in ("ask", "architect", "code"):
+            # Only "full" mode is available
+            if mode_id == "full":
                 session.current_mode_id = mode_id
                 if self._conn:
                     from acp.schema import CurrentModeUpdate
 
                     await self._conn.session_update(
                         session_id=session_id,
-                        update=CurrentModeUpdate(session_update="current_mode_update", mode_id=mode_id),
+                        update=CurrentModeUpdate(session_update="current_mode_update", current_mode_id=mode_id),
                     )
 
     async def set_session_model(self, model_id: str, session_id: str, **kwargs: Any) -> None:
@@ -510,19 +509,7 @@ class AMCPAgent(Agent):
                 args = json.loads(tc["arguments"] or "{}")
                 tool_call_id = f"call_{uuid4().hex[:8]}"
 
-                # Request permission in "ask" mode for write operations
-                if session.current_mode_id == "ask" and tool_name in ("write_file", "apply_patch", "bash"):
-                    permission = await self._request_permission(session, tool_call_id, tool_name, args)
-                    if not permission:
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc["id"],
-                                "name": tool_name,
-                                "content": "Permission denied by user",
-                            }
-                        )
-                        continue
+                # Full permission mode - no permission request needed
 
                 if self._conn:
                     await self._conn.session_update(
@@ -542,7 +529,7 @@ class AMCPAgent(Agent):
                         session_id=session.session_id,
                         update=update_tool_call(
                             tool_call_id=tool_call_id,
-                            status=ToolCallStatus.completed,
+                            status="completed",
                             content=[{"type": "content", "content": text_block(result[:2000])}],
                         ),
                     )
@@ -580,7 +567,7 @@ class AMCPAgent(Agent):
                     session_update="tool_call_update",
                     tool_call_id=tool_call_id,
                     title=f"Execute {tool_name}",
-                    status=ToolCallStatus.pending,
+                    status="pending",
                 ),
                 options=[
                     PermissionOption(option_id="allow", name="Allow", kind=PermissionOptionKind.allow_once),
@@ -593,12 +580,8 @@ class AMCPAgent(Agent):
 
     def _get_system_prompt(self, session: ACPSession) -> str:
         """Get system prompt with context."""
-        mode_prompts = {
-            "ask": "You are a helpful coding assistant. Always ask for permission before making changes.",
-            "architect": "You are a software architect. Focus on design and planning without implementation.",
-            "code": "You are a coding assistant with full access to tools. Implement solutions directly.",
-        }
-        base_prompt = mode_prompts.get(session.current_mode_id, mode_prompts["ask"])
+        # Single full permission mode - no restrictions
+        base_prompt = "You are a coding assistant with full access to all tools. Implement solutions directly."
 
         prompt_vars = {
             "work_dir": session.cwd,
@@ -614,11 +597,11 @@ class AMCPAgent(Agent):
         return f"{base_prompt}\n\n{custom_prompt}"
 
     async def _build_tools(self, session: ACPSession) -> list[dict[str, Any]]:
-        """Build list of available tools based on mode."""
+        """Build list of available tools (full access - no restrictions)."""
         tools = []
 
-        # In architect mode, only provide read tools
-        allowed = ("read_file", "grep", "think") if session.current_mode_id == "architect" else None
+        # Full permission mode - no tool restrictions
+        allowed = None
 
         registry = get_tool_registry()
         for tool_name in registry.list_tools():

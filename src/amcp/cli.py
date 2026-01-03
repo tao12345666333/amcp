@@ -114,20 +114,15 @@ def acp_serve(
 @acp.command("info", help="Show ACP configuration info for use with clients")
 def acp_info() -> None:
     """Show information for configuring ACP clients."""
-    import sys
-
     console.print("[bold]AMCP ACP Server Configuration[/bold]")
     console.print()
     console.print("To use AMCP with an ACP client (e.g., Zed editor), configure:")
     console.print()
     console.print("[bold]Command:[/bold]")
-    console.print(f"  {sys.executable} -m amcp.acp_agent")
-    console.print()
-    console.print("[bold]Or if installed:[/bold]")
-    console.print("  amcp-acp")
+    console.print("  amcp acp serve")
     console.print()
     console.print("[bold]Zed settings.json example:[/bold]")
-    zed_config = {"agent": {"profiles": {"amcp": {"name": "AMCP Agent", "command": "amcp-acp", "args": []}}}}
+    zed_config = {"agent": {"profiles": {"amcp": {"name": "AMCP Agent", "command": "amcp", "args": ["acp", "serve"]}}}}
     console.print(JSON.from_data(zed_config))
 
 

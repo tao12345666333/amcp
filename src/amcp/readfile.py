@@ -63,11 +63,13 @@ def _parse_range(spec: str) -> Range:
         - "1-100": lines 1 to 100
         - "1": just line 1 (same as "1-1")
         - "0" or negative: auto-corrected to 1
+        - Invalid inputs like "-" or "" are auto-corrected to Range(1, 1)
     """
     try:
         spec = spec.strip()
-        if not spec:
-            raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+        # Handle empty or just-hyphen inputs gracefully (LLM resilience)
+        if not spec or spec == "-":
+            return Range(1, 1)  # Default to first line instead of raising
 
         # First, try to parse as a single integer (handles negative numbers like "-5")
         try:
@@ -83,9 +85,9 @@ def _parse_range(spec: str) -> Range:
                     start = int(s)
                     end = int(e)
                 else:
-                    raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+                    raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from None
             else:
-                raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number")
+                raise ValueError(f"Invalid range: {spec!r}, expected 'start-end' or single line number") from None
     except ValueError:
         raise
     except Exception as e:

@@ -38,11 +38,14 @@ Demo: https://drive.google.com/file/d/1FGoY4I_JFQ1FSz19XlVJZ6Z4lWUucD7a/view?usp
 ### Quick Run with uvx (no install needed)
 
 ```bash
-# First time: Initialize configuration (API keys, model settings)
-uvx --from amcp-agent amcp init
+# Run directly without installation
+uvx amcp-agent
 
-# Then: Start interactive mode
-uvx --from amcp-agent amcp
+# Initialize config (API keys, model settings)
+uvx amcp-agent init
+
+# Run as ACP server (for IDE integration)
+uvx amcp-agent acp serve
 ```
 
 ### From PyPI
@@ -94,7 +97,7 @@ amcp mcp tools --server exa
 amcp mcp call --server exa --tool web_search_exa --args '{"query":"rust async"}'
 
 # Run as ACP agent (for IDE integration)
-amcp-acp
+amcp acp serve
 ```
 
 ## ACP (Agent Client Protocol) Support
@@ -117,7 +120,7 @@ AMCP fully supports the [Agent Client Protocol](https://agentclientprotocol.com/
 
 ```bash
 # Start the ACP agent server (stdio transport)
-amcp-acp
+amcp acp serve
 ```
 
 ### Zed Integration
@@ -132,7 +135,8 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
         "name": "AMCP",
         "provider": {
           "type": "acp",
-          "command": "amcp-acp"
+          "command": "amcp",
+          "args": ["acp", "serve"]
         }
       }
     },

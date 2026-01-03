@@ -3,11 +3,11 @@
 import pytest
 
 from amcp.multi_agent import (
+    BUILTIN_AGENTS,
+    PRIMARY_SYSTEM_PROMPT,
     AgentConfig,
     AgentMode,
     AgentRegistry,
-    BUILTIN_AGENTS,
-    PRIMARY_SYSTEM_PROMPT,
     create_subagent_config,
     get_agent_config,
     get_agent_registry,
