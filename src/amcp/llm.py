@@ -36,6 +36,8 @@ class LLMResponse:
 class BaseLLMClient(ABC):
     """Base class for LLM clients."""
 
+    model: str  # Model name/identifier
+
     @abstractmethod
     def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:
         """Send chat request and return response."""
@@ -109,7 +111,7 @@ class OpenAIResponsesClient(BaseLLMClient):
         if resp_tools:
             params["tools"] = resp_tools
 
-        resp = self.client.responses.create(**params)
+        resp = self.client.responses.create(**params)  # type: ignore[call-overload]
 
         # Parse response
         content_parts = []
@@ -139,10 +141,10 @@ class AnthropicClient(BaseLLMClient):
         except ImportError:
             raise ImportError("anthropic package not installed. Run: pip install anthropic") from None
 
-        kwargs = {"api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", "")}
+        kwargs: dict[str, Any] = {"api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", "")}
         if base_url:
             kwargs["base_url"] = base_url
-        self.client = Anthropic(**kwargs)
+        self.client = Anthropic(**kwargs)  # type: ignore[arg-type]
         self.model = model
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:

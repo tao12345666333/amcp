@@ -180,7 +180,7 @@ class AMCPAgent(Agent):
 
             await self._conn.session_update(
                 session_id=session_id,
-                update=AvailableCommandsUpdate(
+                update=AvailableCommandsUpdate(  # type: ignore[call-arg]
                     session_update="available_commands_update",
                     available_commands=AVAILABLE_COMMANDS,
                 ),
@@ -328,7 +328,7 @@ class AMCPAgent(Agent):
 
             await self._conn.session_update(
                 session_id=session.session_id,
-                update=Plan(
+                update=Plan(  # type: ignore[call-arg,arg-type]
                     session_update="plan",
                     entries=[
                         PlanEntry(content="Analyzing requirements...", priority="high", status="in_progress"),
@@ -355,7 +355,7 @@ class AMCPAgent(Agent):
 
             await self._conn.session_update(
                 session_id=session.session_id,
-                update=Plan(session_update="plan", entries=entries),
+                update=Plan(session_update="plan", entries=entries),  # type: ignore[call-arg,arg-type]
             )
 
         self._save_session(session)
@@ -383,19 +383,20 @@ class AMCPAgent(Agent):
         result = registry.execute_tool("grep", pattern=pattern, path=session.cwd)
 
         if self._conn:
+            content_items: Any = [
+                {
+                    "type": "content",
+                    "content": text_block(
+                        result.content if result.success else result.error or "Search failed"
+                    ),
+                }
+            ]
             await self._conn.session_update(
                 session_id=session.session_id,
                 update=update_tool_call(
                     tool_call_id=tool_call_id,
                     status="completed" if result.success else "failed",
-                    content=[
-                        {
-                            "type": "content",
-                            "content": text_block(
-                                result.content if result.success else result.error or "Search failed"
-                            ),
-                        }
-                    ],
+                    content=content_items,
                 ),
             )
 
@@ -421,7 +422,7 @@ class AMCPAgent(Agent):
 
                     await self._conn.session_update(
                         session_id=session_id,
-                        update=CurrentModeUpdate(session_update="current_mode_update", current_mode_id=mode_id),
+                        update=CurrentModeUpdate(session_update="current_mode_update", current_mode_id=mode_id),  # type: ignore[call-arg]
                     )
 
     async def set_session_model(self, model_id: str, session_id: str, **kwargs: Any) -> None:
@@ -517,7 +518,7 @@ class AMCPAgent(Agent):
                         update=start_tool_call(
                             tool_call_id=tool_call_id,
                             title=f"Executing {tool_name}",
-                            kind=self._get_tool_kind(tool_name),
+                            kind=self._get_tool_kind(tool_name),  # type: ignore[arg-type]
                         ),
                     )
 
@@ -530,7 +531,7 @@ class AMCPAgent(Agent):
                         update=update_tool_call(
                             tool_call_id=tool_call_id,
                             status="completed",
-                            content=[{"type": "content", "content": text_block(result[:2000])}],
+                            content=[{"type": "content", "content": text_block(result[:2000])}],  # type: ignore[list-item]
                         ),
                     )
 
@@ -544,7 +545,7 @@ class AMCPAgent(Agent):
                                 "type": "function",
                                 "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
                             }
-                        ],
+                        ],  # type: ignore[dict-item]
                     }
                 )
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "name": tool_name, "content": result[:8000]})
@@ -563,15 +564,15 @@ class AMCPAgent(Agent):
         try:
             response = await self._conn.request_permission(
                 session_id=session.session_id,
-                tool_call=ToolCallUpdate(
+                tool_call=ToolCallUpdate(  # type: ignore[call-arg]
                     session_update="tool_call_update",
                     tool_call_id=tool_call_id,
                     title=f"Execute {tool_name}",
                     status="pending",
                 ),
                 options=[
-                    PermissionOption(option_id="allow", name="Allow", kind=PermissionOptionKind.allow_once),
-                    PermissionOption(option_id="reject", name="Reject", kind=PermissionOptionKind.reject_once),
+                    PermissionOption(option_id="allow", name="Allow", kind=PermissionOptionKind.allow_once),  # type: ignore[attr-defined]
+                    PermissionOption(option_id="reject", name="Reject", kind=PermissionOptionKind.reject_once),  # type: ignore[attr-defined]
                 ],
             )
             return response.outcome.outcome == "selected" and response.outcome.option_id == "allow"

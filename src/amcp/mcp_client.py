@@ -50,12 +50,13 @@ def _create_client(server: Server) -> Client:
     for k, v in (server.env or {}).items():
         merged[str(k)] = _expand_env(str(v))
 
-    transport = StdioTransport(
+    stdio_transport = StdioTransport(
         command=server.command or "",
         args=list(server.args) if server.args else [],
         env=merged,
     )
-    return Client(transport)
+    return Client(stdio_transport)
+
 
 
 class MCPTimeoutError(Exception):

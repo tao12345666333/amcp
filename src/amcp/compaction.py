@@ -592,7 +592,7 @@ class SmartCompactor:
         """
         # Calculate how many messages to keep
         target = self.target_tokens
-        kept = []
+        kept: list[dict[str, Any]] = []
         total_tokens = 0
 
         for msg in reversed(messages):
@@ -622,7 +622,7 @@ class SmartCompactor:
         """
         # First apply sliding window to get recent messages
         target = self.target_tokens // 2  # Leave room for summary
-        kept = []
+        kept: list[dict[str, Any]] = []
         total_tokens = 0
 
         for msg in reversed(messages):

@@ -104,7 +104,7 @@ class Hunk:
     @property
     def context_after(self) -> list[str]:
         """Get context lines after the last change."""
-        result = []
+        result: list[str] = []
         found_change = False
         for line in self.lines:
             if line.is_deletion or line.is_addition:

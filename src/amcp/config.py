@@ -4,6 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib  # py311+
@@ -100,11 +101,14 @@ _DEFAULT = {
 def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
     command = raw.get("command")
     command_s = str(command) if command is not None else None
-    args = [str(x) for x in (raw.get("args") or [])]
-    env = {str(k): str(v) for k, v in (raw.get("env") or {}).items()}
+    raw_args = raw.get("args")
+    args = [str(x) for x in raw_args] if isinstance(raw_args, list) else []
+    raw_env = raw.get("env")
+    env = {str(k): str(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else {}
     url = raw.get("url")
     url_s = str(url) if url is not None else None
-    headers = {str(k): str(v) for k, v in (raw.get("headers") or {}).items()}
+    raw_headers = raw.get("headers")
+    headers = {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
     return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
 
 
@@ -112,11 +116,15 @@ def _decode_model_config(raw: Mapping[str, object] | None) -> ModelConfig | None
     """Decode model_config section from TOML."""
     if not raw:
         return None
+    provider_id = raw.get("provider_id")
+    model_id = raw.get("model_id")
+    context_window = raw.get("context_window")
+    output_limit = raw.get("output_limit")
     return ModelConfig(
-        provider_id=str(raw["provider_id"]) if raw.get("provider_id") else None,
-        model_id=str(raw["model_id"]) if raw.get("model_id") else None,
-        context_window=int(raw["context_window"]) if raw.get("context_window") else None,
-        output_limit=int(raw["output_limit"]) if raw.get("output_limit") else None,
+        provider_id=str(provider_id) if provider_id else None,
+        model_id=str(model_id) if model_id else None,
+        context_window=int(str(context_window)) if context_window else None,
+        output_limit=int(str(output_limit)) if output_limit else None,
         is_custom=bool(raw.get("is_custom", False)),
     )
 
@@ -141,7 +149,8 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     enable_queue = raw.get("enable_queue")
     max_queue_size = raw.get("max_queue_size")
     # Model config
-    model_config = _decode_model_config(raw.get("model_config"))  # type: ignore
+    raw_model_config = raw.get("model_config")
+    model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
 
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
@@ -149,23 +158,25 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         api_key=str(api_key) if api_key is not None else None,
         api_type=str(api_type) if api_type is not None else None,
         model_config=model_config,
-        tool_loop_limit=int(tool_loop_limit) if tool_loop_limit is not None else None,
-        default_max_lines=int(default_max_lines) if default_max_lines is not None else None,
-        read_roots=[str(p) for p in (read_roots or [])] if read_roots is not None else None,
+        tool_loop_limit=int(str(tool_loop_limit)) if tool_loop_limit is not None else None,
+        default_max_lines=int(str(default_max_lines)) if default_max_lines is not None else None,
+        read_roots=[str(p) for p in read_roots] if isinstance(read_roots, list) else None,
         mcp_tools_enabled=bool(mcp_tools_enabled) if mcp_tools_enabled is not None else None,
-        mcp_servers=[str(s) for s in (mcp_servers or [])] if mcp_servers is not None else None,
+        mcp_servers=[str(s) for s in mcp_servers] if isinstance(mcp_servers, list) else None,
         write_tool_enabled=bool(write_tool_enabled) if write_tool_enabled is not None else None,
         edit_tool_enabled=bool(edit_tool_enabled) if edit_tool_enabled is not None else None,
         default_agent=str(default_agent) if default_agent is not None else None,
         enable_queue=bool(enable_queue) if enable_queue is not None else None,
-        max_queue_size=int(max_queue_size) if max_queue_size is not None else None,
+        max_queue_size=int(str(max_queue_size)) if max_queue_size is not None else None,
     )
 
 
 def load_config() -> AMCPConfig:
-    data = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else _DEFAULT
-    servers = {name: _decode_server(name, raw) for name, raw in data.get("servers", {}).items()}
-    chat = _decode_chat(data.get("chat"))
+    data: dict[str, Any] = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else _DEFAULT
+    servers_data = data.get("servers", {})
+    servers = {name: _decode_server(name, raw) for name, raw in servers_data.items() if isinstance(raw, dict)}
+    chat_data = data.get("chat")
+    chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
     return AMCPConfig(servers=servers, chat=chat)
 
 

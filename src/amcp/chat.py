@@ -6,6 +6,7 @@ import os
 import re
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.live import Live
@@ -343,7 +344,7 @@ def _chat_with_tools(
                         )
                         break
             # append assistant message with tool calls
-            assistant_msg = {"role": "assistant", "content": msg.content or "", "tool_calls": []}
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or "", "tool_calls": []}
             for tc in tool_calls:
                 fn = tc.function
                 args = {}
@@ -492,8 +493,8 @@ def chat_once(
     overrides = {"read_roots": [str(work_dir.resolve())]} if work_dir else None
 
     # Build MCP tools
-    extra_tools = []
-    registry = {}
+    extra_tools: list[dict[str, Any]] = []
+    registry: dict[str, tuple[str, str]] = {}
     enabled = True
 
     # Check if MCP tools are disabled in config
@@ -552,8 +553,8 @@ def chat_repl(
         enabled = False
     if mcp_tools_enabled is not None:
         enabled = bool(mcp_tools_enabled)
-    extra_tools = []
-    registry = {}
+    extra_tools: list[dict[str, Any]] = []
+    registry: dict[str, tuple[str, str]] = {}
     if enabled:
         extra_tools, registry = _build_mcp_tools_and_registry(cfg, chat_cfg, mcp_servers_override)
     enabled_servers = sorted(set(name.split(".")[1] for name in registry)) if registry else []

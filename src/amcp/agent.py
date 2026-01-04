@@ -10,7 +10,7 @@ from rich.status import Status
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
-from .compaction import Compactor
+from .compaction import SmartCompactor
 from .config import load_config
 from .hooks import (
     HookDecision,
@@ -180,7 +180,7 @@ class Agent:
         work_dir_str = str(resolved_work_dir)
 
         # Note: MCP tools info will be loaded asynchronously during execution
-        mcp_tools_info = []
+        mcp_tools_info: list[dict[str, Any]] = []
 
         prompt_vars = {
             "work_dir": work_dir_str,
@@ -381,7 +381,7 @@ class Agent:
                 # Process queued message
                 self.console.print("[dim]Processing queued message...[/dim]")
                 queued_work_dir = (
-                    Path(next_msg.metadata.get("work_dir")) if next_msg.metadata.get("work_dir") else work_dir
+                    Path(next_msg.metadata["work_dir"]) if next_msg.metadata.get("work_dir") else work_dir
                 )
                 await self._process_message(
                     next_msg.prompt,
@@ -439,12 +439,12 @@ class Agent:
                 base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
                 api_key = _resolve_api_key(None, cfg.chat)
                 client = _make_client(base_url, api_key)
-                model = cfg.chat.model if cfg.chat else "DeepSeek-V3.1-Terminus"
-                compactor = Compactor(client, model)
+                model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+                compactor = SmartCompactor(client, model)
 
                 if compactor.should_compact(history_to_add):
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
-                    history_to_add = compactor.compact(history_to_add)
+                    history_to_add, _ = compactor.compact(history_to_add)
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
                 messages.extend(history_to_add)
@@ -548,9 +548,9 @@ class Agent:
 
         return tools
 
-    async def _build_tool_registry(self) -> dict[str, Any]:
+    async def _build_tool_registry(self) -> dict[str, tuple[str, str]]:
         """Build tool registry for MCP tool dispatch."""
-        registry = {}
+        registry: dict[str, tuple[str, str]] = {}
 
         cfg = load_config()
         chat_cfg = cfg.chat

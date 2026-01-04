@@ -123,7 +123,7 @@ class HookInput:
 
     def to_json(self) -> str:
         """Convert to JSON for passing to external commands."""
-        data = {
+        data: dict[str, Any] = {
             "session_id": self.session_id,
             "hook_event_name": self.hook_event_name,
             "cwd": self.cwd,

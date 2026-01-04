@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -14,12 +14,10 @@ class ToolResult:
 
     success: bool
     content: str
-    metadata: dict[str, Any] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+
 
 
 class ToolError(Exception):
@@ -54,8 +52,12 @@ class Tool(Protocol):
         """Tool description."""
         ...
 
-    def execute(self, **kwargs) -> ToolResult:
+    def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool with given parameters."""
+        ...
+
+    def get_spec(self) -> dict[str, Any]:
+        """Get tool specification for LLM."""
         ...
 
 
@@ -111,10 +113,10 @@ class ToolRegistry:
     """Registry for managing tools."""
 
     def __init__(self):
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, BaseTool] = {}
         self._tool_specs: dict[str, dict[str, Any]] = {}
 
-    def register(self, tool: Tool) -> None:
+    def register(self, tool: BaseTool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
         self._tool_specs[tool.name] = tool.get_spec() if hasattr(tool, "get_spec") else {}
@@ -124,7 +126,7 @@ class ToolRegistry:
         self._tools.pop(name, None)
         self._tool_specs.pop(name, None)
 
-    def get_tool(self, name: str) -> Tool | None:
+    def get_tool(self, name: str) -> BaseTool | None:
         """Get a tool by name."""
         return self._tools.get(name)
 
@@ -180,7 +182,7 @@ Modes:
 
 Use relative paths from current working directory."""
 
-    def execute(
+    def execute(  # type: ignore[override]
         self,
         path: str,
         # Slice mode parameters
@@ -387,7 +389,7 @@ class ThinkTool(BaseTool):
     def description(self) -> str:
         return "Use this tool for internal reasoning, planning, and organizing your thoughts before taking action."
 
-    def execute(self, thought: str) -> ToolResult:
+    def execute(self, thought: str) -> ToolResult:  # type: ignore[override]
         """Execute thinking process."""
         return ToolResult(success=True, content=f"🤔 Thinking: {thought}", metadata={"thought": thought})
 
@@ -411,7 +413,7 @@ class BashTool(BaseTool):
     def description(self) -> str:
         return "Execute bash commands. Use for file operations, running scripts, or system commands. Returns stdout and stderr."
 
-    def execute(self, command: str, timeout: int = 30) -> ToolResult:
+    def execute(self, command: str, timeout: int = 30) -> ToolResult:  # type: ignore[override]
         """Execute bash command."""
         import subprocess
 
@@ -462,7 +464,7 @@ class GrepTool(BaseTool):
     def description(self) -> str:
         return "Search for patterns in files using ripgrep. Returns matching lines with file paths and line numbers."
 
-    def execute(
+    def execute(  # type: ignore[override]
         self,
         pattern: str,
         paths: list[str] | None = None,
@@ -559,7 +561,7 @@ class WriteFileTool(BaseTool):
     def description(self) -> str:
         return "Write content to a file. Creates new file or overwrites existing file."
 
-    def execute(self, path: str, content: str) -> ToolResult:
+    def execute(self, path: str, content: str) -> ToolResult:  # type: ignore[override]
         """Execute the write file tool."""
         from pathlib import Path
 
@@ -639,7 +641,7 @@ Example for fixing a bug:
 +    return a - b
 *** End Patch"""
 
-    def execute(self, patch: str) -> ToolResult:
+    def execute(self, patch: str) -> ToolResult:  # type: ignore[override]
         """Execute the apply patch tool.
 
         Args:
@@ -748,7 +750,7 @@ class TodoTool(BaseTool):
             "action='write' with a complete list to update. Helps organize complex multi-step tasks."
         )
 
-    def execute(self, action: str, todos: list[dict[str, str]] | None = None) -> ToolResult:
+    def execute(self, action: str, todos: list[dict[str, str]] | None = None) -> ToolResult:  # type: ignore[override]
         """Execute todo operations."""
         if action == "read":
             return self._read_todos()
@@ -868,7 +870,7 @@ Examples:
   List:   {"action": "list"}
 """
 
-    def execute(
+    def execute(  # type: ignore[override]
         self,
         action: str,
         description: str | None = None,
@@ -1018,6 +1020,6 @@ def get_tool_registry(enable_write: bool | None = None) -> ToolRegistry:
     return _default_registry
 
 
-def register_tool(tool: Tool) -> None:
+def register_tool(tool: BaseTool) -> None:
     """Register a tool with the global registry."""
     get_tool_registry().register(tool)
