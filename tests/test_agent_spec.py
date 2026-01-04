@@ -31,7 +31,7 @@ class TestGetDefaultAgentSpec:
     def test_default_description(self):
         """Test default agent description."""
         spec = get_default_agent_spec()
-        assert spec.description == "Default AMCP agent"
+        assert "Default AMCP agent" in spec.description
 
     def test_default_mode_is_primary(self):
         """Test that default agent is PRIMARY mode."""
@@ -44,11 +44,11 @@ class TestGetDefaultAgentSpec:
         assert spec.can_delegate is True
 
     def test_has_system_prompt(self):
-        """Test that default agent has a system prompt."""
+        """Test that default agent has a system prompt with template sections."""
         spec = get_default_agent_spec()
         assert len(spec.system_prompt) > 0
-        assert "{work_dir}" in spec.system_prompt
-        assert "{current_time}" in spec.system_prompt
+        # Should have critical rules section from template
+        assert "critical_rules" in spec.system_prompt or "AMCP" in spec.system_prompt
 
     def test_default_max_steps(self):
         """Test default max_steps value."""

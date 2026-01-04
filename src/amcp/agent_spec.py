@@ -116,30 +116,45 @@ def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
     )
 
 
-def get_default_agent_spec() -> ResolvedAgentSpec:
-    """Get default agent specification."""
+def get_default_agent_spec(
+    working_dir: str | None = None,
+    model_name: str = "",
+    available_tools: list[str] | None = None,
+    skills_xml: str = "",
+    memory_files: list[dict[str, str]] | None = None,
+) -> ResolvedAgentSpec:
+    """Get default agent specification with template-based system prompt.
+
+    Args:
+        working_dir: Current working directory
+        model_name: Model name for prompt optimization
+        available_tools: List of available tool names
+        skills_xml: XML representation of available skills
+        memory_files: List of memory file dicts with path and content
+
+    Returns:
+        ResolvedAgentSpec with rendered system prompt
+    """
+    from .prompts import PromptContext, get_prompt_manager
+
+    # Create context from environment
+    context = PromptContext.from_environment(
+        working_dir=working_dir,
+        model_name=model_name,
+        available_tools=available_tools,
+        skills_xml=skills_xml,
+        memory_files=memory_files,
+    )
+
+    # Get rendered system prompt from template
+    prompt_manager = get_prompt_manager()
+    system_prompt = prompt_manager.get_system_prompt(context, template_name="coder")
+
     return ResolvedAgentSpec(
         name="default",
-        description="Default AMCP agent",
+        description="Default AMCP agent with template-based prompts",
         mode=AgentMode.PRIMARY,
-        system_prompt="""You are AMCP, a Lego-style coding agent CLI. You help users with software engineering tasks using the available tools.
-
-Available tools:
-- read_file: Read text files from the workspace
-- grep: Search for patterns in files using ripgrep
-- bash: Execute bash commands for file operations and system tasks
-- think: Internal reasoning and planning
-
-Guidelines:
-- Use appropriate tools for each task
-- Read files to understand the codebase before making changes
-- Use bash for file creation, editing, and system operations
-- Use grep to search for code patterns
-- Be precise and efficient in your tool usage
-- Explain your actions when helpful
-
-Current working directory: {work_dir}
-Current time: {current_time}""",
+        system_prompt=system_prompt,
         tools=[],
         exclude_tools=[],
         max_steps=1000,
@@ -160,3 +175,69 @@ def list_available_agents(agents_dir: Path) -> list[Path]:
             agent_files.append(file_path)
 
     return sorted(agent_files)
+
+
+def get_subagent_spec(
+    template_name: str,
+    working_dir: str | None = None,
+    model_name: str = "",
+    available_tools: list[str] | None = None,
+) -> ResolvedAgentSpec:
+    """Get a subagent specification with a specific template.
+
+    Args:
+        template_name: Name of the template (explorer, planner, etc.)
+        working_dir: Current working directory
+        model_name: Model name for prompt optimization
+        available_tools: List of available tool names
+
+    Returns:
+        ResolvedAgentSpec for the subagent
+    """
+    from .prompts import PromptContext, get_prompt_manager
+
+    context = PromptContext.from_environment(
+        working_dir=working_dir,
+        model_name=model_name,
+        available_tools=available_tools,
+    )
+
+    prompt_manager = get_prompt_manager()
+    system_prompt = prompt_manager.get_system_prompt(context, template_name=template_name)
+
+    return ResolvedAgentSpec(
+        name=template_name,
+        description=f"AMCP {template_name} subagent",
+        mode=AgentMode.SUBAGENT,
+        system_prompt=system_prompt,
+        tools=available_tools or [],
+        exclude_tools=[],
+        max_steps=50,
+        model="",
+        base_url="",
+        can_delegate=False,
+    )
+
+
+def list_available_templates() -> list[str]:
+    """List all available prompt templates.
+
+    Returns:
+        List of template names (without extension)
+    """
+    from .prompts import get_prompt_manager
+
+    pm = get_prompt_manager()
+    templates = []
+
+    if pm.templates_dir.exists():
+        for f in pm.templates_dir.iterdir():
+            if f.is_file() and f.suffix in [".md", ".txt"]:
+                name = f.stem
+                # Remove .md from .md.tpl files
+                if name.endswith(".md"):
+                    name = name[:-3]
+                templates.append(name)
+
+    return sorted(set(templates))
+
