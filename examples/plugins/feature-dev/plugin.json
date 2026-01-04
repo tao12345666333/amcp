@@ -1,0 +1,14 @@
+{
+  "name": "feature-dev",
+  "version": "1.0.0",
+  "description": "Comprehensive feature development workflow with a structured 7-phase approach",
+  "author": "AMCP Team",
+  "homepage": "https://github.com/tao12345666333/amcp",
+  "components": {
+    "commands": ["commands/*.md"],
+    "agents": ["agents/*.yaml"],
+    "skills": []
+  },
+  "keywords": ["development", "workflow", "feature", "architecture"],
+  "dependencies": []
+}

@@ -1,0 +1,30 @@
+# Generate or improve tests
+
+description = "Generate comprehensive tests or improve existing test coverage"
+
+prompt = """
+Please help with testing for the following:
+
+{{args}}
+
+Provide:
+1. Test strategy and approach
+2. Unit tests for individual functions/classes
+3. Integration tests if applicable
+4. Edge case and error condition tests
+5. Performance tests if relevant
+6. Test documentation and setup instructions
+
+If improving existing tests:
+- Analyze current test coverage
+- Identify gaps and missing test cases
+- Suggest improvements to test structure
+- Recommend testing tools and frameworks
+
+Follow testing best practices:
+- AAA pattern (Arrange, Act, Assert)
+- Clear and descriptive test names
+- Independent and isolated tests
+- Proper setup and teardown
+- Mocking external dependencies when needed
+"""

@@ -1,0 +1,23 @@
+{
+    "name": "security-guidance",
+    "version": "1.0.0",
+    "description": "Security validation hooks with pattern-based detection and warnings",
+    "author": "AMCP Team",
+    "homepage": "https://github.com/tao12345666333/amcp",
+    "components": {
+        "commands": [],
+        "agents": [],
+        "skills": [
+            "skills/*/SKILL.md"
+        ],
+        "hooks": [
+            "hooks/*.md"
+        ]
+    },
+    "keywords": [
+        "security",
+        "validation",
+        "hooks"
+    ],
+    "dependencies": []
+}

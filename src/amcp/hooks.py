@@ -263,12 +263,17 @@ class HookHandler:
 
     Attributes:
         matcher: Pattern to match tool names (regex or simple string)
-        type: Handler type - "command" or "python"
+        type: Handler type - "command", "python", or "markdown"
         command: Shell command to execute (for command type)
         script: Python script path (for python type)
         function: Python function path (for python type, e.g., "module.function")
         timeout: Timeout in seconds for hook execution
         enabled: Whether this handler is enabled
+        action: Action for markdown hooks - "warn" or "block"
+        pattern: Regex pattern for markdown hooks
+        message: Message to display (for markdown hooks)
+        conditions: Advanced conditions for matching (for markdown hooks)
+        name: Unique name for the handler (for markdown hooks)
     """
 
     matcher: str = "*"
@@ -278,6 +283,12 @@ class HookHandler:
     function: str | None = None
     timeout: int = 30
     enabled: bool = True
+    # Markdown hook specific fields
+    action: str = "warn"  # "warn" or "block"
+    pattern: str | None = None
+    message: str | None = None
+    conditions: list[dict[str, str]] | None = None
+    name: str | None = None
 
     def matches(self, tool_name: str | None) -> bool:
         """Check if this handler matches the given tool name.
@@ -344,6 +355,11 @@ class HooksManager:
         if user_hooks_file.exists():
             self._load_config_file(user_hooks_file)
 
+        # Load user-level markdown hooks
+        user_hooks_dir = user_config_dir / "hooks"
+        if user_hooks_dir.exists():
+            self._load_markdown_hooks_dir(user_hooks_dir)
+
         # Load project-level config (overrides user config)
         project_hooks_file = self.project_dir / ".amcp" / "hooks.toml"
         if project_hooks_file.exists():
@@ -353,6 +369,14 @@ class HooksManager:
         project_hooks_json = self.project_dir / ".amcp" / "hooks.json"
         if project_hooks_json.exists():
             self._load_json_config_file(project_hooks_json)
+
+        # Load project-level markdown hooks
+        project_hooks_dir = self.project_dir / ".amcp" / "hooks"
+        if project_hooks_dir.exists():
+            self._load_markdown_hooks_dir(project_hooks_dir)
+
+        # Load hooks from plugins directories
+        self._load_plugin_hooks()
 
         self._loaded = True
 
@@ -418,6 +442,133 @@ class HooksManager:
 
                     self.hooks[event].handlers.append(handler)
 
+    def _load_markdown_hooks_dir(self, hooks_dir: Path) -> None:
+        """Load Markdown hook files from a directory.
+
+        Markdown hooks use YAML frontmatter for configuration and the body
+        as the message to display.
+        """
+        try:
+            for hook_file in hooks_dir.glob("*.md"):
+                self._load_markdown_hook_file(hook_file)
+        except Exception as e:
+            logger.warning(f"Failed to load markdown hooks from {hooks_dir}: {e}")
+
+    def _load_markdown_hook_file(self, hook_file: Path) -> None:
+        """Load a single Markdown hook file.
+
+        Format:
+        ---
+        name: hook-name
+        enabled: true
+        event: bash|file|stop|session_start|session_end|prompt
+        action: warn|block
+        pattern: regex_pattern
+        conditions:
+          - field: file_path
+            operator: regex_match
+            pattern: pattern
+        ---
+
+        Message body to display when hook triggers.
+        """
+        try:
+            import yaml
+
+            content = hook_file.read_text(encoding="utf-8")
+
+            # Parse YAML frontmatter
+            if not content.startswith("---"):
+                return
+
+            parts = content.split("---", 2)
+            if len(parts) < 3:
+                return
+
+            frontmatter = yaml.safe_load(parts[1])
+            message = parts[2].strip()
+
+            if not frontmatter:
+                return
+
+            # Check if enabled
+            if not frontmatter.get("enabled", True):
+                return
+
+            # Map event type
+            event_map = {
+                "bash": HookEvent.PRE_TOOL_USE,
+                "file": HookEvent.PRE_TOOL_USE,
+                "stop": HookEvent.STOP,
+                "session_start": HookEvent.SESSION_START,
+                "session_end": HookEvent.SESSION_END,
+                "prompt": HookEvent.USER_PROMPT_SUBMIT,
+                "pre_tool_use": HookEvent.PRE_TOOL_USE,
+                "post_tool_use": HookEvent.POST_TOOL_USE,
+            }
+
+            event_str = frontmatter.get("event", "pre_tool_use").lower()
+            event = event_map.get(event_str)
+            if not event:
+                logger.warning(f"Unknown event type in {hook_file}: {event_str}")
+                return
+
+            # Determine matcher based on event type
+            if event_str == "bash":
+                matcher = "bash"
+            elif event_str == "file":
+                matcher = "write_file|apply_patch"
+            else:
+                matcher = "*"
+
+            # Create handler
+            handler = HookHandler(
+                name=frontmatter.get("name", hook_file.stem),
+                matcher=matcher,
+                type="markdown",
+                enabled=frontmatter.get("enabled", True),
+                action=frontmatter.get("action", "warn"),
+                pattern=frontmatter.get("pattern"),
+                message=message,
+                conditions=frontmatter.get("conditions"),
+                timeout=frontmatter.get("timeout", 30),
+            )
+
+            if event not in self.hooks:
+                self.hooks[event] = HookConfig()
+
+            self.hooks[event].handlers.append(handler)
+            logger.debug(f"Loaded markdown hook: {handler.name} from {hook_file}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load markdown hook from {hook_file}: {e}")
+
+    def _load_plugin_hooks(self) -> None:
+        """Load hooks from plugin directories."""
+        plugin_dirs = [
+            self.project_dir / ".amcp" / "plugins",
+            Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp" / "plugins",
+        ]
+
+        for plugin_base in plugin_dirs:
+            if not plugin_base.exists():
+                continue
+
+            for plugin_dir in plugin_base.iterdir():
+                if not plugin_dir.is_dir():
+                    continue
+
+                # Check for hooks directory in plugin
+                hooks_dir = plugin_dir / "hooks"
+                if hooks_dir.exists():
+                    self._load_markdown_hooks_dir(hooks_dir)
+
+                # Also check for hooks.toml in plugin
+                hooks_toml = plugin_dir / "hooks.toml"
+                if hooks_toml.exists():
+                    self._load_config_file(hooks_toml)
+
+
     def get_handlers(self, event: HookEvent, tool_name: str | None = None) -> list[HookHandler]:
         """Get matching handlers for an event and tool.
 
@@ -468,6 +619,8 @@ class HooksManager:
                     output = await self._execute_command_hook(handler, hook_input)
                 elif handler.type == "python":
                     output = await self._execute_python_hook(handler, hook_input)
+                elif handler.type == "markdown":
+                    output = self._execute_markdown_hook(handler, hook_input)
                 else:
                     logger.warning(f"Unknown hook type: {handler.type}")
                     continue
@@ -650,6 +803,110 @@ class HooksManager:
         except Exception as e:
             logger.error(f"Failed to execute hook function: {e}")
             return HookOutput(success=False, feedback=f"Hook function failed: {e}")
+
+    def _execute_markdown_hook(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
+        """Execute a markdown-type hook.
+
+        Markdown hooks match patterns against tool input and return decisions
+        based on the configured action (warn/block).
+        """
+        # Determine what content to match against
+        content_to_match = ""
+
+        if hook_input.tool_name == "bash":
+            # For bash, match against the command
+            content_to_match = hook_input.tool_input.get("command", "") if hook_input.tool_input else ""
+        elif hook_input.tool_name in ("write_file", "apply_patch"):
+            # For file operations, match against content and path
+            if hook_input.tool_input:
+                file_path = hook_input.tool_input.get("path", hook_input.tool_input.get("file_path", ""))
+                content = hook_input.tool_input.get("content", hook_input.tool_input.get("patch", ""))
+                content_to_match = f"{file_path}\n{content}"
+        elif hook_input.prompt:
+            # For prompt hooks
+            content_to_match = hook_input.prompt
+
+        # Check if pattern matches
+        if handler.pattern:
+            try:
+                if not re.search(handler.pattern, content_to_match, re.IGNORECASE | re.MULTILINE):
+                    # Pattern doesn't match, skip this hook
+                    return HookOutput()
+            except re.error as e:
+                logger.warning(f"Invalid regex pattern in hook {handler.name}: {e}")
+                return HookOutput()
+
+        # Check conditions if any
+        if handler.conditions:
+            if not self._check_conditions(handler.conditions, hook_input):
+                return HookOutput()
+
+        # Pattern matched or no pattern - execute the hook action
+        output = HookOutput(success=True)
+        output.feedback = handler.message
+
+        if handler.action == "block":
+            output.decision = HookDecision.DENY
+            output.decision_reason = f"Blocked by hook: {handler.name}"
+        else:  # warn
+            output.decision = HookDecision.CONTINUE
+            # Feedback is already set
+
+        return output
+
+    def _check_conditions(self, conditions: list[dict[str, str]], hook_input: HookInput) -> bool:
+        """Check if all conditions match.
+
+        Args:
+            conditions: List of condition dicts with field, operator, pattern
+            hook_input: The hook input to check against
+
+        Returns:
+            True if all conditions match
+        """
+        for condition in conditions:
+            field = condition.get("field", "")
+            operator = condition.get("operator", "contains")
+            pattern = condition.get("pattern", "")
+
+            # Get the field value
+            value = ""
+            if field == "file_path":
+                value = hook_input.tool_input.get("path", "") if hook_input.tool_input else ""
+            elif field == "content" or field == "new_text":
+                value = hook_input.tool_input.get("content", "") if hook_input.tool_input else ""
+            elif field == "command":
+                value = hook_input.tool_input.get("command", "") if hook_input.tool_input else ""
+            elif field == "prompt":
+                value = hook_input.prompt or ""
+            elif field == "tool_name":
+                value = hook_input.tool_name or ""
+
+            # Apply operator
+            try:
+                if operator == "contains":
+                    if pattern.lower() not in value.lower():
+                        return False
+                elif operator == "not_contains":
+                    if pattern.lower() in value.lower():
+                        return False
+                elif operator == "regex_match":
+                    if not re.search(pattern, value, re.IGNORECASE):
+                        return False
+                elif operator == "regex_not_match":
+                    if re.search(pattern, value, re.IGNORECASE):
+                        return False
+                elif operator == "equals":
+                    if value != pattern:
+                        return False
+                elif operator == "not_equals":
+                    if value == pattern:
+                        return False
+            except re.error:
+                logger.warning(f"Invalid regex pattern in condition: {pattern}")
+                return False
+
+        return True
 
     def _merge_outputs(self, target: HookOutput, source: HookOutput) -> None:
         """Merge source output into target output."""

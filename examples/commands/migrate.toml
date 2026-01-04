@@ -1,0 +1,32 @@
+# Migrate code between frameworks or versions
+
+description = "Migrate code between frameworks, libraries, or versions"
+
+prompt = """
+Please help migrate the following code:
+
+{{args}}
+
+Provide:
+1. Migration strategy and plan
+2. Code changes needed
+3. Dependency updates
+4. Configuration changes
+5. Breaking changes and compatibility issues
+6. Testing and validation approach
+7. Rollback strategy if needed
+
+Common migration scenarios:
+- Framework upgrades (React, Angular, Vue, etc.)
+- Language version updates (Python 2→3, Node.js versions)
+- Library migrations (jQuery → vanilla JS, etc.)
+- Database migrations
+- API version changes
+- Cloud provider migrations
+
+Include:
+- Step-by-step migration guide
+- Code examples for before/after
+- Potential issues and solutions
+- Best practices for the target platform
+"""

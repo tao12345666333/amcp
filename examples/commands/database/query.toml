@@ -1,0 +1,31 @@
+# Database query optimization and analysis
+
+description = "Optimize database queries and analyze performance"
+
+prompt = """
+Please analyze and optimize the following database query:
+
+{{args}}
+
+Provide:
+1. Query execution plan analysis
+2. Index recommendations
+3. Query rewriting suggestions
+4. Performance improvements
+5. Best practices for the specific database
+6. Potential bottlenecks and solutions
+
+Consider:
+- Query structure and joins
+- WHERE clause optimization
+- Index usage and effectiveness
+- Subquery vs JOIN performance
+- Database-specific optimizations
+- Query caching strategies
+
+Include:
+- Before/after query comparisons
+- Execution plan explanations
+- Index creation statements
+- Performance metrics and benchmarks
+"""

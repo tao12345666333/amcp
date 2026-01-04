@@ -1,0 +1,29 @@
+# Optimize code for better performance
+
+description = "Analyze and optimize code for improved performance"
+
+prompt = """
+Please analyze and optimize the following code for better performance:
+
+{{args}}
+
+Provide:
+1. Performance bottlenecks identification
+2. Algorithmic improvements
+3. Memory usage optimization
+4. I/O operation optimizations
+5. Caching strategies if applicable
+6. Parallelization opportunities
+7. Benchmarking suggestions
+
+Consider:
+- Time complexity (Big O)
+- Space complexity
+- Database query optimization
+- Network request optimization
+- Caching and memoization
+- Lazy loading and evaluation
+- Resource pooling
+
+Include before/after comparisons when possible and explain the performance gains.
+"""

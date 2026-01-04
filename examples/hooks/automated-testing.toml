@@ -1,0 +1,64 @@
+# Automated Testing Hooks Configuration
+# This file demonstrates hooks for automated testing and quality assurance
+# Copy this file to .amcp/hooks.toml in your project to enable
+
+# PreToolUse hooks - run before tool execution
+[hooks.PreToolUse]
+[[hooks.PreToolUse.handlers]]
+# Validate file writes for security
+matcher = "write_file|apply_patch"
+type = "python"
+script = "./validate_file_writes.py"
+timeout = 30
+enabled = true
+
+[[hooks.PreToolUse.handlers]]
+# Log all tool calls
+matcher = "*"
+type = "python"
+script = "./scripts/log_tool_calls.py"
+timeout = 5
+enabled = true
+
+# PostToolUse hooks - run after tool execution
+[hooks.PostToolUse]
+[[hooks.PostToolUse.handlers]]
+# Run code quality checks after file changes
+matcher = "write_file|apply_patch"
+type = "command"
+command = "./scripts/check_code_quality.sh"
+timeout = 120
+enabled = true
+
+[[hooks.PostToolUse.handlers]]
+# Run tests after Python file changes (example)
+matcher = "write_file|apply_patch"
+type = "command"
+command = "if ls *.py 2>/dev/null; then python -m pytest --tb=short -q 2>/dev/null || echo 'Tests skipped or failed'; fi"
+timeout = 300
+enabled = false  # Disabled by default - enable in your project
+
+# SessionStart hooks - run when a new session begins
+[hooks.SessionStart]
+[[hooks.SessionStart.handlers]]
+# Log session start
+type = "command"
+command = "echo 'AMCP Testing Session started at $(date)' >> /tmp/amcp_test_sessions.log"
+timeout = 5
+enabled = true
+
+[[hooks.SessionStart.handlers]]
+# Check for virtual environment (Python projects)
+type = "command"
+command = "if [ -n \"$VIRTUAL_ENV\" ]; then echo 'Using venv: $VIRTUAL_ENV'; else echo 'No virtual environment active'; fi"
+timeout = 5
+enabled = true
+
+# SessionEnd hooks - run when a session ends
+[hooks.SessionEnd]
+[[hooks.SessionEnd.handlers]]
+# Generate session summary
+type = "command"
+command = "echo 'AMCP Testing Session ended at $(date)' >> /tmp/amcp_test_sessions.log"
+timeout = 10
+enabled = true

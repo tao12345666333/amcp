@@ -1,0 +1,72 @@
+# Security Validation Hooks Configuration
+# This file demonstrates hooks for security validation and compliance
+# Copy this file to .amcp/hooks.toml in your project to enable
+
+# PreToolUse hooks - run before tool execution
+[hooks.PreToolUse]
+[[hooks.PreToolUse.handlers]]
+# Validate and block dangerous file writes
+matcher = "write_file|apply_patch"
+type = "python"
+script = "./validate_file_writes.py"
+timeout = 30
+enabled = true
+
+[[hooks.PreToolUse.handlers]]
+# Scan for secrets in file content before writing
+matcher = "write_file|apply_patch"
+type = "python"
+script = "./scripts/scan_secrets.py"
+timeout = 30
+enabled = true
+
+[[hooks.PreToolUse.handlers]]
+# Log all tool calls for security audit
+matcher = "*"
+type = "python"
+script = "./scripts/log_tool_calls.py"
+timeout = 5
+enabled = true
+
+# PostToolUse hooks - run after tool execution
+[hooks.PostToolUse]
+[[hooks.PostToolUse.handlers]]
+# Run code quality and security checks after file changes
+matcher = "write_file|apply_patch"
+type = "command"
+command = "./scripts/check_code_quality.sh"
+timeout = 120
+enabled = true
+
+[[hooks.PostToolUse.handlers]]
+# Run bandit security scanner for Python files (if available)
+matcher = "write_file|apply_patch"
+type = "command"
+command = "command -v bandit > /dev/null && bandit -r . -q --severity-level medium 2>/dev/null || true"
+timeout = 60
+enabled = true
+
+# SessionStart hooks - run when a new session begins
+[hooks.SessionStart]
+[[hooks.SessionStart.handlers]]
+# Log security session start
+type = "command"
+command = "echo 'AMCP Security Session started at $(date) by $(whoami)' >> /tmp/amcp_security_sessions.log"
+timeout = 5
+enabled = true
+
+[[hooks.SessionStart.handlers]]
+# Check for sensitive files in project directory
+type = "command"
+command = "if [ -f '.env' ]; then echo '⚠️ Warning: .env file found - ensure secrets are not committed'; fi"
+timeout = 5
+enabled = true
+
+# SessionEnd hooks - run when a session ends
+[hooks.SessionEnd]
+[[hooks.SessionEnd.handlers]]
+# Log security session end with summary
+type = "command"
+command = "echo 'AMCP Security Session ended at $(date)' >> /tmp/amcp_security_sessions.log"
+timeout = 10
+enabled = true

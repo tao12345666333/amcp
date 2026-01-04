@@ -1,0 +1,28 @@
+# Docker build optimization and troubleshooting
+
+description = "Optimize Docker builds and troubleshoot build issues"
+
+prompt = """
+Please help with Docker build optimization or troubleshooting:
+
+{{args}}
+
+Provide:
+1. Dockerfile analysis and improvements
+2. Build optimization strategies
+3. Multi-stage build recommendations
+4. Layer caching optimization
+5. Security best practices
+6. Size reduction techniques
+7. Build speed improvements
+
+Consider:
+- Base image selection and optimization
+- Layer ordering and caching
+- .dockerignore usage
+- Build arguments and environment variables
+- Security scanning and vulnerability fixes
+- Multi-platform builds if needed
+
+Include optimized Dockerfile examples and explain the benefits of each optimization.
+"""

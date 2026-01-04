@@ -1,0 +1,22 @@
+{
+    "name": "code-review",
+    "version": "1.0.0",
+    "description": "Multi-agent code review with confidence-based scoring to filter false positives",
+    "author": "AMCP Team",
+    "homepage": "https://github.com/tao12345666333/amcp",
+    "components": {
+        "commands": [
+            "commands/*.md"
+        ],
+        "agents": [
+            "agents/*.yaml"
+        ],
+        "skills": []
+    },
+    "keywords": [
+        "review",
+        "code-quality",
+        "multi-agent"
+    ],
+    "dependencies": []
+}

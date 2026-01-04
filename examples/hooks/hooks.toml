@@ -5,11 +5,10 @@
 # PreToolUse hooks - run before tool execution
 [hooks.PreToolUse]
 [[hooks.PreToolUse.handlers]]
-# Match specific tools using regex patterns
+# Validate and potentially block dangerous file writes
 matcher = "write_file|apply_patch"
-type = "command"
-# Command receives hook input via stdin as JSON
-command = "./scripts/validate-file-changes.sh"
+type = "python"
+script = "./validate_file_writes.py"
 timeout = 30
 enabled = true
 
@@ -27,23 +26,15 @@ enabled = true
 # Check code quality after file writes
 matcher = "write_file"
 type = "command"
-command = "$AMCP_PROJECT_DIR/scripts/check-code-quality.sh"
+command = "./scripts/check_code_quality.sh"
 timeout = 60
-enabled = true
-
-# UserPromptSubmit hooks - run when user submits a prompt
-[hooks.UserPromptSubmit]
-[[hooks.UserPromptSubmit.handlers]]
-type = "python"
-script = "./scripts/validate_prompt.py"
-timeout = 5
 enabled = true
 
 # SessionStart hooks - run when a new session begins
 [hooks.SessionStart]
 [[hooks.SessionStart.handlers]]
 type = "command"
-command = "echo 'Session started' >> /tmp/amcp_sessions.log"
+command = "echo 'AMCP Session started at $(date)' >> /tmp/amcp_sessions.log"
 timeout = 5
 enabled = true
 
@@ -51,6 +42,6 @@ enabled = true
 [hooks.SessionEnd]
 [[hooks.SessionEnd.handlers]]
 type = "command"
-command = "echo 'Session ended' >> /tmp/amcp_sessions.log"
+command = "echo 'AMCP Session ended at $(date)' >> /tmp/amcp_sessions.log"
 timeout = 5
 enabled = true

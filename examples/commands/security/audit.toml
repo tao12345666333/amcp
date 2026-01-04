@@ -1,0 +1,35 @@
+# Security audit and vulnerability assessment
+
+description = "Perform security audit and identify vulnerabilities"
+
+prompt = """
+Please perform a security audit for the following:
+
+{{args}}
+
+Provide:
+1. Vulnerability assessment
+2. Security risk analysis
+3. OWASP Top 10 compliance check
+4. Authentication and authorization review
+5. Input validation analysis
+6. Configuration security review
+7. Remediation recommendations
+
+Check for:
+- SQL injection vulnerabilities
+- XSS and CSRF protection
+- Authentication bypass issues
+- Authorization flaws
+- Sensitive data exposure
+- Security misconfigurations
+- Insecure dependencies
+- Insufficient logging and monitoring
+
+Include:
+- Severity ratings for each issue
+- Step-by-step remediation guides
+- Security best practices
+- Prevention strategies
+- Compliance considerations
+"""

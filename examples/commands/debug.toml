@@ -1,0 +1,23 @@
+# Debug the given code or issue
+
+description = "Debug code, analyze errors, and provide solutions"
+
+prompt = """
+Please help debug the following issue:
+
+{{args}}
+
+Provide:
+1. Analysis of the problem or error
+2. Root cause identification
+3. Step-by-step solution
+4. Prevention tips for similar issues
+5. Additional debugging techniques if applicable
+
+If code is provided, examine it carefully for:
+- Syntax errors
+- Logic errors
+- Edge cases
+- Performance issues
+- Security vulnerabilities
+"""

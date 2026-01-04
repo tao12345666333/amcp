@@ -1,0 +1,24 @@
+# Refactor and improve code quality
+
+description = "Refactor code for better readability, performance, and maintainability"
+
+prompt = """
+Please refactor the following code to improve its quality:
+
+{{args}}
+
+Focus on:
+1. Code readability and clarity
+2. Performance optimizations
+3. Maintainability and extensibility
+4. Design patterns and best practices
+5. Error handling and edge cases
+6. Code duplication reduction
+7. Naming conventions and consistency
+
+Provide:
+- The refactored code
+- Explanation of changes made
+- Benefits of the refactoring
+- Any potential trade-offs
+"""
