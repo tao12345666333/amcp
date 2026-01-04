@@ -568,7 +568,6 @@ class HooksManager:
                 if hooks_toml.exists():
                     self._load_config_file(hooks_toml)
 
-
     def get_handlers(self, event: HookEvent, tool_name: str | None = None) -> list[HookHandler]:
         """Get matching handlers for an event and tool.
 
@@ -836,10 +835,8 @@ class HooksManager:
                 logger.warning(f"Invalid regex pattern in hook {handler.name}: {e}")
                 return HookOutput()
 
-        # Check conditions if any
-        if handler.conditions:
-            if not self._check_conditions(handler.conditions, hook_input):
-                return HookOutput()
+        if handler.conditions and not self._check_conditions(handler.conditions, hook_input):
+            return HookOutput()
 
         # Pattern matched or no pattern - execute the hook action
         output = HookOutput(success=True)
@@ -899,9 +896,8 @@ class HooksManager:
                 elif operator == "equals":
                     if value != pattern:
                         return False
-                elif operator == "not_equals":
-                    if value == pattern:
-                        return False
+                elif operator == "not_equals" and value == pattern:
+                    return False
             except re.error:
                 logger.warning(f"Invalid regex pattern in condition: {pattern}")
                 return False

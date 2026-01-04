@@ -240,4 +240,3 @@ def list_available_templates() -> list[str]:
                 templates.append(name)
 
     return sorted(set(templates))
-

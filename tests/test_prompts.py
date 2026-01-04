@@ -69,9 +69,7 @@ class TestPromptContext:
     def test_git_info_detection(self):
         """Test git info detection in git repo."""
         # Use the AMCP repo itself for testing
-        ctx = PromptContext.from_environment(
-            working_dir=str(Path(__file__).parent.parent)
-        )
+        ctx = PromptContext.from_environment(working_dir=str(Path(__file__).parent.parent))
         assert ctx.is_git_repo is True
         # Branch should be detected
         assert len(ctx.git_branch) > 0 or ctx.git_status != ""
@@ -157,9 +155,7 @@ class TestPromptManager:
     def test_tools_list_in_prompt(self):
         """Test that tools list is rendered in prompt."""
         pm = get_prompt_manager()
-        ctx = PromptContext.from_environment(
-            available_tools=["read_file", "grep", "bash"]
-        )
+        ctx = PromptContext.from_environment(available_tools=["read_file", "grep", "bash"])
         prompt = pm.get_system_prompt(ctx, template_name="coder")
 
         assert "read_file" in prompt
@@ -195,9 +191,7 @@ class TestPromptManager:
         assert "<skills_usage>" not in prompt
 
         # With skills
-        ctx = PromptContext.from_environment(
-            skills_xml="<skills><skill>test</skill></skills>"
-        )
+        ctx = PromptContext.from_environment(skills_xml="<skills><skill>test</skill></skills>")
         prompt = pm.get_system_prompt(ctx, template_name="coder")
         assert "skills" in prompt.lower()
 
