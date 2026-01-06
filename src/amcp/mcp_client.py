@@ -17,7 +17,7 @@ from .config import Server
 
 # Default timeout in seconds for MCP operations
 DEFAULT_MCP_TIMEOUT = 180.0  # 180 seconds (3 minutes) default timeout
-DEFAULT_LIST_TOOLS_TIMEOUT = 30.0  # 30 seconds for listing tools
+DEFAULT_LIST_TOOLS_TIMEOUT = 5.0  # 5 seconds for listing tools (reduced for responsiveness)
 
 
 def _expand_env(value: str) -> str:

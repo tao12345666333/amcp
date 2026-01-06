@@ -126,6 +126,23 @@ def acp_info() -> None:
     console.print(JSON.from_data(zed_config))
 
 
+@app.command("tui", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def tui_command(ctx: typer.Context) -> None:
+    """Launch Toad TUI backed by AMCP ACP server.
+
+    Toad is a modern terminal UI for AI coding agents. This command starts
+    Toad and connects it to an AMCP ACP server.
+
+    Extra arguments are passed to the ACP server.
+    For example:
+        amcp tui --work-dir /path/to/project
+        amcp tui --agent /path/to/agent.yaml
+    """
+    from .toad import run_tui
+
+    run_tui(ctx)
+
+
 @mcp.command("tools", help="List tools from a configured MCP server")
 def mcp_tools(server: Annotated[str, typer.Option("--server", "-s")]):
     cfg: AMCPConfig = load_config()

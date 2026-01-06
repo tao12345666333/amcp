@@ -449,9 +449,8 @@ class Agent:
 
                 messages.extend(history_to_add)
 
-                # Build tools
-                tools = await self._build_tools()
-                tool_registry = await self._build_tool_registry()
+                # Build tools and registry (combined to avoid duplicate MCP calls)
+                tools, tool_registry = await self._build_tools_and_registry()
 
                 # Run chat with tools
                 result = await self._run_with_tools(
@@ -497,16 +496,23 @@ class Agent:
         """Get queue status for this session."""
         return get_message_queue_manager().get_queue_status(self.session_id)
 
-    async def _build_tools(self) -> list[dict[str, Any]]:
-        """Build list of available tools."""
-        tools = []
+    async def _build_tools_and_registry(self) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
+        """Build list of available tools and registry for MCP tool dispatch.
+        
+        Combined method to avoid duplicate MCP server calls.
+        
+        Returns:
+            Tuple of (tools list, registry dict)
+        """
+        tools: list[dict[str, Any]] = []
+        registry: dict[str, tuple[str, str]] = {}
 
         # Add all built-in tools from registry
         from .tools import get_tool_registry
 
-        registry = get_tool_registry()
-        for tool_name in registry.list_tools():
-            tool = registry.get_tool(tool_name)
+        tool_registry = get_tool_registry()
+        for tool_name in tool_registry.list_tools():
+            tool = tool_registry.get_tool(tool_name)
             if tool and hasattr(tool, "get_spec"):
                 tools.append(tool.get_spec())
 
@@ -516,7 +522,7 @@ class Agent:
 
         # Decide which servers to include
         if chat_cfg and chat_cfg.mcp_tools_enabled is False:
-            return tools
+            return tools, registry
 
         selected = None
         if chat_cfg and chat_cfg.mcp_servers:
@@ -524,7 +530,7 @@ class Agent:
         else:
             selected = list(cfg.servers.keys())
 
-        # Load MCP tools asynchronously
+        # Load MCP tools asynchronously (single call per server)
         for name in selected:
             try:
                 server = cfg.servers[name]
@@ -543,41 +549,12 @@ class Agent:
                             },
                         }
                     )
+                    # Also add to registry
+                    registry[oname] = (name, tname)
             except Exception as e:
                 self.console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
 
-        return tools
-
-    async def _build_tool_registry(self) -> dict[str, tuple[str, str]]:
-        """Build tool registry for MCP tool dispatch."""
-        registry: dict[str, tuple[str, str]] = {}
-
-        cfg = load_config()
-        chat_cfg = cfg.chat
-
-        # Decide which servers to include
-        if chat_cfg and chat_cfg.mcp_tools_enabled is False:
-            return registry
-
-        selected = None
-        if chat_cfg and chat_cfg.mcp_servers:
-            selected = [s for s in chat_cfg.mcp_servers if s in cfg.servers]
-        else:
-            selected = list(cfg.servers.keys())
-
-        # Build registry asynchronously
-        for name in selected:
-            try:
-                server = cfg.servers[name]
-                info_list = await list_mcp_tools(server)
-                for info in info_list:
-                    tname = info.get("name") or "tool"
-                    oname = f"mcp.{name}.{tname}"
-                    registry[oname] = (name, tname)
-            except Exception:
-                pass  # Already logged in _build_tools
-
-        return registry
+        return tools, registry
 
     def _get_read_file_tool_spec(self) -> dict[str, Any]:
         """Get read_file tool specification."""
