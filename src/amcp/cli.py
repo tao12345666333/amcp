@@ -143,6 +143,236 @@ def tui_command(ctx: typer.Context) -> None:
     run_tui(ctx)
 
 
+@app.command("serve", help="Start AMCP server for remote access via HTTP/WebSocket")
+def serve_command(
+    host: Annotated[
+        str,
+        typer.Option("--host", "-H", help="Host to bind the server to"),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Port to listen on"),
+    ] = 4096,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            "-w",
+            help="Default working directory for sessions",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            readable=True,
+        ),
+    ] = None,
+    reload: Annotated[
+        bool,
+        typer.Option("--reload", help="Enable auto-reload for development"),
+    ] = False,
+) -> None:
+    """Start AMCP as an HTTP/WebSocket server.
+
+    This allows remote clients to connect and interact with AMCP agents.
+
+    Examples:
+        amcp serve                          # Start on localhost:4096
+        amcp serve --port 8080             # Use custom port
+        amcp serve --host 0.0.0.0          # Listen on all interfaces
+        amcp serve -w /path/to/project     # Set default working directory
+
+    API Documentation:
+        Once running, visit http://localhost:4096/docs for API docs.
+
+    Connect with:
+        amcp attach http://localhost:4096   # Connect CLI to running server
+    """
+    from .server import run_server
+
+    run_server(
+        host=host,
+        port=port,
+        work_dir=str(work_dir) if work_dir else None,
+        reload=reload,
+    )
+
+
+@app.command("attach", help="Connect to a running AMCP server")
+def attach_command(
+    url: Annotated[
+        str,
+        typer.Argument(help="URL of the AMCP server (e.g., http://localhost:4096)"),
+    ],
+    session_id: Annotated[
+        str | None,
+        typer.Option("--session", "-s", help="Session ID to connect to or create"),
+    ] = None,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            "-w",
+            help="Working directory for new sessions",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            readable=True,
+        ),
+    ] = None,
+) -> None:
+    """Connect to a running AMCP server and interact with it.
+
+    This allows you to control an AMCP server running on another machine
+    or in another process.
+
+    Examples:
+        amcp attach http://localhost:4096
+        amcp attach http://remote-server:4096 --session my-session
+        amcp attach http://localhost:4096 -w /path/to/project
+    """
+    import httpx
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+
+    # Check server health
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            health_resp = client.get(f"{url.rstrip('/')}/api/v1/health")
+            health_resp.raise_for_status()
+            health = health_resp.json()
+            console.print(f"[green]Connected to AMCP Server v{health.get('version', 'unknown')}[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to connect to server: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Create or get session
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            if session_id:
+                # Try to get existing session
+                try:
+                    sess_resp = client.get(f"{url.rstrip('/')}/api/v1/sessions/{session_id}")
+                    sess_resp.raise_for_status()
+                    session = sess_resp.json()
+                    console.print(f"[dim]Resumed session: {session_id}[/dim]")
+                except httpx.HTTPStatusError:
+                    # Create new session with the specified ID
+                    sess_resp = client.post(
+                        f"{url.rstrip('/')}/api/v1/sessions", json={"cwd": str(work_dir) if work_dir else None}
+                    )
+                    sess_resp.raise_for_status()
+                    session = sess_resp.json()
+                    console.print(f"[dim]Created session: {session['id']}[/dim]")
+            else:
+                # Create new session
+                sess_resp = client.post(
+                    f"{url.rstrip('/')}/api/v1/sessions", json={"cwd": str(work_dir) if work_dir else None}
+                )
+                sess_resp.raise_for_status()
+                session = sess_resp.json()
+                session_id = session["id"]
+                console.print(f"[dim]Created session: {session_id}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Failed to create session: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print("[bold]AMCP Remote Client[/bold]")
+    console.print(f"[dim]Server: {url}[/dim]")
+    console.print(f"[dim]Session: {session_id}[/dim]")
+    console.print("[dim]Type /exit to quit, /help for commands[/dim]")
+    console.print()
+
+    # Setup prompt
+    history_file = Path.home() / ".config" / "amcp" / "attach_history.txt"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_session: PromptSession[str] = PromptSession(history=FileHistory(str(history_file)))
+
+    while True:
+        try:
+            user_input = prompt_session.prompt("You: ").strip()
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ["/exit", "/quit", "exit", "quit"]:
+                console.print("[green]Goodbye! 👋[/green]")
+                break
+
+            if user_input.lower() == "/help":
+                console.print("[bold]Commands:[/bold]")
+                console.print("  /exit, /quit  - Exit the client")
+                console.print("  /sessions     - List all sessions")
+                console.print("  /info         - Show session info")
+                console.print()
+                continue
+
+            if user_input.lower() == "/sessions":
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(f"{url.rstrip('/')}/api/v1/sessions")
+                    sessions = resp.json()
+                    console.print("[bold]Sessions:[/bold]")
+                    for s in sessions.get("sessions", []):
+                        status_icon = "🔄" if s["status"] == "busy" else "✅"
+                        console.print(f"  {status_icon} {s['id']} - {s['status']}")
+                console.print()
+                continue
+
+            if user_input.lower() == "/info":
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(f"{url.rstrip('/')}/api/v1/sessions/{session_id}")
+                    session = resp.json()
+                    console.print("[bold]Session Info:[/bold]")
+                    console.print(f"  ID: {session['id']}")
+                    console.print(f"  Status: {session['status']}")
+                    console.print(f"  Agent: {session.get('agent_name', 'unknown')}")
+                    console.print(f"  Messages: {session.get('message_count', 0)}")
+                console.print()
+                continue
+
+            # Send prompt to server with streaming
+            console.print("[bold]🤖 Processing...[/bold]")
+
+            try:
+                with httpx.Client(timeout=300.0) as client:
+                    with client.stream(
+                        "POST",
+                        f"{url.rstrip('/')}/api/v1/sessions/{session_id}/prompt/stream",
+                        json={"content": user_input, "stream": True},
+                    ) as response:
+                        response.raise_for_status()
+                        full_response = ""
+
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                if data.get("type") == "chunk":
+                                    chunk = data.get("content", "")
+                                    full_response += chunk
+                                    console.print(chunk, end="")
+                                elif data.get("type") == "error":
+                                    console.print(f"\n[red]Error: {data.get('error')}[/red]")
+                                elif data.get("type") == "complete":
+                                    console.print()  # New line after streaming
+                            except json.JSONDecodeError:
+                                pass
+
+                        if full_response:
+                            console.print(Panel(Markdown(full_response), border_style="cyan"))
+            except Exception as e:
+                console.print(f"[red]Request failed: {e}[/red]")
+
+            console.print()
+
+        except EOFError:
+            console.print("[green]Goodbye! 👋[/green]")
+            break
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted. Type /exit to quit.[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+
 @mcp.command("tools", help="List tools from a configured MCP server")
 def mcp_tools(server: Annotated[str, typer.Option("--server", "-s")]):
     cfg: AMCPConfig = load_config()
