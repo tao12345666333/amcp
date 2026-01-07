@@ -58,7 +58,6 @@ def _create_client(server: Server) -> Client:
     return Client(stdio_transport)
 
 
-
 class MCPTimeoutError(Exception):
     """Exception raised when an MCP operation times out."""
 

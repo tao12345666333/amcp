@@ -18,8 +18,6 @@ class ToolResult:
     error: str | None = None
 
 
-
-
 class ToolError(Exception):
     """Base exception for tool errors."""
 

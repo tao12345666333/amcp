@@ -380,9 +380,7 @@ class Agent:
 
                 # Process queued message
                 self.console.print("[dim]Processing queued message...[/dim]")
-                queued_work_dir = (
-                    Path(next_msg.metadata["work_dir"]) if next_msg.metadata.get("work_dir") else work_dir
-                )
+                queued_work_dir = Path(next_msg.metadata["work_dir"]) if next_msg.metadata.get("work_dir") else work_dir
                 await self._process_message(
                     next_msg.prompt,
                     queued_work_dir,
@@ -498,9 +496,9 @@ class Agent:
 
     async def _build_tools_and_registry(self) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
         """Build list of available tools and registry for MCP tool dispatch.
-        
+
         Combined method to avoid duplicate MCP server calls.
-        
+
         Returns:
             Tuple of (tools list, registry dict)
         """
