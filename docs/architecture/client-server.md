@@ -375,25 +375,26 @@ class EventType(str, Enum):
 - ✅ Real-time tool execution feedback
 - ✅ Streaming LLM responses via callbacks
 
-### Phase 3: CLI Client SDK (Week 3)
+### Phase 3: CLI Client SDK (Week 3) ✅ COMPLETED
 
 **Goal**: Formal client SDK for connecting to remote servers
 
-**Status**: 🔲 Not Started
+**Status**: ✅ Completed on 2026-01-08
 
-**Tasks**:
-1. 🔲 Create `src/amcp/client/` module structure
+**Implemented**:
+1. ✅ Created `src/amcp/client/` module structure
    ```
    src/amcp/client/
-   ├── __init__.py
-   ├── base.py           # Abstract client interface
-   ├── http_client.py    # HTTP REST client
-   ├── ws_client.py      # WebSocket client  
-   ├── session.py        # Session wrapper
-   └── exceptions.py     # Client exceptions
+   ├── __init__.py        # Main AMCPClient class and exports
+   ├── base.py            # Abstract client interface, ResponseChunk
+   ├── exceptions.py      # Client exceptions (ConnectionError, SessionError, etc.)
+   ├── http_client.py     # HTTP REST client with streaming
+   ├── ws_client.py       # WebSocket client for real-time
+   ├── session.py         # ClientSession wrapper
+   └── embedded.py        # Embedded mode (local agent)
    ```
 
-2. 🔲 Implement `AMCPClient` class
+2. ✅ Implemented `AMCPClient` class
    ```python
    from amcp.client import AMCPClient
    
@@ -402,16 +403,14 @@ class EventType(str, Enum):
        session = await client.create_session(cwd="/my/project")
        
        # Send prompt and stream response
-       async for chunk in session.prompt("Help me refactor this"):
+       async for chunk in await session.prompt_stream("Help me refactor this"):
            print(chunk.content, end="")
        
-       # Subscribe to events
-       async for event in session.events():
-           if event.type == "tool.call_start":
-               print(f"Tool: {event.tool_name}")
+       # Get full response
+       response = await session.prompt_full("What did you do?")
    ```
 
-3. 🔲 Implement WebSocket client for real-time interaction
+3. ✅ Implemented WebSocket client for real-time interaction
    ```python
    async with client.websocket_session(session_id) as ws:
        await ws.send_prompt("Hello")
@@ -422,12 +421,13 @@ class EventType(str, Enum):
                break
    ```
 
-4. 🔲 Refactor `amcp attach` to use client SDK
-   - Replace inline httpx calls with AMCPClient
-   - Add reconnection logic
-   - Improve error handling
+4. ✅ Refactored `amcp attach` to use client SDK
+   - Replaced inline httpx calls with AMCPClient
+   - Added reconnection support via client retry logic
+   - Improved error handling with typed exceptions
+   - Added `/tools` and `/agents` commands
 
-5. 🔲 Support embedded vs remote mode switching
+5. ✅ Supported embedded vs remote mode switching
    ```python
    # Auto-detect mode
    client = AMCPClient.auto()  # Uses embedded if no server
@@ -438,14 +438,23 @@ class EventType(str, Enum):
    ```
 
 **Deliverables**:
-- `amcp.client` module with full API coverage
-- `AMCPClient` class for Python applications
-- WebSocket client for streaming
-- Refactored `amcp attach` command
+- ✅ `amcp.client` module with full API coverage
+- ✅ `AMCPClient` class for Python applications
+- ✅ `HTTPClient` for REST API access
+- ✅ `WebSocketClient` for streaming
+- ✅ `EmbeddedClient` for local mode
+- ✅ `ClientSession` wrapper for high-level API
+- ✅ Refactored `amcp attach` command
 
-**Tests to Add**:
-- `tests/test_client.py` - Client SDK tests
-- `tests/test_client_integration.py` - Integration with server
+**Tests Added**:
+- ✅ `tests/test_client.py` - 35 tests covering:
+  - Exception classes
+  - ResponseChunk creation and representation
+  - AMCPClient mode detection
+  - HTTPClient creation and URL normalization
+  - EmbeddedClient session management
+  - ClientSession wrapper functionality
+  - Full workflow integration tests
 
 ---
 

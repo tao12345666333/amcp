@@ -231,14 +231,29 @@ def attach_command(
         amcp attach http://remote-server:4096 --session my-session
         amcp attach http://localhost:4096 -w /path/to/project
     """
+    # Use synchronous implementation to avoid event loop issues
+    _attach_sync(url, session_id, work_dir)
+
+
+def _attach_sync(
+    url: str,
+    session_id: str | None,
+    work_dir: Path | None,
+) -> None:
+    """Synchronous implementation of attach command using httpx directly.
+
+    This avoids event loop issues in interactive environments.
+    """
     import httpx
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
 
+    base_url = url.rstrip("/")
+
     # Check server health
     try:
-        with httpx.Client(timeout=5.0) as client:
-            health_resp = client.get(f"{url.rstrip('/')}/api/v1/health")
+        with httpx.Client(timeout=5.0) as http:
+            health_resp = http.get(f"{base_url}/api/v1/health")
             health_resp.raise_for_status()
             health = health_resp.json()
             console.print(f"[green]Connected to AMCP Server v{health.get('version', 'unknown')}[/green]")
@@ -248,30 +263,33 @@ def attach_command(
 
     # Create or get session
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0) as http:
             if session_id:
                 # Try to get existing session
                 try:
-                    sess_resp = client.get(f"{url.rstrip('/')}/api/v1/sessions/{session_id}")
+                    sess_resp = http.get(f"{base_url}/api/v1/sessions/{session_id}")
                     sess_resp.raise_for_status()
-                    session = sess_resp.json()
+                    session_data = sess_resp.json()
                     console.print(f"[dim]Resumed session: {session_id}[/dim]")
                 except httpx.HTTPStatusError:
-                    # Create new session with the specified ID
-                    sess_resp = client.post(
-                        f"{url.rstrip('/')}/api/v1/sessions", json={"cwd": str(work_dir) if work_dir else None}
+                    # Create new session
+                    sess_resp = http.post(
+                        f"{base_url}/api/v1/sessions",
+                        json={"cwd": str(work_dir) if work_dir else None},
                     )
                     sess_resp.raise_for_status()
-                    session = sess_resp.json()
-                    console.print(f"[dim]Created session: {session['id']}[/dim]")
+                    session_data = sess_resp.json()
+                    session_id = session_data["id"]
+                    console.print(f"[dim]Created session: {session_id}[/dim]")
             else:
                 # Create new session
-                sess_resp = client.post(
-                    f"{url.rstrip('/')}/api/v1/sessions", json={"cwd": str(work_dir) if work_dir else None}
+                sess_resp = http.post(
+                    f"{base_url}/api/v1/sessions",
+                    json={"cwd": str(work_dir) if work_dir else None},
                 )
                 sess_resp.raise_for_status()
-                session = sess_resp.json()
-                session_id = session["id"]
+                session_data = sess_resp.json()
+                session_id = session_data["id"]
                 console.print(f"[dim]Created session: {session_id}[/dim]")
     except Exception as e:
         console.print(f"[red]Failed to create session: {e}[/red]")
@@ -304,46 +322,71 @@ def attach_command(
                 console.print("  /exit, /quit  - Exit the client")
                 console.print("  /sessions     - List all sessions")
                 console.print("  /info         - Show session info")
+                console.print("  /tools        - List available tools")
+                console.print("  /agents       - List available agents")
                 console.print()
                 continue
 
             if user_input.lower() == "/sessions":
-                with httpx.Client(timeout=10.0) as client:
-                    resp = client.get(f"{url.rstrip('/')}/api/v1/sessions")
+                with httpx.Client(timeout=10.0) as http:
+                    resp = http.get(f"{base_url}/api/v1/sessions")
                     sessions = resp.json()
                     console.print("[bold]Sessions:[/bold]")
                     for s in sessions.get("sessions", []):
-                        status_icon = "🔄" if s["status"] == "busy" else "✅"
-                        console.print(f"  {status_icon} {s['id']} - {s['status']}")
+                        status_icon = "🔄" if s.get("status") == "busy" else "✅"
+                        console.print(f"  {status_icon} {s['id']} - {s.get('status', 'unknown')}")
                 console.print()
                 continue
 
             if user_input.lower() == "/info":
-                with httpx.Client(timeout=10.0) as client:
-                    resp = client.get(f"{url.rstrip('/')}/api/v1/sessions/{session_id}")
-                    session = resp.json()
+                with httpx.Client(timeout=10.0) as http:
+                    resp = http.get(f"{base_url}/api/v1/sessions/{session_id}")
+                    session_info = resp.json()
                     console.print("[bold]Session Info:[/bold]")
-                    console.print(f"  ID: {session['id']}")
-                    console.print(f"  Status: {session['status']}")
-                    console.print(f"  Agent: {session.get('agent_name', 'unknown')}")
-                    console.print(f"  Messages: {session.get('message_count', 0)}")
+                    console.print(f"  ID: {session_info['id']}")
+                    console.print(f"  Status: {session_info.get('status', 'unknown')}")
+                    console.print(f"  Agent: {session_info.get('agent_name', 'unknown')}")
+                    console.print(f"  Messages: {session_info.get('message_count', 0)}")
                 console.print()
                 continue
 
-            # Send prompt to server with streaming using Rich Live for real-time Markdown rendering
+            if user_input.lower() == "/tools":
+                with httpx.Client(timeout=10.0) as http:
+                    resp = http.get(f"{base_url}/api/v1/tools")
+                    tools_data = resp.json()
+                    tools = tools_data.get("tools", [])
+                    console.print("[bold]Available Tools:[/bold]")
+                    for tool in tools[:20]:
+                        console.print(f"  • {tool['name']}: {tool.get('description', '')[:50]}")
+                    if len(tools) > 20:
+                        console.print(f"  ... and {len(tools) - 20} more")
+                console.print()
+                continue
+
+            if user_input.lower() == "/agents":
+                with httpx.Client(timeout=10.0) as http:
+                    resp = http.get(f"{base_url}/api/v1/agents")
+                    agents_data = resp.json()
+                    agents = agents_data.get("agents", [])
+                    console.print("[bold]Available Agents:[/bold]")
+                    for agent_info in agents:
+                        console.print(f"  • {agent_info['name']}: {agent_info.get('description', '')[:50]}")
+                console.print()
+                continue
+
+            # Send prompt to server with streaming
             try:
                 with (
-                    httpx.Client(timeout=300.0) as client,
-                    client.stream(
+                    httpx.Client(timeout=300.0) as http,
+                    http.stream(
                         "POST",
-                        f"{url.rstrip('/')}/api/v1/sessions/{session_id}/prompt/stream",
+                        f"{base_url}/api/v1/sessions/{session_id}/prompt/stream",
                         json={"content": user_input, "stream": True},
                     ) as response,
                 ):
                     response.raise_for_status()
                     full_response = ""
 
-                    # Use Rich Live for real-time Markdown rendering
                     with Live(
                         Panel(Markdown("⏳ *Thinking...*"), border_style="cyan"),
                         console=console,
@@ -358,9 +401,17 @@ def attach_command(
                                 if data.get("type") == "chunk":
                                     chunk = data.get("content", "")
                                     full_response += chunk
-                                    # Update the live display with rendered Markdown
                                     live.update(
                                         Panel(Markdown(full_response), border_style="cyan")
+                                    )
+                                elif data.get("type") == "tool_call":
+                                    # Show tool call indicator
+                                    tool_name = data.get("tool_name", "unknown")
+                                    live.update(
+                                        Panel(
+                                            Markdown(f"{full_response}\n\n🔧 *Calling tool: {tool_name}...*"),
+                                            border_style="cyan",
+                                        )
                                     )
                                 elif data.get("type") == "error":
                                     live.update(
@@ -370,7 +421,6 @@ def attach_command(
                                         )
                                     )
                                 elif data.get("type") == "complete":
-                                    # Final update with complete response
                                     if full_response:
                                         live.update(
                                             Panel(Markdown(full_response), border_style="cyan")
