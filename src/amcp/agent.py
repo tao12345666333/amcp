@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -56,6 +59,7 @@ class Agent:
     - Status reporting and progress indication
     - Conversation history persistence
     - Project rules loading from AGENTS.md
+    - Event callbacks for real-time monitoring
     """
 
     def __init__(self, agent_spec: ResolvedAgentSpec | None = None, session_id: str | None = None):
@@ -83,6 +87,9 @@ class Agent:
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
+
+        # Event callbacks for real-time monitoring (used by server)
+        self._event_callbacks: list[Callable[[str, dict[str, Any]], None]] = []
 
         # Load existing conversation history if available
         self._load_conversation_history()
@@ -172,6 +179,40 @@ class Agent:
     @property
     def max_steps(self) -> int:
         return self.agent_spec.max_steps
+
+    def add_event_callback(self, callback: Callable[[str, dict[str, Any]], None]) -> None:
+        """Register an event callback for real-time monitoring.
+
+        Args:
+            callback: Function that receives (event_type, event_data)
+        """
+        self._event_callbacks.append(callback)
+
+    def remove_event_callback(self, callback: Callable[[str, dict[str, Any]], None]) -> None:
+        """Remove an event callback.
+
+        Args:
+            callback: The callback to remove
+        """
+        if callback in self._event_callbacks:
+            self._event_callbacks.remove(callback)
+
+    def _emit_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Emit an event to all registered callbacks.
+
+        Args:
+            event_type: Type of event (e.g., 'tool.call_start', 'tool.call_complete')
+            data: Event data
+        """
+        event_data = {
+            "session_id": self.session_id,
+            "agent_name": self.name,
+            "timestamp": datetime.now().isoformat(),
+            **data,
+        }
+        for callback in self._event_callbacks:
+            with contextlib.suppress(Exception):
+                callback(event_type, event_data)
 
     def _get_system_prompt(self, work_dir: Path | None = None) -> str:
         """Get resolved system prompt with template variables and project rules."""
@@ -644,7 +685,16 @@ class Agent:
             self.total_llm_calls += 1
             status.update(f"[bold]Agent {self.name}[/bold] - LLM Call {self.current_request_llm_calls}")
 
-            resp = llm_client.chat(messages=messages, tools=tools)
+            # Define stream callback if streaming is enabled
+            stream_callback = None
+            if stream:
+
+                def _stream_callback(chunk: str):
+                    self._emit_event("message.chunk", {"content": chunk})
+
+                stream_callback = _stream_callback
+
+            resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
 
             if resp.tool_calls:
                 tool_calls = resp.tool_calls
@@ -731,6 +781,20 @@ class Agent:
                         # Add tool block to UI
                         block = live_ui.add_tool(tool_name, args)
 
+                        # Emit tool call start event
+                        self._emit_event(
+                            "tool.call_start",
+                            {
+                                "tool_name": tool_name,
+                                "tool_id": tool_id,
+                                "arguments": args,
+                                "step": self.step_count,
+                            },
+                        )
+
+                        # Track execution time
+                        tool_start_time = time.time()
+
                         # Execute tool
                         try:
                             cfg = load_config()
@@ -793,6 +857,26 @@ class Agent:
                             if post_hook_output.feedback:
                                 tool_result_text += f"\n\n[Hook feedback: {post_hook_output.feedback}]"
 
+                            # Calculate execution duration
+                            tool_duration_ms = (time.time() - tool_start_time) * 1000
+
+                            # Emit tool call complete event
+                            tool_success = (
+                                tool_response_data.get("success", True)
+                                if isinstance(tool_response_data, dict)
+                                else True
+                            )
+                            self._emit_event(
+                                "tool.call_complete",
+                                {
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "success": tool_success,
+                                    "duration_ms": tool_duration_ms,
+                                    "result_length": len(tool_result_text),
+                                },
+                            )
+
                             # Add tool result to messages (truncate large results)
                             MAX_TOOL_RESULT_LEN = 8000
                             truncated_result = tool_result_text
@@ -824,6 +908,22 @@ class Agent:
                         except Exception as e:
                             error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
                             live_ui.finish_tool(block, success=False, result=error_msg)
+
+                            # Calculate execution duration
+                            tool_duration_ms = (time.time() - tool_start_time) * 1000
+
+                            # Emit tool call error event
+                            self._emit_event(
+                                "tool.call_error",
+                                {
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "success": False,
+                                    "error": error_msg,
+                                    "duration_ms": tool_duration_ms,
+                                },
+                            )
+
                             messages.append(
                                 {
                                     "role": "tool",

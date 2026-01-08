@@ -16,17 +16,19 @@ Example usage:
 
 from .app import create_app, get_app, run_server
 from .config import ServerConfig, get_server_config
+from .event_bridge import EventBridge, emit_tool_event, get_event_bridge
 from .models import (
-    Session,
-    SessionStatus,
+    EventType,
+    HealthResponse,
     PromptRequest,
     PromptResponse,
     ServerEvent,
-    EventType,
     ServerInfo,
-    HealthResponse,
+    Session,
+    SessionStatus,
 )
 from .session_manager import SessionManager, get_session_manager
+from .websocket import ConnectionManager, get_connection_manager
 
 __all__ = [
     # App
@@ -48,4 +50,11 @@ __all__ = [
     # Session Manager
     "SessionManager",
     "get_session_manager",
+    # Events
+    "EventBridge",
+    "get_event_bridge",
+    "emit_tool_event",
+    # WebSocket
+    "ConnectionManager",
+    "get_connection_manager",
 ]

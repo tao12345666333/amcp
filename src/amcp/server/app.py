@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,10 +11,10 @@ from fastapi.responses import JSONResponse
 
 from .._version import __version__
 from .config import ServerConfig, get_server_config, set_server_config
-from .routes import agents_router, health_router, sessions_router, tools_router
-from .session_manager import SessionManager, get_session_manager, set_session_manager
-from .websocket import router as websocket_router
 from .events import router as events_router
+from .routes import agents_router, health_router, sessions_router, tools_router
+from .session_manager import SessionManager, set_session_manager
+from .websocket import router as websocket_router
 
 # Global app instance
 _app: FastAPI | None = None
@@ -152,8 +151,9 @@ def run_server(
         work_dir: Working directory for sessions.
         reload: Enable auto-reload for development.
     """
-    import uvicorn
     from pathlib import Path
+
+    import uvicorn
 
     # Create configuration
     config = ServerConfig(

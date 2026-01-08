@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from ..models import (
     CancelRequest,
@@ -47,7 +45,7 @@ async def create_session(request: CreateSessionRequest | None = None) -> Session
         raise HTTPException(
             status_code=429,
             detail={"error": str(e), "code": "MAX_SESSIONS_REACHED"},
-        )
+        ) from None
 
 
 @router.get("", response_model=SessionListResponse)
@@ -70,7 +68,7 @@ async def get_session(session_id: str) -> Session:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
 
 @router.delete("/{session_id}")
@@ -85,7 +83,7 @@ async def delete_session(session_id: str) -> dict:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
 
 @router.post("/{session_id}/prompt", response_model=PromptResponse)
@@ -121,7 +119,7 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
 
 @router.post("/{session_id}/prompt/stream")
@@ -139,7 +137,7 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
     async def generate() -> AsyncGenerator[str, None]:
         import json
@@ -232,7 +230,7 @@ async def cancel_session(session_id: str, request: CancelRequest | None = None) 
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
 
 @router.get("/{session_id}/history")
@@ -257,7 +255,7 @@ async def get_session_history(
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None
 
 
 @router.delete("/{session_id}/history")
@@ -274,4 +272,4 @@ async def clear_session_history(session_id: str) -> dict:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
-        )
+        ) from None

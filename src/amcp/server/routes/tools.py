@@ -85,7 +85,7 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
 
     Warning: This bypasses normal safety checks.
     """
-    from ...tools import get_tool_registry, ToolResult
+    from ...tools import ToolResult, get_tool_registry
 
     tool_registry = get_tool_registry()
     tool_func = tool_registry.get_tool(tool_name)

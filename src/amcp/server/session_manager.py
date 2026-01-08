@@ -6,13 +6,15 @@ Manages multiple agent sessions for concurrent client connections.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..agent import Agent
-from ..agent_spec import get_default_agent_spec, load_agent_spec
+from ..agent_spec import get_default_agent_spec
 from ..multi_agent import get_agent_registry
 from .config import ServerConfig, get_server_config
 from .models import Session, SessionStatus, TokenUsage
@@ -153,6 +155,62 @@ class SessionManager:
                 cwd=cwd,
                 agent_name=agent_name,
             )
+
+            # Connect Agent events to EventBridge
+            try:
+                from .event_bridge import emit_tool_event
+
+                def agent_event_handler(event_type: str, data: dict[str, Any]):
+                    # Run async emission in background (fire and forget)
+                    import asyncio
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                        if event_type == "tool.call_start":
+                            loop.create_task(
+                                emit_tool_event(
+                                    session_id=data["session_id"],
+                                    event_type="start",
+                                    tool_name=data["tool_name"],
+                                    arguments=data.get("arguments", {}),
+                                )
+                            )
+                        elif event_type == "tool.call_complete":
+                            loop.create_task(
+                                emit_tool_event(
+                                    session_id=data["session_id"],
+                                    event_type="complete",
+                                    tool_name=data["tool_name"],
+                                    result="[Result omitted]",  # Result might be large
+                                    duration_ms=data.get("duration_ms"),
+                                )
+                            )
+                        elif event_type == "tool.call_error":
+                            loop.create_task(
+                                emit_tool_event(
+                                    session_id=data["session_id"],
+                                    event_type="error",
+                                    tool_name=data["tool_name"],
+                                    error=data.get("error", "Unknown error"),
+                                    duration_ms=data.get("duration_ms"),
+                                )
+                            )
+                        elif event_type == "message.chunk":
+                            from .event_bridge import get_event_bridge
+
+                            bridge = get_event_bridge()
+                            loop.create_task(
+                                bridge.emit_message_chunk(
+                                    session_id=data["session_id"],
+                                    content=data["content"],
+                                )
+                            )
+                    except RuntimeError:
+                        pass
+
+                agent.add_event_callback(agent_event_handler)
+            except Exception:
+                pass  # Don't fail session creation if event hook fails
 
             self._sessions[session_id] = session
             self._emit_event("session.created", {"session_id": session_id})
@@ -311,17 +369,62 @@ class SessionManager:
             self._event_listeners.remove(listener)
 
     def _emit_event(self, event_type: str, payload: dict[str, Any]) -> None:
-        """Emit an event to all listeners.
+        """Emit an event to all listeners and broadcast to connected clients.
 
         Args:
             event_type: Type of event.
             payload: Event payload.
         """
+        # Emit to local listeners
         for listener in self._event_listeners:
-            try:
+            with contextlib.suppress(Exception):
                 listener(event_type, payload)
-            except Exception:
-                pass  # Don't let listener errors affect the manager
+
+        # Also broadcast to WebSocket/SSE clients asynchronously
+        try:
+            import asyncio
+
+            from .event_bridge import get_event_bridge
+
+            bridge = get_event_bridge()
+            session_id = payload.get("session_id")
+
+            # Create async task to broadcast (non-blocking)
+            async def broadcast():
+                if event_type == "session.status_changed":
+                    await bridge.emit_session_status_changed(
+                        session_id,
+                        payload.get("status", "unknown"),
+                        payload,
+                    )
+                elif event_type == "session.created":
+                    await bridge.emit_session_status_changed(
+                        session_id,
+                        "created",
+                        payload,
+                    )
+                elif event_type == "session.deleted":
+                    await bridge.emit_session_status_changed(
+                        session_id,
+                        "deleted",
+                        payload,
+                    )
+                elif event_type == "session.error":
+                    await bridge.emit_session_status_changed(
+                        session_id,
+                        "error",
+                        payload,
+                    )
+
+            # Schedule the broadcast
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(broadcast())
+            except RuntimeError:
+                # No running loop, skip async broadcast
+                pass
+        except ImportError:
+            pass  # EventBridge not available
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
@@ -342,7 +445,8 @@ class SessionManager:
 
         if agent_config:
             # Create a ResolvedAgentSpec from AgentConfig
-            from ..agent_spec import ResolvedAgentSpec, AgentMode as SpecAgentMode
+            from ..agent_spec import AgentMode as SpecAgentMode
+            from ..agent_spec import ResolvedAgentSpec
 
             # Map multi_agent AgentMode to agent_spec AgentMode
             mode_map = {

@@ -339,53 +339,216 @@ class EventType(str, Enum):
 - ✅ Agent listing endpoints (`/api/v1/agents/*`)
 - ✅ OpenAPI documentation at `/docs`
 
-### Phase 2: Streaming & Events (Week 2)
+### Phase 2: Streaming & Events (Week 2) ✅ COMPLETE
 
 **Goal**: Real-time communication
 
-**Tasks**:
-1. Implement SSE event stream
-2. Implement WebSocket handler
-3. Add streaming prompt responses
-4. Integrate with existing EventBus
-5. Add tool execution events
-
-**Deliverables**:
-- SSE endpoint for events
-- WebSocket support for interactive sessions
-- Real-time tool execution feedback
-
-### Phase 3: CLI Client (Week 3)
-
-**Goal**: CLI can connect to remote server
+**Status**: Completed on 2026-01-08
 
 **Tasks**:
-1. Create `src/amcp/client/` module
-2. Implement HTTP client wrapper
-3. Implement WebSocket client
-4. Add `amcp attach <url>` command
-5. Refactor existing CLI to use client SDK
-6. Support both embedded and remote modes
+1. ✅ Implement SSE event stream (basic framework done in Phase 1)
+2. ✅ Implement WebSocket handler (basic framework done in Phase 1)
+3. ✅ Add connection status display (show connected clients per session)
+   - Added `/api/v1/connections` endpoint
+   - Added connection stats to `/api/v1/status`
+   - `ConnectionManager.get_connection_stats()` method
+4. ✅ Create EventBridge for tool/agent event broadcasting
+   - `event_bridge.py` with emit methods for tool/agent events
+   - Integration with SessionManager for status events
+5. ✅ Add streaming prompt responses with full EventBus integration
+   - Modified `BaseLLMClient` to support `stream_callback` parameter
+   - `OpenAIClient` now streams tokens via callback
+   - Agent emits `message.chunk` events during streaming
+6. ✅ Broadcast tool execution events in real-time
+   - Agent emits `tool.call_start`, `tool.call_complete`, `tool.call_error` events
+   - SessionManager bridges events to EventBridge
+   - Events broadcast to WebSocket/SSE clients
+
+**TODO (Future Enhancement)**:
+- [ ] Real-time collaboration sync - notify other clients when one sends a prompt
+- [ ] Conflict handling - queue/reject strategy for concurrent prompts
 
 **Deliverables**:
-- `amcp attach <url>` command
-- Client SDK for Python applications
-- Seamless switching between embedded/remote modes
+- ✅ SSE endpoint for events (`/api/v1/events`, `/api/v1/sessions/{id}/events`)
+- ✅ WebSocket support for interactive sessions (`/ws`)
+- ✅ Connection status display (`/api/v1/connections`)
+- ✅ Real-time tool execution feedback
+- ✅ Streaming LLM responses via callbacks
 
-### Phase 4: Protocol Unification (Week 4)
+### Phase 3: CLI Client SDK (Week 3)
 
-**Goal**: Unified experience across protocols
+**Goal**: Formal client SDK for connecting to remote servers
+
+**Status**: 🔲 Not Started
 
 **Tasks**:
-1. Ensure ACP and HTTP APIs are consistent
-2. Add OpenAPI documentation
-3. Generate TypeScript types for web clients
-4. Create protocol compatibility layer
+1. 🔲 Create `src/amcp/client/` module structure
+   ```
+   src/amcp/client/
+   ├── __init__.py
+   ├── base.py           # Abstract client interface
+   ├── http_client.py    # HTTP REST client
+   ├── ws_client.py      # WebSocket client  
+   ├── session.py        # Session wrapper
+   └── exceptions.py     # Client exceptions
+   ```
+
+2. 🔲 Implement `AMCPClient` class
+   ```python
+   from amcp.client import AMCPClient
+   
+   async with AMCPClient("http://localhost:4096") as client:
+       # Create session
+       session = await client.create_session(cwd="/my/project")
+       
+       # Send prompt and stream response
+       async for chunk in session.prompt("Help me refactor this"):
+           print(chunk.content, end="")
+       
+       # Subscribe to events
+       async for event in session.events():
+           if event.type == "tool.call_start":
+               print(f"Tool: {event.tool_name}")
+   ```
+
+3. 🔲 Implement WebSocket client for real-time interaction
+   ```python
+   async with client.websocket_session(session_id) as ws:
+       await ws.send_prompt("Hello")
+       async for message in ws:
+           if message.type == "chunk":
+               print(message.content)
+           elif message.type == "complete":
+               break
+   ```
+
+4. 🔲 Refactor `amcp attach` to use client SDK
+   - Replace inline httpx calls with AMCPClient
+   - Add reconnection logic
+   - Improve error handling
+
+5. 🔲 Support embedded vs remote mode switching
+   ```python
+   # Auto-detect mode
+   client = AMCPClient.auto()  # Uses embedded if no server
+   
+   # Or explicit
+   client = AMCPClient.embedded()  # Direct agent
+   client = AMCPClient.remote("http://...")  # Via server
+   ```
 
 **Deliverables**:
-- OpenAPI spec at `/openapi.json`
-- TypeScript type definitions
-- Unified error handling
+- `amcp.client` module with full API coverage
+- `AMCPClient` class for Python applications
+- WebSocket client for streaming
+- Refactored `amcp attach` command
+
+**Tests to Add**:
+- `tests/test_client.py` - Client SDK tests
+- `tests/test_client_integration.py` - Integration with server
+
+---
+
+### Phase 4: Protocol Unification & Documentation (Week 4)
+
+**Goal**: Unified experience across protocols with complete documentation
+
+**Status**: 🔲 Not Started
+
+**Tasks**:
+1. 🔲 Ensure ACP and HTTP APIs consistency
+   - Map ACP events to HTTP/WebSocket events
+   - Unified error codes across protocols
+   - Consistent session lifecycle
+
+2. 🔲 Generate OpenAPI documentation
+   - Already available at `/docs` (Swagger UI)
+   - Export to `/openapi.json`
+   - Add detailed examples for each endpoint
+
+3. 🔲 Generate TypeScript types for web clients
+   ```bash
+   # Generate types from OpenAPI spec
+   npx openapi-typescript http://localhost:4096/openapi.json -o types/amcp-api.d.ts
+   ```
+
+4. 🔲 Create protocol compatibility layer
+   ```python
+   # In src/amcp/protocol/
+   class ProtocolAdapter:
+       """Adapts between ACP, HTTP, and WebSocket protocols."""
+       
+       def from_acp_event(self, event: ACPEvent) -> ServerEvent:
+           ...
+       
+       def to_acp_event(self, event: ServerEvent) -> ACPEvent:
+           ...
+   ```
+
+5. 🔲 Add comprehensive API documentation
+   - Update `docs/api/` with endpoint documentation
+   - Add usage examples for each protocol
+   - Document authentication (when added)
+
+**Deliverables**:
+- OpenAPI spec at `/openapi.json` ✅ (already exists)
+- TypeScript type definitions for web clients
+- Unified error handling across protocols
+- API documentation in `docs/api/`
+
+---
+
+### Phase 5: Authentication & Security (Future)
+
+**Goal**: Secure remote access
+
+**Status**: 🔲 Planned
+
+**Tasks**:
+1. 🔲 Add API key authentication
+   ```yaml
+   # ~/.config/amcp/server.yaml
+   server:
+     auth:
+       enabled: true
+       api_keys:
+         - name: "my-app"
+           key: "amcp_xxxxxxxxxxxx"
+           permissions: ["sessions:*", "tools:read"]
+   ```
+
+2. 🔲 Add JWT token support for web clients
+3. 🔲 Implement rate limiting
+4. 🔲 Add TLS/HTTPS support
+5. 🔲 Session isolation and permissions
+
+---
+
+### Phase 6: Web & Desktop Clients (Future)
+
+**Goal**: Rich UI clients
+
+**Status**: 🔲 Planned
+
+**Potential Clients**:
+1. **Web UI** (React/Vue)
+   - Dashboard for session management
+   - Interactive chat interface
+   - Tool execution visualization
+
+2. **Desktop App** (Tauri)
+   - Native desktop experience
+   - System tray integration
+   - Keyboard shortcuts
+
+3. **VS Code Extension**
+   - Side panel for AMCP
+   - Inline code suggestions
+   - Tool execution in editor
+
+4. **Mobile App** (React Native/Flutter)
+   - Basic session management
+   - Push notifications for events
 
 ## Directory Structure
 

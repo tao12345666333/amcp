@@ -39,7 +39,13 @@ class BaseLLMClient(ABC):
     model: str  # Model name/identifier
 
     @abstractmethod
-    def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        stream_callback: Any | None = None,  # Callable[[str], None]
+        **kwargs,
+    ) -> LLMResponse:
         """Send chat request and return response."""
         pass
 
@@ -53,35 +59,110 @@ class OpenAIClient(BaseLLMClient):
         self.client = OpenAI(base_url=base_url, api_key=api_key or "")
         self.model = model
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:
-        params = {"model": self.model, "messages": messages, "stream": False, **kwargs}
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        params = {"model": self.model, "messages": messages, "stream": bool(stream_callback), **kwargs}
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
+            # When tools are present, we usually don't stream content to avoid complications,
+            # or we need to handle tool call streaming separately.
+            # For simplicity, if tools are present, we disable streaming unless specifically handled.
+            # However, user wants streaming prompt responses.
+            # OpenAI supports streaming tool calls, but it's complex.
+            # Let's support streaming content only if tools are NOT likely to be called immediately
+            # or accept that we might stream mixed content.
+            # For now, let's keep streaming enabled if requested, but handle tool chunks carefully.
+            # Note: The 'stream' param in params dict controls API behavior.
 
-        resp = self.client.chat.completions.create(**params)
-        msg = resp.choices[0].message
+        if stream_callback:
+            # Streaming mode
+            accumulated_content = []
+            tool_calls_chunks = {}  # index -> accumulated chunk
+            finish_reason = None
 
-        tool_calls = None
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
-            tool_calls = [
-                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments} for tc in msg.tool_calls
-            ]
+            response = self.client.chat.completions.create(**params)
 
-        # Extract thinking content
-        thinking = None
-        content = msg.content
+            for chunk in response:
+                delta = chunk.choices[0].delta
+                finish_reason = chunk.choices[0].finish_reason
 
-        # Check for reasoning_content field (DeepSeek, some OpenAI-compatible APIs)
-        if hasattr(msg, "reasoning_content") and msg.reasoning_content:
-            thinking = msg.reasoning_content
-        # Check for <think> tags in content
-        elif content:
-            thinking, content = _extract_think_tags(content)
+                # Handle content
+                if delta.content:
+                    stream_callback(delta.content)
+                    accumulated_content.append(delta.content)
 
-        return LLMResponse(
-            content=content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason, thinking=thinking
-        )
+                # Handle thinking (if present in specific fields)
+                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    # We could stream thinking too, but interface only supports one stream currently
+                    pass
+
+                # Handle tool calls (accumulate them)
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_chunks:
+                            tool_calls_chunks[idx] = {"id": "", "name": "", "arguments": ""}
+
+                        if tc.id:
+                            tool_calls_chunks[idx]["id"] += tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                tool_calls_chunks[idx]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                tool_calls_chunks[idx]["arguments"] += tc.function.arguments
+
+            # Reconstruct full response
+            content = "".join(accumulated_content) if accumulated_content else None
+
+            tool_calls = []
+            if tool_calls_chunks:
+                for idx in sorted(tool_calls_chunks.keys()):
+                    tc = tool_calls_chunks[idx]
+                    tool_calls.append({"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]})
+
+            # Extract thinking from content if tags used
+            thinking = None
+            if content:
+                thinking, content = _extract_think_tags(content)
+
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls if tool_calls else None,
+                stop_reason=finish_reason,
+                thinking=thinking,
+            )
+
+        else:
+            # Non-streaming mode (existing logic)
+            resp = self.client.chat.completions.create(**params)
+            msg = resp.choices[0].message
+
+            tool_calls = None
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                tool_calls = [
+                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments} for tc in msg.tool_calls
+                ]
+
+            # Extract thinking content
+            thinking = None
+            content = msg.content
+
+            # Check for reasoning_content field (DeepSeek, some OpenAI-compatible APIs)
+            if hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                thinking = msg.reasoning_content
+            # Check for <think> tags in content
+            elif content:
+                thinking, content = _extract_think_tags(content)
+
+            return LLMResponse(
+                content=content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason, thinking=thinking
+            )
 
 
 class OpenAIResponsesClient(BaseLLMClient):
@@ -93,7 +174,13 @@ class OpenAIResponsesClient(BaseLLMClient):
         self.client = OpenAI(base_url=base_url, api_key=api_key or "")
         self.model = model
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs,
+    ) -> LLMResponse:
         # Convert tools to Responses API format
         resp_tools = None
         if tools:
@@ -147,7 +234,13 @@ class AnthropicClient(BaseLLMClient):
         self.client = Anthropic(**kwargs)  # type: ignore[arg-type]
         self.model = model
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> LLMResponse:
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs,
+    ) -> LLMResponse:
         # Convert OpenAI format to Anthropic format
         system_prompt = None
         anthropic_messages = []

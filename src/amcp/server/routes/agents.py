@@ -12,7 +12,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 @router.get("", response_model=AgentListResponse)
 async def list_agents() -> AgentListResponse:
     """List all available agents."""
-    from ...multi_agent import get_agent_registry, AgentMode
+    from ...multi_agent import AgentMode, get_agent_registry
 
     registry = get_agent_registry()
 
@@ -35,8 +35,7 @@ async def list_agents() -> AgentListResponse:
 @router.get("/{agent_name}")
 async def get_agent(agent_name: str) -> dict:
     """Get detailed information about an agent."""
-    from ...multi_agent import get_agent_registry, AgentMode
-    from ...agent_spec import get_default_agent_spec
+    from ...multi_agent import AgentMode, get_agent_registry
 
     registry = get_agent_registry()
     config = registry.get(agent_name)
@@ -67,7 +66,6 @@ async def get_agent(agent_name: str) -> dict:
 async def get_agent_spec(agent_name: str) -> dict:
     """Get the full agent specification."""
     from ...multi_agent import get_agent_registry
-    from ...agent_spec import get_default_agent_spec
 
     registry = get_agent_registry()
     config = registry.get(agent_name)

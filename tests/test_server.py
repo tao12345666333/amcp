@@ -3,12 +3,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from amcp.server import create_app, ServerConfig
+from amcp.server import ServerConfig, create_app
 from amcp.server.session_manager import (
-    SessionManager,
     ManagedSession,
-    SessionNotFoundError,
     MaxSessionsReachedError,
+    SessionManager,
+    SessionNotFoundError,
 )
 
 
@@ -213,7 +213,7 @@ class TestSessionManager:
     async def test_max_sessions_limit(self, session_manager):
         """Test max sessions limit is enforced."""
         # Create max sessions
-        for i in range(5):
+        for _ in range(5):
             await session_manager.create_session(cwd="/tmp")
 
         # Try to create one more
@@ -228,3 +228,89 @@ class TestSessionManager:
 
         sessions = await session_manager.list_sessions()
         assert len(sessions) == 2
+
+
+class TestConnectionStatus:
+    """Test connection status endpoints (Phase 2)."""
+
+    def test_status_endpoint_includes_connections(self, client):
+        """Test status endpoint includes connection info."""
+        response = client.get("/api/v1/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert "connections" in data
+        assert "total_connections" in data["connections"]
+
+    def test_connections_endpoint(self, client):
+        """Test dedicated connections endpoint."""
+        response = client.get("/api/v1/connections")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_connections" in data
+        assert "global_connections" in data
+        assert "session_connections" in data
+
+
+class TestEventBridge:
+    """Test event bridge functionality (Phase 2)."""
+
+    @pytest.mark.asyncio
+    async def test_event_bridge_creation(self):
+        """Test event bridge can be created."""
+        from amcp.server.event_bridge import EventBridge, get_event_bridge
+
+        bridge = get_event_bridge()
+        assert bridge is not None
+        assert isinstance(bridge, EventBridge)
+
+    @pytest.mark.asyncio
+    async def test_emit_tool_event(self):
+        """Test emitting tool events."""
+        from amcp.server.event_bridge import emit_tool_event
+
+        # Should not raise
+        await emit_tool_event(
+            session_id="test-session",
+            event_type="start",
+            tool_name="test_tool",
+            arguments={"arg": "value"},
+        )
+
+        await emit_tool_event(
+            session_id="test-session",
+            event_type="complete",
+            tool_name="test_tool",
+            result="success",
+            duration_ms=100.0,
+        )
+
+        await emit_tool_event(
+            session_id="test-session",
+            event_type="error",
+            tool_name="test_tool",
+            error="Something went wrong",
+        )
+
+
+class TestConnectionManager:
+    """Test WebSocket connection manager (Phase 2)."""
+
+    def test_connection_stats_initial(self):
+        """Test initial connection stats are empty."""
+        from amcp.server.websocket import ConnectionManager
+
+        manager = ConnectionManager()
+        stats = manager.get_connection_stats()
+
+        assert stats["global_connections"] == 0
+        assert stats["total_connections"] == 0
+        assert stats["total_sessions_with_clients"] == 0
+        assert stats["session_connections"] == {}
+
+    def test_session_connection_count(self):
+        """Test getting connection count for specific session."""
+        from amcp.server.websocket import ConnectionManager
+
+        manager = ConnectionManager()
+        count = manager.get_session_connection_count("nonexistent-session")
+        assert count == 0

@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Any, AsyncGenerator
+from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from .models import EventType, ServerEvent
-from .session_manager import get_session_manager, SessionNotFoundError
+from .session_manager import SessionNotFoundError, get_session_manager
 
 router = APIRouter()
 
@@ -133,7 +134,7 @@ async def event_generator(
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
                 yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event)}\n\n"
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat
                 heartbeat = {
                     "type": EventType.HEARTBEAT.value,

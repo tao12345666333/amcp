@@ -41,7 +41,6 @@ async def server_info() -> ServerInfo:
     from ...multi_agent import get_agent_registry
     from ...tools import get_tool_registry
 
-    config = get_server_config()
     registry = get_agent_registry()
 
     # Get agent names
@@ -77,11 +76,15 @@ async def server_status() -> dict:
 
     Returns session counts and resource usage.
     """
+    from ..websocket import get_connection_manager
+
     session_manager = get_session_manager()
     config = get_server_config()
+    connection_manager = get_connection_manager()
 
     sessions = await session_manager.list_sessions()
     busy_count = sum(1 for s in sessions if s.status.value == "busy")
+    connection_stats = connection_manager.get_connection_stats()
 
     return {
         "timestamp": datetime.now().isoformat(),
@@ -93,9 +96,27 @@ async def server_status() -> dict:
             "idle": len(sessions) - busy_count,
             "max": config.max_sessions,
         },
+        "connections": connection_stats,
         "config": {
             "host": config.host,
             "port": config.port,
             "work_dir": str(config.work_dir) if config.work_dir else None,
         },
+    }
+
+
+@router.get("/connections")
+async def connection_status() -> dict:
+    """Get WebSocket connection status.
+
+    Returns the number of connected clients globally and per session.
+    """
+    from ..websocket import get_connection_manager
+
+    connection_manager = get_connection_manager()
+    stats = connection_manager.get_connection_stats()
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        **stats,
     }

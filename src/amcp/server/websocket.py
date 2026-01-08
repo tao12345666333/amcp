@@ -9,15 +9,14 @@ Provides real-time bidirectional communication for:
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from .models import EventType, WSMessage
-from .session_manager import get_session_manager, SessionNotFoundError
+from .models import EventType
+from .session_manager import SessionNotFoundError, get_session_manager
 
 router = APIRouter()
 
@@ -118,6 +117,31 @@ class ConnectionManager:
         except Exception:
             pass  # Connection might be closed
 
+    def get_connection_stats(self) -> dict[str, Any]:
+        """Get connection statistics.
+
+        Returns:
+            Dictionary with connection counts per session and global.
+        """
+        session_counts = {session_id: len(connections) for session_id, connections in self._connections.items()}
+        return {
+            "global_connections": len(self._global_connections),
+            "session_connections": session_counts,
+            "total_sessions_with_clients": len(self._connections),
+            "total_connections": len(self._global_connections) + sum(len(c) for c in self._connections.values()),
+        }
+
+    def get_session_connection_count(self, session_id: str) -> int:
+        """Get the number of connections for a specific session.
+
+        Args:
+            session_id: The session ID.
+
+        Returns:
+            Number of WebSocket connections for the session.
+        """
+        return len(self._connections.get(session_id, []))
+
 
 # Global connection manager
 connection_manager = ConnectionManager()
@@ -155,7 +179,6 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
 
             # Parse message
-            msg_type = data.get("type", "request")
             msg_id = data.get("id", str(uuid.uuid4()))
             payload = data.get("payload", {})
 
@@ -216,7 +239,7 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
         await connection_manager.disconnect(websocket, session_id)
-    except Exception as e:
+    except Exception:
         await connection_manager.disconnect(websocket, session_id)
         raise
 

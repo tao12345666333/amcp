@@ -242,7 +242,7 @@ def attach_command(
             console.print(f"[green]Connected to AMCP Server v{health.get('version', 'unknown')}[/green]")
     except Exception as e:
         console.print(f"[red]Failed to connect to server: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     # Create or get session
     try:
@@ -273,7 +273,7 @@ def attach_command(
                 console.print(f"[dim]Created session: {session_id}[/dim]")
     except Exception as e:
         console.print(f"[red]Failed to create session: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     console.print("[bold]AMCP Remote Client[/bold]")
     console.print(f"[dim]Server: {url}[/dim]")
@@ -332,33 +332,35 @@ def attach_command(
             console.print("[bold]🤖 Processing...[/bold]")
 
             try:
-                with httpx.Client(timeout=300.0) as client:
-                    with client.stream(
+                with (
+                    httpx.Client(timeout=300.0) as client,
+                    client.stream(
                         "POST",
                         f"{url.rstrip('/')}/api/v1/sessions/{session_id}/prompt/stream",
                         json={"content": user_input, "stream": True},
-                    ) as response:
-                        response.raise_for_status()
-                        full_response = ""
+                    ) as response,
+                ):
+                    response.raise_for_status()
+                    full_response = ""
 
-                        for line in response.iter_lines():
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                                if data.get("type") == "chunk":
-                                    chunk = data.get("content", "")
-                                    full_response += chunk
-                                    console.print(chunk, end="")
-                                elif data.get("type") == "error":
-                                    console.print(f"\n[red]Error: {data.get('error')}[/red]")
-                                elif data.get("type") == "complete":
-                                    console.print()  # New line after streaming
-                            except json.JSONDecodeError:
-                                pass
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if data.get("type") == "chunk":
+                                chunk = data.get("content", "")
+                                full_response += chunk
+                                console.print(chunk, end="")
+                            elif data.get("type") == "error":
+                                console.print(f"\n[red]Error: {data.get('error')}[/red]")
+                            elif data.get("type") == "complete":
+                                console.print()  # New line after streaming
+                        except json.JSONDecodeError:
+                            pass
 
-                        if full_response:
-                            console.print(Panel(Markdown(full_response), border_style="cyan"))
+                    if full_response:
+                        console.print(Panel(Markdown(full_response), border_style="cyan"))
             except Exception as e:
                 console.print(f"[red]Request failed: {e}[/red]")
 
