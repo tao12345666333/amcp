@@ -89,6 +89,9 @@ class OpenAIClient(BaseLLMClient):
             response = self.client.chat.completions.create(**params)
 
             for chunk in response:
+                # Some APIs (e.g., DeepSeek) may return chunks with empty choices
+                if not chunk.choices:
+                    continue
                 delta = chunk.choices[0].delta
                 finish_reason = chunk.choices[0].finish_reason
 

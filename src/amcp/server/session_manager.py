@@ -306,14 +306,17 @@ class SessionManager:
             mq_priority = priority_map.get(priority, MQPriority.NORMAL)
 
             # Run the agent
-            async for chunk in session.agent.run(
+            # Note: Agent.run returns a string, not an async generator.
+            # For streaming support, the agent emits 'message.chunk' events via callbacks
+            # which are captured and forwarded by the EventBridge.
+            result = await session.agent.run(
                 user_input=content,
                 work_dir=effective_work_dir,
                 stream=stream,
                 show_progress=False,  # Server doesn't show progress
                 priority=mq_priority,
-            ):
-                yield chunk
+            )
+            yield result
 
             session.message_count += 1
             session.update_status(SessionStatus.IDLE)
