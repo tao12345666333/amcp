@@ -401,9 +401,7 @@ def _attach_sync(
                                 if data.get("type") == "chunk":
                                     chunk = data.get("content", "")
                                     full_response += chunk
-                                    live.update(
-                                        Panel(Markdown(full_response), border_style="cyan")
-                                    )
+                                    live.update(Panel(Markdown(full_response), border_style="cyan"))
                                 elif data.get("type") == "tool_call":
                                     # Show tool call indicator
                                     tool_name = data.get("tool_name", "unknown")
@@ -422,9 +420,7 @@ def _attach_sync(
                                     )
                                 elif data.get("type") == "complete":
                                     if full_response:
-                                        live.update(
-                                            Panel(Markdown(full_response), border_style="cyan")
-                                        )
+                                        live.update(Panel(Markdown(full_response), border_style="cyan"))
                             except json.JSONDecodeError:
                                 pass
             except Exception as e:

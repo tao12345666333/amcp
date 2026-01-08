@@ -206,9 +206,7 @@ class ClientSession:
         """
         # This is a placeholder - actual implementation would need
         # SSE or WebSocket support
-        raise NotImplementedError(
-            "Event streaming requires WebSocket. Use AMCPClient.websocket_session()"
-        )
+        raise NotImplementedError("Event streaming requires WebSocket. Use AMCPClient.websocket_session()")
 
     def __repr__(self) -> str:
         """Return string representation."""

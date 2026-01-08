@@ -385,19 +385,20 @@ class EventType(str, Enum):
 1. ✅ Created `src/amcp/client/` module structure
    ```
    src/amcp/client/
-   ├── __init__.py        # Main AMCPClient class and exports
-   ├── base.py            # Abstract client interface, ResponseChunk
-   ├── exceptions.py      # Client exceptions (ConnectionError, SessionError, etc.)
-   ├── http_client.py     # HTTP REST client with streaming
-   ├── ws_client.py       # WebSocket client for real-time
-   ├── session.py         # ClientSession wrapper
-   └── embedded.py        # Embedded mode (local agent)
+   ├── __init__.py        # Main AMCPClient class and exports (11KB)
+   ├── base.py            # Abstract client interface, ResponseChunk (6KB)
+   ├── exceptions.py      # Client exceptions (ConnectionError, SessionError, etc.) (5KB)
+   ├── http_client.py     # HTTP REST client with streaming (15KB)
+   ├── ws_client.py       # WebSocket client for real-time (13KB)
+   ├── session.py         # ClientSession wrapper (6KB)
+   └── embedded.py        # Embedded mode (local agent) (13KB)
    ```
 
 2. ✅ Implemented `AMCPClient` class
    ```python
    from amcp.client import AMCPClient
    
+   # For Python applications (async)
    async with AMCPClient("http://localhost:4096") as client:
        # Create session
        session = await client.create_session(cwd="/my/project")
@@ -412,20 +413,22 @@ class EventType(str, Enum):
 
 3. ✅ Implemented WebSocket client for real-time interaction
    ```python
-   async with client.websocket_session(session_id) as ws:
+   from amcp.client import WebSocketClient
+   
+   async with WebSocketClient("http://localhost:4096", session_id="my-session") as ws:
        await ws.send_prompt("Hello")
-       async for message in ws:
-           if message.type == "chunk":
-               print(message.content)
-           elif message.type == "complete":
+       async for chunk in ws.prompt_stream("What can you do?"):
+           if chunk.done:
                break
+           print(chunk.content, end="")
    ```
 
-4. ✅ Refactored `amcp attach` to use client SDK
-   - Replaced inline httpx calls with AMCPClient
-   - Added reconnection support via client retry logic
-   - Improved error handling with typed exceptions
-   - Added `/tools` and `/agents` commands
+4. ✅ `amcp attach` command with new features
+   - Uses synchronous httpx for CLI stability (avoids event loop issues)
+   - Added `/tools` command - list available tools
+   - Added `/agents` command - list available agents
+   - Improved streaming with tool call indicators
+   - Note: Async SDK available for Python applications
 
 5. ✅ Supported embedded vs remote mode switching
    ```python
@@ -433,28 +436,28 @@ class EventType(str, Enum):
    client = AMCPClient.auto()  # Uses embedded if no server
    
    # Or explicit
-   client = AMCPClient.embedded()  # Direct agent
+   client = AMCPClient.embedded()  # Direct agent, no server needed
    client = AMCPClient.remote("http://...")  # Via server
    ```
 
 **Deliverables**:
-- ✅ `amcp.client` module with full API coverage
+- ✅ `amcp.client` module with full API coverage (~68KB total)
 - ✅ `AMCPClient` class for Python applications
-- ✅ `HTTPClient` for REST API access
+- ✅ `HTTPClient` for REST API access with retry logic
 - ✅ `WebSocketClient` for streaming
 - ✅ `EmbeddedClient` for local mode
 - ✅ `ClientSession` wrapper for high-level API
-- ✅ Refactored `amcp attach` command
+- ✅ `amcp attach` with new `/tools` and `/agents` commands
 
 **Tests Added**:
 - ✅ `tests/test_client.py` - 35 tests covering:
-  - Exception classes
-  - ResponseChunk creation and representation
-  - AMCPClient mode detection
-  - HTTPClient creation and URL normalization
-  - EmbeddedClient session management
-  - ClientSession wrapper functionality
-  - Full workflow integration tests
+  - Exception classes (`TestExceptions`)
+  - ResponseChunk creation and representation (`TestResponseChunk`)
+  - AMCPClient mode detection (`TestAMCPClient`)
+  - HTTPClient creation and URL normalization (`TestHTTPClient`)
+  - EmbeddedClient session CRUD (`TestEmbeddedClient`)
+  - ClientSession wrapper functionality (`TestClientSession`)
+  - Full workflow integration tests (`TestClientIntegration`)
 
 ---
 
