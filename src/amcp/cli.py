@@ -12,6 +12,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.json import JSON
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
@@ -187,6 +188,7 @@ def serve_command(
         amcp attach http://localhost:4096   # Connect CLI to running server
     """
     from .server import run_server
+    from .server import run_server
 
     run_server(
         host=host,
@@ -328,9 +330,7 @@ def attach_command(
                 console.print()
                 continue
 
-            # Send prompt to server with streaming
-            console.print("[bold]🤖 Processing...[/bold]")
-
+            # Send prompt to server with streaming using Rich Live for real-time Markdown rendering
             try:
                 with (
                     httpx.Client(timeout=300.0) as client,
@@ -343,24 +343,40 @@ def attach_command(
                     response.raise_for_status()
                     full_response = ""
 
-                    for line in response.iter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                            if data.get("type") == "chunk":
-                                chunk = data.get("content", "")
-                                full_response += chunk
-                                console.print(chunk, end="")
-                            elif data.get("type") == "error":
-                                console.print(f"\n[red]Error: {data.get('error')}[/red]")
-                            elif data.get("type") == "complete":
-                                console.print()  # New line after streaming
-                        except json.JSONDecodeError:
-                            pass
-
-                    if full_response:
-                        console.print(Panel(Markdown(full_response), border_style="cyan"))
+                    # Use Rich Live for real-time Markdown rendering
+                    with Live(
+                        Panel(Markdown("⏳ *Thinking...*"), border_style="cyan"),
+                        console=console,
+                        refresh_per_second=10,
+                        transient=False,
+                    ) as live:
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                if data.get("type") == "chunk":
+                                    chunk = data.get("content", "")
+                                    full_response += chunk
+                                    # Update the live display with rendered Markdown
+                                    live.update(
+                                        Panel(Markdown(full_response), border_style="cyan")
+                                    )
+                                elif data.get("type") == "error":
+                                    live.update(
+                                        Panel(
+                                            f"[red]Error: {data.get('error')}[/red]",
+                                            border_style="red",
+                                        )
+                                    )
+                                elif data.get("type") == "complete":
+                                    # Final update with complete response
+                                    if full_response:
+                                        live.update(
+                                            Panel(Markdown(full_response), border_style="cyan")
+                                        )
+                            except json.JSONDecodeError:
+                                pass
             except Exception as e:
                 console.print(f"[red]Request failed: {e}[/red]")
 
