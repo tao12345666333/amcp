@@ -27,7 +27,7 @@ class ClientSession:
 
     def __init__(
         self,
-        client: "BaseClient",
+        client: BaseClient,
         session_id: str,
         *,
         cwd: str | None = None,
@@ -66,7 +66,7 @@ class ClientSession:
         """Get the agent name."""
         return self._agent_name
 
-    async def refresh(self) -> "ClientSession":
+    async def refresh(self) -> ClientSession:
         """Refresh session data from server.
 
         Returns:

@@ -50,6 +50,19 @@ class EventType(str, Enum):
     AGENT_THINKING = "agent.thinking"
     AGENT_IDLE = "agent.idle"
 
+    # Collaboration events (for multi-client sync)
+    PROMPT_RECEIVED = "prompt.received"  # Another client sent a prompt
+    PROMPT_STARTED = "prompt.started"  # Prompt processing started
+    PROMPT_QUEUED = "prompt.queued"  # Prompt was queued (busy session)
+    PROMPT_REJECTED = "prompt.rejected"  # Prompt was rejected (conflict)
+
+
+class ConflictStrategy(str, Enum):
+    """Strategy for handling concurrent prompts to a busy session."""
+
+    QUEUE = "queue"  # Queue the prompt for later execution
+    REJECT = "reject"  # Reject the prompt with an error
+
 
 class MessagePriority(str, Enum):
     """Message priority levels."""
@@ -78,6 +91,10 @@ class PromptRequest(BaseModel):
     content: str = Field(..., description="The prompt content")
     priority: MessagePriority = Field(default=MessagePriority.NORMAL, description="Message priority")
     stream: bool = Field(default=True, description="Whether to stream the response")
+    conflict_strategy: ConflictStrategy = Field(
+        default=ConflictStrategy.QUEUE,
+        description="Strategy when session is busy: 'queue' to wait, 'reject' to fail immediately",
+    )
 
 
 class CancelRequest(BaseModel):

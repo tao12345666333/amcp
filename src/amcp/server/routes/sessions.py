@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Coroutine
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from ..models import (
     CancelRequest,
+    ConflictStrategy,
     CreateSessionRequest,
     PromptRequest,
     PromptResponse,
     Session,
     SessionListResponse,
+    SessionStatus,
 )
 from ..session_manager import (
     MaxSessionsReachedError,
@@ -23,6 +27,12 @@ from ..session_manager import (
 )
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+async def _safe_emit(coro: Coroutine[Any, Any, None]) -> None:
+    """Safely emit an event, suppressing any exceptions."""
+    with contextlib.suppress(Exception):
+        await coro
 
 
 @router.post("", response_model=Session)
@@ -92,6 +102,10 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
 
     For streaming responses, use the /sessions/{id}/prompt/stream endpoint.
     This endpoint queues the message and returns immediately.
+
+    The `conflict_strategy` parameter controls behavior when the session is busy:
+    - `queue`: Add the prompt to the queue (default)
+    - `reject`: Reject the prompt with an error
     """
     session_manager = get_session_manager()
 
@@ -99,15 +113,68 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
         session = await session_manager.get_session(session_id)
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
 
-        # Check if busy
-        if session.agent.is_busy():
-            # Queue the message
+        # Get event bridge for collaboration events
+        from ..event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        # Emit collaboration event: notify other clients about incoming prompt
+        await _safe_emit(
+            bridge.emit_prompt_received(
+                session_id=session_id,
+                content=request.content,
+                priority=request.priority.value,
+            )
+        )
+
+        # Check if busy and handle based on conflict strategy
+        is_busy = session.status == SessionStatus.BUSY or session.agent.is_busy()
+        if is_busy and request.conflict_strategy == ConflictStrategy.REJECT:
+            # Notify about rejection
+            await _safe_emit(
+                bridge.emit_prompt_rejected(
+                    session_id=session_id,
+                    reason="Session is busy",
+                    conflict_strategy="reject",
+                )
+            )
+
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Session is busy, prompt rejected",
+                    "code": "SESSION_BUSY",
+                    "session_id": session_id,
+                },
+            )
+
+        if is_busy:
+            # Default: queue the message
+            position = session.agent.queued_count() + 1
+
+            # Notify about queuing
+            await _safe_emit(
+                bridge.emit_prompt_queued(
+                    session_id=session_id,
+                    message_id=message_id,
+                    position=position,
+                )
+            )
+
             return PromptResponse(
                 session_id=session_id,
                 message_id=message_id,
                 status="queued",
-                position=session.agent.queued_count() + 1,
+                position=position,
             )
+
+        # Notify that processing started
+        await _safe_emit(
+            bridge.emit_prompt_started(
+                session_id=session_id,
+                message_id=message_id,
+            )
+        )
 
         return PromptResponse(
             session_id=session_id,
@@ -128,11 +195,52 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
 
     Returns a streaming response with chunks from the agent.
     Each chunk is a JSON object followed by a newline.
+
+    The `conflict_strategy` parameter controls behavior when the session is busy:
+    - `queue`: Wait for the queue (default)
+    - `reject`: Reject the prompt with an error
     """
     session_manager = get_session_manager()
 
     try:
-        await session_manager.get_session(session_id)
+        session = await session_manager.get_session(session_id)
+
+        # Get event bridge for collaboration events
+        from ..event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        # Emit collaboration event: notify other clients about incoming prompt
+        await _safe_emit(
+            bridge.emit_prompt_received(
+                session_id=session_id,
+                content=request.content,
+                priority=request.priority.value,
+            )
+        )
+
+        # Check for conflict and handle based on strategy
+        is_busy = session.status == SessionStatus.BUSY or session.agent.is_busy()
+        if is_busy and request.conflict_strategy == ConflictStrategy.REJECT:
+            # Notify about rejection
+            await _safe_emit(
+                bridge.emit_prompt_rejected(
+                    session_id=session_id,
+                    reason="Session is busy",
+                    conflict_strategy="reject",
+                )
+            )
+
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Session is busy, prompt rejected",
+                    "code": "SESSION_BUSY",
+                    "session_id": session_id,
+                },
+            )
+        # For QUEUE strategy, continue - the agent will queue internally
+
     except SessionNotFoundError:
         raise HTTPException(
             status_code=404,

@@ -75,7 +75,7 @@ class BaseClient(ABC):
         """Close the connection and cleanup resources."""
         ...
 
-    async def __aenter__(self) -> "BaseClient":
+    async def __aenter__(self) -> BaseClient:
         """Async context manager entry."""
         await self.connect()
         return self

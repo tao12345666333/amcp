@@ -6,11 +6,12 @@ Provides WebSocket-based real-time communication with AMCP servers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -99,7 +100,7 @@ class WebSocketClient:
             if msg.get("type") != "event" or msg.get("payload", {}).get("kind") != "connected":
                 raise ConnectionError(f"Unexpected connection response: {msg}")
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise ConnectionError(f"WebSocket connection timeout: {self._timeout}s") from e
         except WebSocketException as e:
             raise ConnectionError(f"WebSocket error: {e}") from e
@@ -110,10 +111,8 @@ class WebSocketClient:
         """Close the WebSocket connection."""
         if self._receive_task:
             self._receive_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._receive_task
-            except asyncio.CancelledError:
-                pass
             self._receive_task = None
 
         if self._ws:
@@ -126,7 +125,7 @@ class WebSocketClient:
                 future.cancel()
         self._pending_requests.clear()
 
-    async def __aenter__(self) -> "WebSocketClient":
+    async def __aenter__(self) -> WebSocketClient:
         """Async context manager entry."""
         await self.connect()
         return self
@@ -385,7 +384,7 @@ class WebSocketClient:
                             metadata=payload,
                         )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 raise PromptError("Stream timeout", session_id=sid) from None
 
     def __aiter__(self) -> AsyncIterator[dict]:

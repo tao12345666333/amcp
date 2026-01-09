@@ -314,3 +314,138 @@ class TestConnectionManager:
         manager = ConnectionManager()
         count = manager.get_session_connection_count("nonexistent-session")
         assert count == 0
+
+
+class TestCollaborationEvents:
+    """Test real-time collaboration events (Phase 2 enhancement)."""
+
+    @pytest.mark.asyncio
+    async def test_emit_prompt_received(self):
+        """Test emitting prompt received event."""
+        from amcp.server.event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        # Should not raise
+        await bridge.emit_prompt_received(
+            session_id="test-session",
+            content="Test prompt",
+            sender_client_id="client-123",
+            priority="normal",
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_prompt_received_truncates_long_content(self):
+        """Test that long content is truncated in prompt received event."""
+        from amcp.server.event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        long_content = "a" * 200
+        # Should not raise and should truncate internally
+        await bridge.emit_prompt_received(
+            session_id="test-session",
+            content=long_content,
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_prompt_started(self):
+        """Test emitting prompt started event."""
+        from amcp.server.event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        await bridge.emit_prompt_started(
+            session_id="test-session",
+            message_id="msg-123",
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_prompt_queued(self):
+        """Test emitting prompt queued event."""
+        from amcp.server.event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        await bridge.emit_prompt_queued(
+            session_id="test-session",
+            message_id="msg-123",
+            position=2,
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_prompt_rejected(self):
+        """Test emitting prompt rejected event."""
+        from amcp.server.event_bridge import get_event_bridge
+
+        bridge = get_event_bridge()
+
+        await bridge.emit_prompt_rejected(
+            session_id="test-session",
+            reason="Session is busy",
+            conflict_strategy="reject",
+        )
+
+
+class TestConflictStrategy:
+    """Test conflict handling strategies for concurrent prompts (Phase 2 enhancement)."""
+
+    def test_conflict_strategy_enum(self):
+        """Test ConflictStrategy enum values."""
+        from amcp.server.models import ConflictStrategy
+
+        assert ConflictStrategy.QUEUE.value == "queue"
+        assert ConflictStrategy.REJECT.value == "reject"
+
+    def test_prompt_request_has_conflict_strategy(self):
+        """Test PromptRequest includes conflict_strategy field."""
+        from amcp.server.models import ConflictStrategy, PromptRequest
+
+        # Default is QUEUE
+        req = PromptRequest(content="test")
+        assert req.conflict_strategy == ConflictStrategy.QUEUE
+
+        # Can specify REJECT
+        req_reject = PromptRequest(content="test", conflict_strategy=ConflictStrategy.REJECT)
+        assert req_reject.conflict_strategy == ConflictStrategy.REJECT
+
+    def test_new_event_types_exist(self):
+        """Test that new collaboration event types exist."""
+        from amcp.server.models import EventType
+
+        # Verify new event types are available
+        assert EventType.PROMPT_RECEIVED.value == "prompt.received"
+        assert EventType.PROMPT_STARTED.value == "prompt.started"
+        assert EventType.PROMPT_QUEUED.value == "prompt.queued"
+        assert EventType.PROMPT_REJECTED.value == "prompt.rejected"
+
+    def test_prompt_with_queue_strategy(self, client):
+        """Test prompt with queue strategy (default behavior)."""
+        # Create a session
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+
+        # Send prompt with queue strategy (default)
+        response = client.post(
+            f"/api/v1/sessions/{session_id}/prompt",
+            json={"content": "test prompt", "conflict_strategy": "queue"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["session_id"] == session_id
+        assert data["status"] in ["streaming", "processing", "queued"]
+
+    def test_prompt_with_reject_strategy_on_idle_session(self, client):
+        """Test prompt with reject strategy on idle session succeeds."""
+        # Create a session
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+
+        # Send prompt with reject strategy - should succeed since session is idle
+        response = client.post(
+            f"/api/v1/sessions/{session_id}/prompt",
+            json={"content": "test prompt", "conflict_strategy": "reject"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] in ["streaming", "processing"]

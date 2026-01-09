@@ -100,7 +100,7 @@ class AMCPClient:
         self._ws_client: WebSocketClient | None = None
 
     @classmethod
-    def remote(cls, url: str, **kwargs) -> "AMCPClient":
+    def remote(cls, url: str, **kwargs) -> AMCPClient:
         """Create a client in remote mode.
 
         Args:
@@ -113,7 +113,7 @@ class AMCPClient:
         return cls(url=url, mode=ClientMode.REMOTE, **kwargs)
 
     @classmethod
-    def embedded(cls, **kwargs) -> "AMCPClient":
+    def embedded(cls, **kwargs) -> AMCPClient:
         """Create a client in embedded mode.
 
         Args:
@@ -125,7 +125,7 @@ class AMCPClient:
         return cls(url=None, mode=ClientMode.EMBEDDED, **kwargs)
 
     @classmethod
-    def auto(cls, url: str | None = None, **kwargs) -> "AMCPClient":
+    def auto(cls, url: str | None = None, **kwargs) -> AMCPClient:
         """Auto-detect client mode.
 
         Uses embedded mode if no URL is provided, otherwise remote.
@@ -185,7 +185,7 @@ class AMCPClient:
             await self._client.close()
             self._client = None
 
-    async def __aenter__(self) -> "AMCPClient":
+    async def __aenter__(self) -> AMCPClient:
         """Async context manager entry."""
         await self.connect()
         return self

@@ -363,10 +363,17 @@ class EventType(str, Enum):
    - Agent emits `tool.call_start`, `tool.call_complete`, `tool.call_error` events
    - SessionManager bridges events to EventBridge
    - Events broadcast to WebSocket/SSE clients
-
-**TODO (Future Enhancement)**:
-- [ ] Real-time collaboration sync - notify other clients when one sends a prompt
-- [ ] Conflict handling - queue/reject strategy for concurrent prompts
+7. ✅ Real-time collaboration sync - notify other clients when one sends a prompt
+   - Added `EventType.PROMPT_RECEIVED`, `PROMPT_STARTED`, `PROMPT_QUEUED`, `PROMPT_REJECTED` events
+   - `EventBridge.emit_prompt_received()` notifies all clients about incoming prompts
+   - `EventBridge.emit_prompt_started()` notifies when processing begins
+   - Prompt preview truncated to 100 chars for privacy
+8. ✅ Conflict handling - queue/reject strategy for concurrent prompts
+   - Added `ConflictStrategy` enum with `QUEUE` and `REJECT` options
+   - `PromptRequest.conflict_strategy` field (default: `QUEUE`)
+   - When session is busy with `REJECT` strategy: returns HTTP 409 Conflict
+   - When session is busy with `QUEUE` strategy: queues message (default behavior)
+   - Events emitted for both queued and rejected prompts
 
 **Deliverables**:
 - ✅ SSE endpoint for events (`/api/v1/events`, `/api/v1/sessions/{id}/events`)
@@ -374,6 +381,8 @@ class EventType(str, Enum):
 - ✅ Connection status display (`/api/v1/connections`)
 - ✅ Real-time tool execution feedback
 - ✅ Streaming LLM responses via callbacks
+- ✅ Collaboration sync events (prompt received/started/queued/rejected)
+- ✅ Conflict handling with configurable strategy (queue/reject)
 
 ### Phase 3: CLI Client SDK (Week 3) ✅ COMPLETED
 
@@ -461,52 +470,77 @@ class EventType(str, Enum):
 
 ---
 
-### Phase 4: Protocol Unification & Documentation (Week 4)
+### Phase 4: Protocol Unification & Documentation (Week 4) ✅ COMPLETED
 
 **Goal**: Unified experience across protocols with complete documentation
 
-**Status**: 🔲 Not Started
+**Status**: ✅ Completed on 2026-01-08
 
-**Tasks**:
-1. 🔲 Ensure ACP and HTTP APIs consistency
-   - Map ACP events to HTTP/WebSocket events
-   - Unified error codes across protocols
-   - Consistent session lifecycle
-
-2. 🔲 Generate OpenAPI documentation
-   - Already available at `/docs` (Swagger UI)
-   - Export to `/openapi.json`
-   - Add detailed examples for each endpoint
-
-3. 🔲 Generate TypeScript types for web clients
-   ```bash
-   # Generate types from OpenAPI spec
-   npx openapi-typescript http://localhost:4096/openapi.json -o types/amcp-api.d.ts
+**Implemented**:
+1. ✅ Created `src/amcp/protocol/` module for protocol unification
+   ```
+   src/amcp/protocol/
+   ├── __init__.py        # Module exports
+   ├── adapter.py         # ProtocolAdapter class
+   ├── converters.py      # Event conversion functions
+   └── error_codes.py     # Unified error codes
    ```
 
-4. 🔲 Create protocol compatibility layer
+2. ✅ Unified error codes across protocols
+   - `ErrorCode` enum with HTTP status mapping
+   - `ProtocolError` base exception class
+   - Convenience classes: `SessionNotFoundError`, `SessionBusyError`, `ToolNotFoundError`, `ValidationError`
+
+3. ✅ Event converters between protocols
+   - `acp_event_to_server_event()` - ACP → ServerEvent
+   - `server_event_to_acp_event()` - ServerEvent → ACP
+   - `server_event_to_ws_message()` - ServerEvent → WebSocket
+   - `ws_message_to_server_event()` - WebSocket → ServerEvent
+
+4. ✅ ProtocolAdapter class with unified interface
    ```python
-   # In src/amcp/protocol/
-   class ProtocolAdapter:
-       """Adapts between ACP, HTTP, and WebSocket protocols."""
-       
-       def from_acp_event(self, event: ACPEvent) -> ServerEvent:
-           ...
-       
-       def to_acp_event(self, event: ServerEvent) -> ACPEvent:
-           ...
+   from amcp.protocol import get_protocol_adapter
+   
+   adapter = get_protocol_adapter()
+   
+   # Convert ACP event
+   server_event = adapter.from_acp_event(acp_event, session_id)
+   
+   # Convert to WebSocket/SSE
+   ws_message = adapter.to_ws_message(server_event)
+   sse_data = adapter.to_sse_data(server_event)
+   
+   # Create events
+   event = adapter.create_message_event(session_id, content, done=False)
+   event = adapter.create_tool_start_event(session_id, tool_name, args)
    ```
 
-5. 🔲 Add comprehensive API documentation
-   - Update `docs/api/` with endpoint documentation
-   - Add usage examples for each protocol
-   - Document authentication (when added)
+5. ✅ TypeScript type generation
+   - Created `scripts/generate_types.py`
+   - Supports both npx-based and manual generation
+   - Usage: `python scripts/generate_types.py --server http://localhost:4096`
+
+6. ✅ Comprehensive API documentation
+   - `docs/api/README.md` - Full API reference with examples
+   - `docs/api/protocol-compatibility.md` - Protocol mapping guide
+   - HTTP REST, WebSocket, SSE, and ACP documentation
+   - Error codes and SDK usage examples
 
 **Deliverables**:
-- OpenAPI spec at `/openapi.json` ✅ (already exists)
-- TypeScript type definitions for web clients
-- Unified error handling across protocols
-- API documentation in `docs/api/`
+- ✅ OpenAPI spec at `/openapi.json`
+- ✅ TypeScript type generation script (`scripts/generate_types.py`)
+- ✅ Unified error handling via `amcp.protocol.ErrorCode`
+- ✅ API documentation in `docs/api/`
+- ✅ Protocol adapter in `amcp.protocol.ProtocolAdapter`
+
+**Tests Added**:
+- ✅ `tests/test_protocol.py` - 35+ tests covering:
+  - Error code HTTP status mapping
+  - Protocol error conversion (dict, HTTP, WebSocket)
+  - ACP ↔ ServerEvent conversions
+  - ServerEvent ↔ WebSocket conversions
+  - ProtocolAdapter methods
+  - Round-trip conversion tests
 
 ---
 

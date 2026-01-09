@@ -188,7 +188,6 @@ def serve_command(
         amcp attach http://localhost:4096   # Connect CLI to running server
     """
     from .server import run_server
-    from .server import run_server
 
     run_server(
         host=host,
@@ -324,6 +323,17 @@ def _attach_sync(
                 console.print("  /info         - Show session info")
                 console.print("  /tools        - List available tools")
                 console.print("  /agents       - List available agents")
+                console.print("  /cancel       - Cancel current operation in session")
+                console.print()
+                continue
+
+            if user_input.lower() == "/cancel":
+                try:
+                    with httpx.Client(timeout=5.0) as http:
+                        http.post(f"{base_url}/api/v1/sessions/{session_id}/cancel")
+                        console.print("[green]Cancel request sent.[/green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to send cancel request: {e}[/red]")
                 console.print()
                 continue
 
@@ -393,36 +403,54 @@ def _attach_sync(
                         refresh_per_second=10,
                         transient=False,
                     ) as live:
-                        for line in response.iter_lines():
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                                if data.get("type") == "chunk":
-                                    chunk = data.get("content", "")
-                                    full_response += chunk
-                                    live.update(Panel(Markdown(full_response), border_style="cyan"))
-                                elif data.get("type") == "tool_call":
-                                    # Show tool call indicator
-                                    tool_name = data.get("tool_name", "unknown")
-                                    live.update(
-                                        Panel(
-                                            Markdown(f"{full_response}\n\n🔧 *Calling tool: {tool_name}...*"),
-                                            border_style="cyan",
-                                        )
-                                    )
-                                elif data.get("type") == "error":
-                                    live.update(
-                                        Panel(
-                                            f"[red]Error: {data.get('error')}[/red]",
-                                            border_style="red",
-                                        )
-                                    )
-                                elif data.get("type") == "complete":
-                                    if full_response:
+                        try:
+                            for line in response.iter_lines():
+                                if not line:
+                                    continue
+                                try:
+                                    data = json.loads(line)
+                                    if data.get("type") == "chunk":
+                                        chunk = data.get("content", "")
+                                        full_response += chunk
                                         live.update(Panel(Markdown(full_response), border_style="cyan"))
-                            except json.JSONDecodeError:
-                                pass
+                                    elif data.get("type") == "tool_call":
+                                        # Show tool call indicator
+                                        tool_name = data.get("tool_name", "unknown")
+                                        live.update(
+                                            Panel(
+                                                Markdown(f"{full_response}\n\n🔧 *Calling tool: {tool_name}...*"),
+                                                border_style="cyan",
+                                            )
+                                        )
+                                    elif data.get("type") == "error":
+                                        live.update(
+                                            Panel(
+                                                f"[red]Error: {data.get('error')}[/red]",
+                                                border_style="red",
+                                            )
+                                        )
+                                    elif data.get("type") == "complete":
+                                        if full_response:
+                                            live.update(Panel(Markdown(full_response), border_style="cyan"))
+                                except json.JSONDecodeError:
+                                    pass
+                        except KeyboardInterrupt:
+                            # Handle cancellation
+                            live.update(
+                                Panel(
+                                    Markdown(f"{full_response}\n\n[yellow]Cancelling...[/yellow]"),
+                                    border_style="yellow",
+                                )
+                            )
+                            try:
+                                with httpx.Client(timeout=5.0) as cancel_http:
+                                    cancel_http.post(f"{base_url}/api/v1/sessions/{session_id}/cancel")
+                                    console.print("\n[yellow]Operation cancelled.[/yellow]")
+                            except Exception as e:
+                                console.print(f"\n[red]Failed to send cancel request: {e}[/red]")
+                            # Don't re-raise to keep the session alive
+                            continue
+
             except Exception as e:
                 console.print(f"[red]Request failed: {e}[/red]")
 
@@ -432,6 +460,7 @@ def _attach_sync(
             console.print("[green]Goodbye! 👋[/green]")
             break
         except KeyboardInterrupt:
+            # This handles Ctrl+C when not streaming (at the prompt)
             console.print("\n[yellow]Interrupted. Type /exit to quit.[/yellow]")
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")

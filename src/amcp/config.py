@@ -72,9 +72,26 @@ class ChatConfig:
 
 
 @dataclass
+class AuthConfig:
+    enabled: bool = False
+    api_keys: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ServerConfig:
+    """Configuration for AMCP Server."""
+
+    host: str = "127.0.0.1"
+    port: int = 4096
+    auth: AuthConfig = field(default_factory=AuthConfig)
+    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*", "tauri://localhost"])
+
+
+@dataclass
 class AMCPConfig:
     servers: dict[str, Server]
     chat: ChatConfig | None = None
+    server: ServerConfig | None = None
 
 
 _DEFAULT = {
@@ -82,6 +99,15 @@ _DEFAULT = {
         "exa": {
             "url": "https://mcp.exa.ai/mcp",
         }
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 4096,
+        "auth": {
+            "enabled": False,
+            "api_keys": [],
+        },
+        "cors_origins": ["http://localhost:*", "tauri://localhost"],
     },
     "chat": {
         "base_url": "https://inference.baseten.co/v1",

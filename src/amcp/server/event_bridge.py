@@ -179,6 +179,109 @@ class EventBridge:
         )
         await self._broadcast_event(session_id, event)
 
+    # =========================================================================
+    # Collaboration Events (Real-time sync for multi-client)
+    # =========================================================================
+
+    async def emit_prompt_received(
+        self,
+        session_id: str,
+        content: str,
+        sender_client_id: str | None = None,
+        priority: str = "normal",
+    ) -> None:
+        """Emit a prompt received event (notify other clients).
+
+        This notifies all connected clients when a prompt is received,
+        enabling real-time collaboration sync.
+
+        Args:
+            session_id: The session ID.
+            content: The prompt content (truncated for privacy).
+            sender_client_id: Optional ID of the sending client.
+            priority: The prompt priority.
+        """
+        # Truncate content to avoid exposing full prompts
+        truncated = content[:100] + "..." if len(content) > 100 else content
+
+        event = ServerEvent(
+            type=EventType.PROMPT_RECEIVED,
+            session_id=session_id,
+            payload={
+                "content_preview": truncated,
+                "content_length": len(content),
+                "sender_client_id": sender_client_id,
+                "priority": priority,
+            },
+        )
+        await self._broadcast_event(session_id, event)
+
+    async def emit_prompt_started(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> None:
+        """Emit a prompt started event (processing has begun).
+
+        Args:
+            session_id: The session ID.
+            message_id: ID of the message being processed.
+        """
+        event = ServerEvent(
+            type=EventType.PROMPT_STARTED,
+            session_id=session_id,
+            payload={
+                "message_id": message_id,
+            },
+        )
+        await self._broadcast_event(session_id, event)
+
+    async def emit_prompt_queued(
+        self,
+        session_id: str,
+        message_id: str,
+        position: int,
+    ) -> None:
+        """Emit a prompt queued event (added to queue due to busy session).
+
+        Args:
+            session_id: The session ID.
+            message_id: ID of the queued message.
+            position: Position in the queue.
+        """
+        event = ServerEvent(
+            type=EventType.PROMPT_QUEUED,
+            session_id=session_id,
+            payload={
+                "message_id": message_id,
+                "position": position,
+            },
+        )
+        await self._broadcast_event(session_id, event)
+
+    async def emit_prompt_rejected(
+        self,
+        session_id: str,
+        reason: str,
+        conflict_strategy: str = "reject",
+    ) -> None:
+        """Emit a prompt rejected event (rejected due to conflict).
+
+        Args:
+            session_id: The session ID.
+            reason: Reason for rejection.
+            conflict_strategy: The strategy that was in effect.
+        """
+        event = ServerEvent(
+            type=EventType.PROMPT_REJECTED,
+            session_id=session_id,
+            payload={
+                "reason": reason,
+                "conflict_strategy": conflict_strategy,
+            },
+        )
+        await self._broadcast_event(session_id, event)
+
     async def _broadcast_event(self, session_id: str | None, event: ServerEvent) -> None:
         """Broadcast an event to all relevant clients.
 
