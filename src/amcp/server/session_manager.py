@@ -347,7 +347,7 @@ class SessionManager:
         """
         session = await self.get_session(session_id)
         session.update_status(SessionStatus.CANCELLED)
-        session.agent.clear_queue()
+        await session.agent.clear_queue()
 
         self._emit_event(
             "session.cancelled",
@@ -465,6 +465,9 @@ class SessionManager:
                 system_prompt=agent_config.system_prompt,
                 max_steps=agent_config.max_steps,
                 tools=agent_config.tools,
+                exclude_tools=[],
+                model="",
+                base_url="",
             )
 
         # Fall back to default

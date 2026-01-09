@@ -97,12 +97,12 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
         )
 
     try:
-        result = await tool_func(**arguments)
+        result = tool_func.execute(**arguments)
 
         if isinstance(result, ToolResult):
             return {
                 "success": result.success,
-                "result": result.output,
+                "result": result.content,
                 "error": result.error,
             }
         else:

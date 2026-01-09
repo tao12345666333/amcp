@@ -45,7 +45,7 @@ async def create_session(request: CreateSessionRequest | None = None) -> Session
     session_manager = get_session_manager()
 
     try:
-        req = request or CreateSessionRequest()
+        req = request or CreateSessionRequest(cwd=None, agent_name=None)
         managed_session = await session_manager.create_session(
             cwd=req.cwd,
             agent_name=req.agent_name,

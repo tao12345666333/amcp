@@ -373,6 +373,7 @@ class EmbeddedClient(BaseClient):
         """
         from ..tools import (
             ApplyPatchTool,
+            BaseTool,
             BashTool,
             GrepTool,
             ReadFileTool,
@@ -382,7 +383,7 @@ class EmbeddedClient(BaseClient):
         )
 
         # Instantiate tools to get their specs
-        tool_classes = [
+        tool_classes: list[type[BaseTool]] = [
             ReadFileTool,
             WriteFileTool,
             BashTool,
@@ -392,7 +393,7 @@ class EmbeddedClient(BaseClient):
             TodoTool,
         ]
 
-        tools = []
+        tools: list[dict[str, Any]] = []
         for tool_cls in tool_classes:
             try:
                 tool = tool_cls()

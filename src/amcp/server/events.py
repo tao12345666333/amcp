@@ -119,7 +119,7 @@ async def event_generator(
     """
     try:
         # Send connected event
-        connected_event = {
+        connected_event: dict[str, Any] = {
             "type": EventType.CONNECTED.value,
             "session_id": session_id,
             "timestamp": datetime.now().isoformat(),

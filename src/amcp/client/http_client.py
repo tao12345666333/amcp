@@ -154,7 +154,7 @@ class HTTPClient(BaseClient):
                         details=error_data,
                     )
 
-                return response.json()
+                return dict(response.json())
 
             except httpx.TimeoutException as e:
                 if attempt == self._retry_attempts - 1:
@@ -243,7 +243,7 @@ class HTTPClient(BaseClient):
             List of session data dictionaries.
         """
         response = await self._request("GET", "/sessions")
-        return response.get("sessions", [])
+        return list(response.get("sessions", []))
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session.
@@ -323,7 +323,7 @@ class HTTPClient(BaseClient):
                 )
 
             result = response.json()
-            return result.get("response", "")
+            return str(result.get("response", ""))
 
         except (SessionNotFoundError, PromptError):
             raise
@@ -451,7 +451,7 @@ class HTTPClient(BaseClient):
             List of tool info dictionaries.
         """
         response = await self._request("GET", "/tools")
-        return response.get("tools", [])
+        return list(response.get("tools", []))
 
     async def list_agents(self) -> list[dict[str, Any]]:
         """List available agents.
@@ -460,4 +460,4 @@ class HTTPClient(BaseClient):
             List of agent info dictionaries.
         """
         response = await self._request("GET", "/agents")
-        return response.get("agents", [])
+        return list(response.get("agents", []))
