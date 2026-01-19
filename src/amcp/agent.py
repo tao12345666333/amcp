@@ -24,6 +24,12 @@ from .hooks import (
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
+from .permissions import (
+    PermissionDeniedError,
+    PermissionRejectedError,
+    PermissionRequest,
+    get_permission_manager,
+)
 from .project_rules import ProjectRulesLoader
 from .skills import get_skill_manager
 from .tools import ToolRegistry
@@ -97,6 +103,101 @@ class Agent:
         # If this is a new session (no existing history), reset the current conversation counter
         if not self.conversation_history:
             self._reset_current_conversation_tool_calls()
+
+        # Initialize permission manager with CLI confirmation callback
+        self._init_permission_callback()
+
+    def _init_permission_callback(self) -> None:
+        """Initialize the permission confirmation callback for CLI mode."""
+        pm = get_permission_manager()
+        pm.set_confirmation_callback(self._cli_permission_callback)
+
+    async def _cli_permission_callback(
+        self, request: PermissionRequest, result
+    ) -> str:
+        """CLI permission confirmation callback.
+
+        Asks the user to confirm tool execution in the terminal.
+
+        Args:
+            request: The permission request
+            result: The permission result with suggested patterns
+
+        Returns:
+            "once", "always", or "reject"
+        """
+        # Build description
+        tool_name = request.tool_name
+        description = f"[bold cyan]Tool:[/bold cyan] {tool_name}\n"
+
+        if tool_name == "bash":
+            description += f"[bold cyan]Command:[/bold cyan] {request.arguments.get('command', '')}\n"
+        elif tool_name in ("read_file", "write_file"):
+            description += f"[bold cyan]Path:[/bold cyan] {request.arguments.get('path', '')}\n"
+        elif tool_name == "apply_patch":
+            description += "[bold cyan]Files to modify:[/bold cyan]\n"
+            patch = request.arguments.get("patch", "")
+            for line in str(patch).split("\n"):
+                if "File:" in line:
+                    description += f"  - {line.split(':', 1)[-1].strip()}\n"
+
+        if result.matched_rule:
+            description += f"[dim]Matched rule: {result.matched_rule.permission} / {result.matched_rule.pattern}[/dim]\n"
+
+        if result.message:
+            description += f"[dim]{result.message}[/dim]\n"
+
+        self.console.print()
+        self.console.print("[bold yellow]⚠️  Permission Required[/bold yellow]")
+        self.console.print(description)
+
+        # Show options
+        self.console.print("[bold]Options:[/bold]")
+        self.console.print("  [green]y[/green] - Allow once")
+        self.console.print("  [cyan]a[/cyan] - Always allow this pattern")
+        self.console.print("  [red]n[/red] - Reject")
+
+        if result.always_patterns:
+            self.console.print(f"  [dim]'Always' will remember: {result.always_patterns[0]}[/dim]")
+
+        self.console.print()
+
+        # Use prompt_toolkit's async prompt to avoid event loop conflicts
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.validation import ValidationError, Validator
+
+        class YANValidator(Validator):
+            def validate(self, document):
+                text = document.text.strip().lower()
+                if text and text not in ("y", "a", "n"):
+                    raise ValidationError(message="Please enter 'y', 'a', or 'n'")
+
+        try:
+            pt_session: PromptSession[str] = PromptSession()
+            response = await pt_session.prompt_async(
+                "Allow this operation? [y/a/n] (y): ",
+                validator=YANValidator(),
+                validate_while_typing=False,
+            )
+            response = response.strip().lower()
+
+            if response == "":
+                response = "y"  # Default
+        except (EOFError, KeyboardInterrupt):
+            self.console.print("[red]Cancelled[/red]")
+            return "reject"
+
+        # Print the user's choice so it's preserved in terminal history
+        choice_text = {"y": "Allow once", "a": "Always allow", "n": "Reject"}
+        choice_color = {"y": "green", "a": "cyan", "n": "red"}
+        self.console.print(f"[{choice_color[response]}]→ {choice_text[response]}[/{choice_color[response]}]")
+
+        if response == "y":
+            return "once"
+        elif response == "a":
+            return "always"
+        else:
+            return "reject"
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
@@ -766,6 +867,55 @@ class Agent:
                         # Apply any input updates from hooks
                         if pre_hook_output.updated_input:
                             args = {**args, **pre_hook_output.updated_input}
+
+                        # Check permission before executing tool
+                        # Stop status animation to allow user input
+                        status.stop()
+                        try:
+                            permission_request = PermissionRequest(
+                                tool_name=tool_name,
+                                arguments=args,
+                                session_id=self.session_id,
+                                metadata={"tool_call_id": tool_id},
+                                request_id=tool_id,
+                            )
+                            pm = get_permission_manager()
+                            await pm.check_permission(permission_request)
+                            # Resume status animation after permission granted
+                            status.start()
+                        except PermissionDeniedError as e:
+                            # Permission denied by rule
+                            status.start()  # Resume status before continuing
+                            tool_result_text = f"Permission denied: {e}"
+                            block = live_ui.add_tool(tool_name, args)
+                            live_ui.finish_tool(block, success=False, result=tool_result_text)
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": resp.content or "",
+                                    "tool_calls": [
+                                        {
+                                            "id": tool_id,
+                                            "type": "function",
+                                            "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
+                                        }
+                                    ],
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name,
+                                    "content": tool_result_text,
+                                }
+                            )
+                            continue
+                        except PermissionRejectedError:
+                            # User rejected - stop execution
+                            status.start()  # Resume status before returning
+                            status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Operation cancelled by user")
+                            return "Operation cancelled by user."
 
                         # Record tool call
                         tool_call_record = {

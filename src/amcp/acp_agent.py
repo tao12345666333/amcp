@@ -59,6 +59,13 @@ from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .config import load_config
 from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
+from .permissions import (
+    PermissionDeniedError,
+    PermissionRejectedError,
+    PermissionRequest,
+    PermissionResult,
+    get_permission_manager,
+)
 from .tools import ToolResult, get_tool_registry
 
 # Session modes - single full permission mode
@@ -121,6 +128,9 @@ class AMCPAgent(Agent):
         self._sessions: dict[str, ACPSession] = {}
         self._cancelled_sessions: set[str] = set()
         self._client_capabilities: ClientCapabilities | None = None
+        # Initialize permission manager
+        self._permission_manager = get_permission_manager()
+        self._permission_manager.set_confirmation_callback(self._permission_callback)
 
     def on_connect(self, conn: Client) -> None:
         self._conn = conn
@@ -508,7 +518,60 @@ class AMCPAgent(Agent):
                 args = json.loads(tc["arguments"] or "{}")
                 tool_call_id = f"call_{uuid4().hex[:8]}"
 
-                # Full permission mode - no permission request needed
+                # Check permissions before executing
+                permission_request = PermissionRequest(
+                    tool_name=tool_name,
+                    arguments=args,
+                    session_id=session.session_id,
+                    metadata={"tool_call_id": tool_call_id},
+                    request_id=tool_call_id,
+                )
+
+                try:
+                    await self._permission_manager.check_permission(permission_request)
+                except PermissionDeniedError as e:
+                    # Permission denied by rule - report to model and continue
+                    if self._conn:
+                        await self._conn.session_update(
+                            session_id=session.session_id,
+                            update=start_tool_call(
+                                tool_call_id=tool_call_id,
+                                title=f"Blocked: {tool_name}",
+                                kind=self._get_tool_kind(tool_name),  # type: ignore[arg-type]
+                            ),
+                        )
+                        await self._conn.session_update(
+                            session_id=session.session_id,
+                            update=update_tool_call(
+                                tool_call_id=tool_call_id,
+                                status="failed",
+                                content=[{"type": "content", "content": text_block(f"Permission denied: {e}")}],  # type: ignore[list-item]
+                            ),
+                        )
+                    result = f"Permission denied: {e}"
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": resp.content or "",
+                            "tool_calls": [
+                                {
+                                    "id": tc["id"],
+                                    "type": "function",
+                                    "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
+                                }
+                            ],  # type: ignore[dict-item]
+                        }
+                    )
+                    messages.append({"role": "tool", "tool_call_id": tc["id"], "name": tool_name, "content": result})
+                    continue
+                except PermissionRejectedError:
+                    # User rejected - stop execution
+                    if self._conn:
+                        await self._conn.session_update(
+                            session_id=session.session_id,
+                            update=update_agent_message(text_block("Operation cancelled by user.")),
+                        )
+                    return "Operation cancelled by user."
 
                 if self._conn:
                     await self._conn.session_update(
@@ -550,32 +613,93 @@ class AMCPAgent(Agent):
 
         return "Maximum steps reached. Please try a simpler request."
 
-    async def _request_permission(
-        self, session: ACPSession, tool_call_id: str, tool_name: str, args: dict[str, Any]
-    ) -> bool:
-        """Request permission from user for tool execution."""
+    async def _permission_callback(
+        self, request: PermissionRequest, result: PermissionResult
+    ) -> str:
+        """Permission confirmation callback for the permission manager.
+
+        This method is called when a tool requires user confirmation.
+        It uses the ACP permission request protocol to ask the user.
+
+        Args:
+            request: The permission request
+            result: The permission result with suggested patterns
+
+        Returns:
+            "once", "always", or "reject"
+        """
         if not self._conn:
-            return True
+            return "once"  # Non-interactive mode, allow
+
+        session = self._sessions.get(request.session_id)
+        if not session:
+            return "once"
 
         from acp.schema import PermissionOption, PermissionOptionKind, ToolCallUpdate
 
+        tool_call_id = request.request_id or f"perm_{uuid4().hex[:8]}"
+
         try:
+            # Build permission options
+            options = [
+                PermissionOption(
+                    option_id="once",
+                    name="Allow Once",
+                    kind=PermissionOptionKind.allow_once,  # type: ignore[attr-defined]
+                ),
+                PermissionOption(
+                    option_id="always",
+                    name="Always Allow",
+                    kind=PermissionOptionKind.allow_always,  # type: ignore[attr-defined]
+                ),
+                PermissionOption(
+                    option_id="reject",
+                    name="Reject",
+                    kind=PermissionOptionKind.reject_once,  # type: ignore[attr-defined]
+                ),
+            ]
+
+            # Build description with matched rule info
+            description = f"Tool: {request.tool_name}\n"
+            if request.tool_name == "bash":
+                description += f"Command: {request.arguments.get('command', '')}\n"
+            elif request.tool_name in ("read_file", "write_file"):
+                description += f"Path: {request.arguments.get('path', '')}\n"
+            elif request.tool_name == "apply_patch":
+                description += "Files to modify:\n"
+                patch = request.arguments.get("patch", "")
+                for line in patch.split("\n"):
+                    if line.startswith("*** ") and "File:" in line:
+                        description += f"  - {line.split(':', 1)[-1].strip()}\n"
+
+            if result.matched_rule:
+                description += f"\nMatched rule: {result.matched_rule.permission} / {result.matched_rule.pattern}"
+
+            if result.always_patterns:
+                description += f"\n\n'Always Allow' will remember: {result.always_patterns[0]}"
+
             response = await self._conn.request_permission(
                 session_id=session.session_id,
                 tool_call=ToolCallUpdate(  # type: ignore[call-arg]
                     session_update="tool_call_update",
                     tool_call_id=tool_call_id,
-                    title=f"Execute {tool_name}",
+                    title=f"Permission: {request.tool_name}",
                     status="pending",
+                    content=[{"type": "content", "content": text_block(description)}],  # type: ignore[list-item]
                 ),
-                options=[
-                    PermissionOption(option_id="allow", name="Allow", kind=PermissionOptionKind.allow_once),  # type: ignore[attr-defined]
-                    PermissionOption(option_id="reject", name="Reject", kind=PermissionOptionKind.reject_once),  # type: ignore[attr-defined]
-                ],
+                options=options,
             )
-            return response.outcome.outcome == "selected" and response.outcome.option_id == "allow"
+
+            if response.outcome.outcome == "selected":
+                option_id = response.outcome.option_id
+                if option_id in ("once", "always", "reject"):
+                    return option_id
+
+            return "reject"
+
         except Exception:
-            return True
+            # If permission request fails, allow (fail-open for usability)
+            return "once"
 
     def _get_system_prompt(self, session: ACPSession) -> str:
         """Get system prompt with context."""

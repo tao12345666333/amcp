@@ -560,6 +560,70 @@ def _init_builtin_commands(manager: CommandManager) -> None:
     manager.register_builtin(_make_exit_command())
     manager.register_builtin(_make_info_command())
     manager.register_builtin(_make_skills_command(None))
+    manager.register_builtin(_make_mode_command())
+
+
+def _make_mode_command() -> SlashCommand:
+    """Create the /mode command for permission mode switching."""
+
+    def mode_action(context: CommandContext, args: str) -> CommandResult:
+        from .permissions import PermissionMode, get_permission_manager
+
+        pm = get_permission_manager()
+        args = args.strip().lower()
+
+        # Show current mode if no args
+        if not args:
+            # Get session ID from context metadata if available
+            # For now, show the default mode
+            current = pm.get_default_mode()
+            modes_info = """**Permission Modes:**
+- `normal`: Follow configured rules (default)
+- `yolo`: Auto-allow all operations (dangerous!)
+- `strict`: Require confirmation for everything
+
+**Current mode:** `{mode}`
+
+Usage: `/mode <normal|yolo|strict>`"""
+            return CommandResult(
+                type="message",
+                content=modes_info.format(mode=current.value),
+            )
+
+        # Set mode
+        mode_map = {
+            "normal": PermissionMode.NORMAL,
+            "yolo": PermissionMode.YOLO,
+            "strict": PermissionMode.STRICT,
+        }
+
+        if args not in mode_map:
+            return CommandResult(
+                type="message",
+                content=f"Unknown mode: `{args}`. Use `normal`, `yolo`, or `strict`.",
+                message_type="error",
+            )
+
+        new_mode = mode_map[args]
+        pm.set_default_mode(new_mode)
+
+        emoji = {"normal": "⚖️", "yolo": "🚀", "strict": "🔒"}.get(args, "")
+        warning = ""
+        if new_mode == PermissionMode.YOLO:
+            warning = "\n\n⚠️ **Warning:** All operations will be auto-allowed without confirmation!"
+
+        return CommandResult(
+            type="message",
+            content=f"{emoji} Permission mode set to `{args}`.{warning}",
+            message_type="success",
+        )
+
+    return SlashCommand(
+        name="mode",
+        description="Set permission mode: /mode [normal|yolo|strict]",
+        kind=CommandKind.BUILT_IN,
+        action=mode_action,
+    )
 
 
 def reset_command_manager() -> None:

@@ -88,10 +88,32 @@ class ServerConfig:
 
 
 @dataclass
+class PermissionsConfig:
+    """Configuration for AMCP Permissions System.
+
+    Permissions control which tools and commands can be executed.
+
+    Example:
+        permissions:
+            '*': 'allow'  # Global default
+            bash: 'ask'    # Bash commands require confirmation
+
+        permissions.bash:
+            '*': 'ask'
+            'git *': 'allow'
+            'rm *': 'deny'
+    """
+
+    # Raw permissions data - parsed by PermissionManager
+    rules: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AMCPConfig:
     servers: dict[str, Server]
     chat: ChatConfig | None = None
     server: ServerConfig | None = None
+    permissions: PermissionsConfig | None = None
 
 
 _DEFAULT = {
@@ -120,6 +142,21 @@ _DEFAULT = {
         # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
+    },
+    # Default permissions - see docs/permissions.md for details
+    "permissions": {
+        # Read-only operations default to allow
+        "read_file": "allow",
+        "grep": "allow",
+        "think": "allow",
+        "todo": "allow",
+        # Write operations require confirmation by default
+        "bash": "ask",
+        "write_file": "ask",
+        "apply_patch": "ask",
+        "task": "ask",
+        # MCP tools require confirmation
+        "mcp.*": "ask",
     },
 }
 
@@ -197,13 +234,35 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     )
 
 
+def _decode_permissions(raw: Mapping[str, object] | None) -> PermissionsConfig | None:
+    """Decode permissions section from TOML.
+
+    The permissions section supports:
+    - Simple rules: permission = "action"
+    - Nested rules: [permissions.bash] with pattern = "action"
+    - Delegate rules: permission = { action = "delegate", to = "program" }
+    """
+    if not raw:
+        return None
+
+    # Store raw rules for the PermissionManager to parse
+    rules: dict[str, Any] = {}
+    for key, value in raw.items():
+        rules[key] = value
+
+    return PermissionsConfig(rules=rules)
+
+
 def load_config() -> AMCPConfig:
     data: dict[str, Any] = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else _DEFAULT
     servers_data = data.get("servers", {})
     servers = {name: _decode_server(name, raw) for name, raw in servers_data.items() if isinstance(raw, dict)}
     chat_data = data.get("chat")
     chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
-    return AMCPConfig(servers=servers, chat=chat)
+    # Load permissions
+    permissions_data = data.get("permissions")
+    permissions = _decode_permissions(permissions_data) if isinstance(permissions_data, dict) else None
+    return AMCPConfig(servers=servers, chat=chat, permissions=permissions)
 
 
 def _encode_server(s: Server) -> dict:
