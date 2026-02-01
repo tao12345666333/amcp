@@ -94,140 +94,6 @@ app.add_typer(mcp, name="mcp")
 acp = typer.Typer(help="ACP (Agent Client Protocol) utilities")
 app.add_typer(acp, name="acp")
 
-permissions = typer.Typer(help="Manage permission rules")
-app.add_typer(permissions, name="permissions")
-
-
-@permissions.command("list", help="List current permission rules")
-def permissions_list() -> None:
-    """List all configured permission rules."""
-    from .permissions import get_permission_manager
-
-    pm = get_permission_manager()
-    rules = pm.get_rules()
-
-    table = Table(title="Permission Rules")
-    table.add_column("Permission", style="cyan")
-    table.add_column("Pattern", style="green")
-    table.add_column("Action", style="magenta")
-    table.add_column("Delegate To", style="yellow")
-
-    for rule in rules:
-        delegate = rule.delegate_to or ""
-        action_style = {
-            "allow": "green",
-            "ask": "yellow",
-            "deny": "red",
-            "delegate": "blue",
-        }.get(rule.action.value, "white")
-        table.add_row(
-            rule.permission,
-            rule.pattern,
-            f"[{action_style}]{rule.action.value}[/{action_style}]",
-            delegate,
-        )
-
-    console.print(table)
-    console.print()
-    console.print(f"[dim]Total: {len(rules)} rules[/dim]")
-
-
-@permissions.command("test", help="Test a permission rule without executing")
-def permissions_test(
-    tool: Annotated[str, typer.Argument(help="Tool name to test (e.g., 'bash', 'read_file')")],
-    cmd: Annotated[str | None, typer.Option("--cmd", help="Command to test (for bash tool)")] = None,
-    path: Annotated[str | None, typer.Option("--path", help="Path to test (for file tools)")] = None,
-    pattern: Annotated[str | None, typer.Option("--pattern", help="Pattern to test (for grep tool)")] = None,
-) -> None:
-    """Test if a tool invocation would be allowed, denied, or require confirmation."""
-    from .permissions import get_permission_manager
-
-    pm = get_permission_manager()
-
-    # Build arguments based on tool type
-    arguments: dict[str, str] = {}
-    if tool == "bash" and cmd:
-        arguments["command"] = cmd
-    elif tool in ("read_file", "write_file") and path:
-        arguments["path"] = path
-    elif tool == "grep" and pattern:
-        arguments["pattern"] = pattern
-    elif tool == "apply_patch" and path:
-        arguments["patch"] = f"*** Update File: {path}"
-
-    result = pm.test_permission(tool, arguments)
-
-    console.print("[bold]Permission Test Result[/bold]")
-    console.print(f"  Tool: {tool}")
-    console.print(f"  Arguments: {json.dumps(arguments)}")
-
-    action_style = {
-        "allow": "green",
-        "ask": "yellow",
-        "deny": "red",
-        "delegate": "blue",
-    }.get(result.action.value, "white")
-    console.print(f"  Action: [{action_style}]{result.action.value}[/{action_style}]")
-
-    if result.matched_rule:
-        console.print(f"  Matched Rule: {result.matched_rule.permission} / {result.matched_rule.pattern}")
-    else:
-        console.print("  Matched Rule: (default)")
-
-    if result.always_patterns:
-        console.print(f"  Suggested 'Always Allow' pattern: {result.always_patterns[0]}")
-
-
-@permissions.command("edit", help="Edit permission rules in your config file")
-def permissions_edit() -> None:
-    """Open the config file in your editor for editing permissions."""
-    from .config import CONFIG_FILE
-
-    editor = os.environ.get("EDITOR", "nano")
-
-    if not CONFIG_FILE.exists():
-        # Create with default permissions
-        save_default_config()
-        console.print(f"[green]Created default config file: {CONFIG_FILE}[/green]")
-
-    console.print(f"[dim]Opening {CONFIG_FILE} in {editor}...[/dim]")
-    console.print()
-    console.print("[bold]Permissions Configuration Guide[/bold]")
-    console.print("  [permissions]")
-    console.print('  read_file = "allow"    # Allow all file reads')
-    console.print('  bash = "ask"           # Ask before running shell commands')
-    console.print()
-    console.print("  [permissions.bash]")
-    console.print('  "*" = "ask"            # Default: ask for confirmation')
-    console.print('  "git *" = "allow"      # Allow git commands')
-    console.print('  "rm *" = "deny"        # Block rm commands')
-    console.print()
-    console.print("See docs/permissions.md for full documentation.")
-    console.print()
-
-    subprocess.run([editor, str(CONFIG_FILE)])
-
-
-@permissions.command("reset", help="Reset permissions to defaults")
-def permissions_reset(
-    confirm: Annotated[
-        bool,
-        typer.Option("--yes", "-y", help="Skip confirmation prompt"),
-    ] = False,
-) -> None:
-    """Reset permission rules to defaults."""
-    from .permissions import reset_permission_manager
-
-    if not confirm:
-        console.print("[yellow]This will reset all permission rules to defaults.[/yellow]")
-        response = typer.prompt("Are you sure? (yes/no)", default="no")
-        if response.lower() != "yes":
-            console.print("[dim]Cancelled.[/dim]")
-            return
-
-    reset_permission_manager()
-    console.print("[green]Permissions reset to defaults.[/green]")
-
 
 @acp.command("serve", help="Run AMCP as an ACP-compliant agent server (stdio transport)")
 def acp_serve(
@@ -654,23 +520,12 @@ def main(
     list_sessions: Annotated[
         bool, typer.Option("--list-sessions", help="List available conversation sessions")
     ] = False,
-    yolo_mode: Annotated[
-        bool, typer.Option("--yolo", help="YOLO mode: auto-allow all operations without confirmation (dangerous!)")
-    ] = False,
 ) -> None:
     """Enhanced agent chat with improved tool management and context awareness."""
 
     # If a subcommand is invoked, don't run the agent
     if ctx.invoked_subcommand is not None:
         return
-
-    # Set YOLO mode if requested
-    if yolo_mode:
-        from .permissions import PermissionMode, get_permission_manager
-        pm = get_permission_manager()
-        pm.set_default_mode(PermissionMode.YOLO)
-        console.print("[bold yellow]🚀 YOLO mode enabled! All operations will be auto-allowed.[/bold yellow]")
-        console.print()
 
     # Handle list agent types
     if list_agent_types:

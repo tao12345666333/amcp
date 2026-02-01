@@ -23,7 +23,6 @@ A Lego-style coding agent CLI with built-in tools (grep, read files, bash execut
 - **Multi-Agent System**: Primary/Subagent architecture with built-in agent types (coder, explorer, planner)
 - **Event Bus**: Publish/subscribe system for agent communication and extensibility
 - **Hooks System**: Extensible hooks for tool validation, logging, and custom behaviors
-- **Permission System**: Fine-grained control over tool and command execution (allow, ask, deny)
 
 ## Installation
 
@@ -226,61 +225,6 @@ command = "echo 'Tool executed' >> /tmp/tool_log.txt"
 ```
 
 See [docs/hooks.md](docs/hooks.md) for full documentation.
-
-## Permission System
-
-AMCP provides a flexible permission system to control which tools and commands can be executed. This allows you to:
-- **Allow**: Automatically permit specific operations
-- **Ask**: Require user confirmation before executing
-- **Deny**: Block dangerous operations entirely
-
-### Configuration
-
-Add permissions to your `~/.config/amcp/config.toml`:
-
-```toml
-[permissions]
-# Read-only tools are allowed by default
-read_file = "allow"
-grep = "allow"
-
-# Write operations require confirmation
-bash = "ask"
-write_file = "ask"
-
-# MCP tools require confirmation
-"mcp.*" = "ask"
-
-[permissions.bash]
-# Fine-grained bash command rules
-"*" = "ask"           # Default: ask for confirmation
-"git *" = "allow"     # Allow git commands
-"rm *" = "deny"       # Block rm commands
-"sudo *" = "deny"     # Block sudo
-```
-
-### CLI Commands
-
-```bash
-# List current permission rules
-amcp permissions list
-
-# Test a permission rule
-amcp permissions test bash --cmd "git status"
-amcp permissions test read_file --path ".env"
-
-# Edit permissions in your config
-amcp permissions edit
-```
-
-### Default Security
-
-By default, AMCP protects sensitive files:
-- `.env` files are blocked from reading
-- Write operations require confirmation
-- MCP tools require confirmation
-
-See [docs/permissions.md](docs/permissions.md) for full documentation.
 
 ## Development
 
