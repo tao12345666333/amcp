@@ -70,15 +70,24 @@ class SkillManager:
         root = project_root or Path.cwd()
         return root / ".amcp" / "skills"
 
+    @staticmethod
+    def get_agents_skills_dir(project_root: Path | None = None) -> Path:
+        """Get the agents-level skills directory."""
+        root = project_root or Path.cwd()
+        return root / ".agents" / "skills"
+
     def clear_skills(self) -> None:
         """Clear all discovered skills."""
         self._skills = []
 
     def discover_skills(self, project_root: Path | None = None) -> None:
         """
-        Discover skills from standard user and project locations.
+        Discover skills from standard user, agents, and project locations.
 
-        Project skills take precedence over user skills with the same name.
+        Precedence (highest to lowest):
+        1. Project skills (.amcp/skills)
+        2. Agents skills (.agents/skills)
+        3. User skills (~/.config/amcp/skills)
 
         Args:
             project_root: The project root directory (defaults to cwd)
@@ -89,6 +98,11 @@ class SkillManager:
         user_skills_dir = self.get_user_skills_dir()
         user_skills = self._discover_skills_from_dir(user_skills_dir)
         self._add_skills_with_precedence(user_skills)
+
+        # Discover agents skills
+        agents_skills_dir = self.get_agents_skills_dir(project_root)
+        agents_skills = self._discover_skills_from_dir(agents_skills_dir)
+        self._add_skills_with_precedence(agents_skills)
 
         # Discover project skills (takes precedence)
         project_skills_dir = self.get_project_skills_dir(project_root)
