@@ -174,3 +174,81 @@ class TestGlobalSkillManager:
         reset_skill_manager()
         sm2 = get_skill_manager()
         assert sm1 is not sm2
+
+    def test_agents_skills_discovery(self, skill_manager: SkillManager, temp_skills_dir: Path):
+        """Test discovering skills from .agents/skills directory."""
+        # Setup .agents/skills
+        agents_skills_dir = temp_skills_dir / ".agents" / "skills"
+        agents_skills_dir.mkdir(parents=True)
+
+        skill_dir = agents_skills_dir / "agent-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("""---
+name: agent-skill
+description: Skill from agents dir
+---
+Agent skill body""")
+
+        # Discover with project root as temp_skills_dir
+        skill_manager.discover_skills(temp_skills_dir)
+
+        skills = skill_manager.get_all_skills()
+        skill_names = [s.name for s in skills]
+        assert "agent-skill" in skill_names
+
+        skill = skill_manager.get_skill("agent-skill")
+        assert skill.description == "Skill from agents dir"
+
+    def test_skills_precedence(self, skill_manager: SkillManager, temp_skills_dir: Path, monkeypatch):
+        """Test precedence: .amcp > .agents > user"""
+
+        # Setup user skills dir
+        user_config_dir = temp_skills_dir / "user_config"
+        user_skills_dir = user_config_dir / "skills"
+        monkeypatch.setattr("amcp.skills.CONFIG_DIR", user_config_dir)
+
+        # Setup .agents/skills dir
+        agents_skills_dir = temp_skills_dir / ".agents" / "skills"
+
+        # Setup .amcp/skills dir
+        project_skills_dir = temp_skills_dir / ".amcp" / "skills"
+
+        # Create directories
+        for d in [user_skills_dir, agents_skills_dir, project_skills_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+        # 1. Create skill in user dir
+        (user_skills_dir / "common-skill").mkdir()
+        (user_skills_dir / "common-skill" / "SKILL.md").write_text("""---
+name: common-skill
+description: User version
+---
+User body""")
+
+        skill_manager.discover_skills(temp_skills_dir)
+        skill = skill_manager.get_skill("common-skill")
+        assert skill.description == "User version"
+
+        # 2. Create skill in agents dir (should override user)
+        (agents_skills_dir / "common-skill").mkdir()
+        (agents_skills_dir / "common-skill" / "SKILL.md").write_text("""---
+name: common-skill
+description: Agents version
+---
+Agents body""")
+
+        skill_manager.discover_skills(temp_skills_dir)
+        skill = skill_manager.get_skill("common-skill")
+        assert skill.description == "Agents version"
+
+        # 3. Create skill in project dir (should override agents)
+        (project_skills_dir / "common-skill").mkdir()
+        (project_skills_dir / "common-skill" / "SKILL.md").write_text("""---
+name: common-skill
+description: Project version
+---
+Project body""")
+
+        skill_manager.discover_skills(temp_skills_dir)
+        skill = skill_manager.get_skill("common-skill")
+        assert skill.description == "Project version"
