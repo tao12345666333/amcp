@@ -7,9 +7,10 @@ markdown files with YAML frontmatter containing:
 - name: The skill name
 - description: A brief description of what the skill provides
 
-Skills are discovered from:
+Skills are discovered from (in order of increasing precedence):
+- Built-in skills: Bundled with AMCP (e.g., skill-creator)
 - User skills: ~/.config/amcp/skills/<skill-name>/SKILL.md
-- Project skills: .amcp/skills/<skill-name>/SKILL.md (takes precedence)
+- Project skills: .amcp/skills/<skill-name>/SKILL.md (highest precedence)
 """
 
 from __future__ import annotations
@@ -51,8 +52,10 @@ class SkillManager:
     """
     Manages the discovery and lifecycle of skills.
 
-    Skills can be discovered from user-level and project-level directories.
-    Project skills take precedence over user skills with the same name.
+    Skills are discovered from three sources (lowest to highest precedence):
+    - Built-in skills: Bundled with AMCP
+    - User-level skills: ~/.config/amcp/skills/
+    - Project-level skills: .amcp/skills/
     """
 
     _skills: list[SkillMetadata] = field(default_factory=list)
@@ -80,31 +83,44 @@ class SkillManager:
         """Clear all discovered skills."""
         self._skills = []
 
+    @staticmethod
+    def get_builtin_skills_dir() -> Path:
+        """Get the built-in skills directory (bundled with AMCP)."""
+        from .builtin_skills import BUILTIN_SKILLS_DIR
+
+        return BUILTIN_SKILLS_DIR
+
     def discover_skills(self, project_root: Path | None = None) -> None:
         """
-        Discover skills from standard user, agents, and project locations.
+        Discover skills from all sources.
 
-        Precedence (highest to lowest):
-        1. Project skills (.amcp/skills)
-        2. Agents skills (.agents/skills)
-        3. User skills (~/.config/amcp/skills)
+        Discovery order (lowest to highest precedence):
+        1. Built-in skills (bundled with AMCP)
+        2. User skills (~/.config/amcp/skills/)
+        3. Agents skills (.agents/skills/)
+        4. Project skills (.amcp/skills/) — highest precedence
 
         Args:
             project_root: The project root directory (defaults to cwd)
         """
         self.clear_skills()
 
-        # Discover user skills first
+        # Discover built-in skills first (lowest precedence)
+        builtin_skills_dir = self.get_builtin_skills_dir()
+        builtin_skills = self._discover_skills_from_dir(builtin_skills_dir)
+        self._add_skills_with_precedence(builtin_skills)
+
+        # Discover user skills (override built-in)
         user_skills_dir = self.get_user_skills_dir()
         user_skills = self._discover_skills_from_dir(user_skills_dir)
         self._add_skills_with_precedence(user_skills)
 
-        # Discover agents skills
+        # Discover agents skills (override user)
         agents_skills_dir = self.get_agents_skills_dir(project_root)
         agents_skills = self._discover_skills_from_dir(agents_skills_dir)
         self._add_skills_with_precedence(agents_skills)
 
-        # Discover project skills (takes precedence)
+        # Discover project skills (highest precedence)
         project_skills_dir = self.get_project_skills_dir(project_root)
         project_skills = self._discover_skills_from_dir(project_skills_dir)
         self._add_skills_with_precedence(project_skills)
@@ -275,6 +291,69 @@ class SkillManager:
             parts.append("")
 
         return "\n".join(parts)
+
+    def build_skills_summary(self) -> str:
+        """
+        Build a compact skills summary for the system prompt.
+
+        This implements progressive disclosure: only a compact summary
+        (name + description) is included in the system prompt. The full
+        skill body is only loaded when the skill is activated.
+
+        Returns:
+            Compact skills summary string, or empty string if no skills
+        """
+        skills = self.get_skills()
+        if not skills:
+            return ""
+
+        lines = []
+        lines.append("<skills>")
+        lines.append(
+            "You can use specialized 'skills' to help you with complex tasks. "
+            "Each skill has a name and a description listed below."
+        )
+        lines.append("")
+        lines.append(
+            "Skills are folders of instructions, scripts, and resources that extend "
+            "your capabilities for specialized tasks. Each skill folder contains:"
+        )
+        lines.append("- **SKILL.md** (required): The main instruction file with YAML frontmatter "
+                      "(name, description) and detailed markdown instructions")
+        lines.append("")
+        lines.append("More complex skills may include additional directories and files:")
+        lines.append("- **scripts/** - Helper scripts and utilities")
+        lines.append("- **references/** - Reference documentation")
+        lines.append("- **assets/** - Templates and other files")
+        lines.append("")
+        lines.append(
+            "If a skill seems relevant to your current task, activate it using "
+            "/skills activate <name> to load its full instructions."
+        )
+        lines.append("")
+
+        # List skills with their status
+        for skill in skills:
+            active_marker = " ⭐" if self.is_skill_active(skill.name) else ""
+            lines.append(f"- **{skill.name}**{active_marker}: {skill.description}")
+
+        lines.append("</skills>")
+        return "\n".join(lines)
+
+    def get_skill_content(self, name: str) -> str | None:
+        """
+        Get the full body content of a skill.
+
+        Args:
+            name: Skill name
+
+        Returns:
+            The skill body content, or None if not found
+        """
+        skill = self.get_skill(name)
+        if skill:
+            return skill.body
+        return None
 
 
 # Global skill manager instance
