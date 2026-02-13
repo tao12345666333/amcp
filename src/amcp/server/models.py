@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 # ============================================================================
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     """Session status."""
 
     IDLE = "idle"
@@ -22,7 +22,7 @@ class SessionStatus(str, Enum):
     ERROR = "error"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Server event types."""
 
     # Connection events
@@ -57,14 +57,14 @@ class EventType(str, Enum):
     PROMPT_REJECTED = "prompt.rejected"  # Prompt was rejected (conflict)
 
 
-class ConflictStrategy(str, Enum):
+class ConflictStrategy(StrEnum):
     """Strategy for handling concurrent prompts to a busy session."""
 
     QUEUE = "queue"  # Queue the prompt for later execution
     REJECT = "reject"  # Reject the prompt with an error
 
 
-class MessagePriority(str, Enum):
+class MessagePriority(StrEnum):
     """Message priority levels."""
 
     LOW = "low"

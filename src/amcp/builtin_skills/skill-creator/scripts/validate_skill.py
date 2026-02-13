@@ -105,7 +105,9 @@ def validate_skill(skill_dir: Path) -> list[str]:
         if desc.startswith("TODO"):
             errors.append("Description is still a placeholder (starts with TODO)")
         if len(desc) < 20:
-            errors.append(f"Description too short ({len(desc)} chars). Be specific about what the skill does and when to use it.")
+            errors.append(
+                f"Description too short ({len(desc)} chars). Be specific about what the skill does and when to use it."
+            )
 
     # Check body
     if not body:
@@ -114,13 +116,17 @@ def validate_skill(skill_dir: Path) -> list[str]:
     # Check body length
     body_lines = body.split("\n")
     if len(body_lines) > MAX_SKILL_LINES:
-        errors.append(f"SKILL.md body too long ({len(body_lines)} lines, max {MAX_SKILL_LINES}). Consider splitting into reference files.")
+        errors.append(
+            f"SKILL.md body too long ({len(body_lines)} lines, max {MAX_SKILL_LINES}). Consider splitting into reference files."
+        )
 
     # Check for extraneous files
     forbidden_files = {"README.md", "CHANGELOG.md", "INSTALLATION_GUIDE.md", "QUICK_REFERENCE.md"}
     for item in skill_dir.iterdir():
         if item.name in forbidden_files:
-            errors.append(f"Extraneous file: {item.name} (skills should only contain SKILL.md and resource directories)")
+            errors.append(
+                f"Extraneous file: {item.name} (skills should only contain SKILL.md and resource directories)"
+            )
 
     return errors
 

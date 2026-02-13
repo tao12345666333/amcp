@@ -318,8 +318,10 @@ class SkillManager:
             "Skills are folders of instructions, scripts, and resources that extend "
             "your capabilities for specialized tasks. Each skill folder contains:"
         )
-        lines.append("- **SKILL.md** (required): The main instruction file with YAML frontmatter "
-                      "(name, description) and detailed markdown instructions")
+        lines.append(
+            "- **SKILL.md** (required): The main instruction file with YAML frontmatter "
+            "(name, description) and detailed markdown instructions"
+        )
         lines.append("")
         lines.append("More complex skills may include additional directories and files:")
         lines.append("- **scripts/** - Helper scripts and utilities")
