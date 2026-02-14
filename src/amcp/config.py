@@ -92,9 +92,7 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 4096
     auth: AuthConfig = field(default_factory=AuthConfig)
-    cors_origins: list[str] = field(
-        default_factory=lambda: ["http://localhost:*", "tauri://localhost"]
-    )
+    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*", "tauri://localhost"])
 
 
 @dataclass
@@ -161,9 +159,7 @@ def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
     url = raw.get("url")
     url_s = str(url) if url is not None else None
     raw_headers = raw.get("headers")
-    headers = (
-        {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
-    )
+    headers = {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
     return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
 
 
@@ -205,9 +201,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     max_queue_size = raw.get("max_queue_size")
     # Model config
     raw_model_config = raw.get("model_config")
-    model_config = (
-        _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
-    )
+    model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
 
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
@@ -260,9 +254,7 @@ def _decode_telegram(raw: Mapping[str, object] | None) -> TelegramConfig | None:
     if "session_timeout" in raw and raw.get("session_timeout") is not None:
         cfg.session_timeout = int(str(raw.get("session_timeout")))
     notifications = raw.get("notifications")
-    cfg.notifications = _decode_telegram_notifications(
-        notifications if isinstance(notifications, dict) else None
-    )
+    cfg.notifications = _decode_telegram_notifications(notifications if isinstance(notifications, dict) else None)
     return cfg
 
 
@@ -272,11 +264,7 @@ def load_config() -> AMCPConfig:
     else:
         data = _DEFAULT
     servers_data = data.get("servers", {})
-    servers = {
-        name: _decode_server(name, raw)
-        for name, raw in servers_data.items()
-        if isinstance(raw, dict)
-    }
+    servers = {name: _decode_server(name, raw) for name, raw in servers_data.items() if isinstance(raw, dict)}
     chat_data = data.get("chat")
     chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
     telegram_data = data.get("telegram")

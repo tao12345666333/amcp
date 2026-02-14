@@ -271,10 +271,7 @@ class TelegramBot:
 
         memory_manager = get_memory_manager(self._work_dir)
         memory_manager.append_history(
-            content=(
-                f"[Telegram] User {message.user_id}: {message.text[:200]}\n"
-                f"Agent: {response_text[:300]}"
-            ),
+            content=(f"[Telegram] User {message.user_id}: {message.text[:200]}\nAgent: {response_text[:300]}"),
             session_id=session.session_id,
             tags=["telegram", "conversation"],
             scope="project",
@@ -295,9 +292,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("users", self._handlers.handle_users))
         application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
-        application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handlers.handle_text)
-        )
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handlers.handle_text))
         application.add_handler(MessageHandler(filters.COMMAND, self._handlers.handle_unknown))
         return application
 
@@ -354,16 +349,10 @@ class TelegramBot:
             return
         bus = get_event_bus()
         if self._config.notifications.task_completions:
-            self._notification_handler_ids.append(
-                bus.subscribe(EventType.TASK_COMPLETED, self._on_task_completed)
-            )
+            self._notification_handler_ids.append(bus.subscribe(EventType.TASK_COMPLETED, self._on_task_completed))
         if self._config.notifications.error_alerts:
-            self._notification_handler_ids.append(
-                bus.subscribe(EventType.AGENT_ERROR, self._on_agent_error)
-            )
-            self._notification_handler_ids.append(
-                bus.subscribe(EventType.TOOL_ERROR, self._on_tool_error)
-            )
+            self._notification_handler_ids.append(bus.subscribe(EventType.AGENT_ERROR, self._on_agent_error))
+            self._notification_handler_ids.append(bus.subscribe(EventType.TOOL_ERROR, self._on_tool_error))
 
     def _unregister_notifications(self) -> None:
         bus = get_event_bus()
@@ -375,12 +364,7 @@ class TelegramBot:
         description = event.data.get("description", "")
         duration = event.data.get("duration_ms", "")
         result = event.data.get("result", "")
-        message = (
-            "Task completed.\n"
-            f"Description: {description}\n"
-            f"Duration: {duration}\n"
-            f"Result: {str(result)[:500]}"
-        )
+        message = f"Task completed.\nDescription: {description}\nDuration: {duration}\nResult: {str(result)[:500]}"
         await self.send_notification(message)
 
     async def _on_agent_error(self, event: Any) -> None:
