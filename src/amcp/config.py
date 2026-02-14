@@ -13,6 +13,13 @@ except ModuleNotFoundError:  # pragma: no cover
 
 import tomli_w  # type: ignore
 
+from .telegram.config import (
+    TelegramConfig,
+    TelegramNotificationsConfig,
+    apply_env_overrides,
+    parse_user_ids,
+)
+
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
@@ -60,7 +67,8 @@ class ChatConfig:
     read_roots: list[str] | None = None  # list of allowed root paths for read_file
     # MCP tool exposure
     mcp_tools_enabled: bool | None = None
-    mcp_servers: list[str] | None = None  # which servers' tools to expose; if unset, expose all configured servers
+    mcp_servers: list[str] | None = None
+    # which servers' tools to expose; if unset, expose all configured servers
     # Built-in file modification tools
     write_tool_enabled: bool | None = None
     edit_tool_enabled: bool | None = None
@@ -84,7 +92,9 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 4096
     auth: AuthConfig = field(default_factory=AuthConfig)
-    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*", "tauri://localhost"])
+    cors_origins: list[str] = field(
+        default_factory=lambda: ["http://localhost:*", "tauri://localhost"]
+    )
 
 
 @dataclass
@@ -92,6 +102,7 @@ class AMCPConfig:
     servers: dict[str, Server]
     chat: ChatConfig | None = None
     server: ServerConfig | None = None
+    telegram: TelegramConfig | None = None
 
 
 _DEFAULT = {
@@ -121,6 +132,22 @@ _DEFAULT = {
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
     },
+    "telegram": {
+        "enabled": False,
+        "allowed_users": [],
+        "admin_users": [],
+        "webhook_mode": False,
+        "webhook_url": "",
+        "max_message_length": 4096,
+        "rate_limit_messages": 20,
+        "session_timeout": 3600,
+        "notifications": {
+            "ci_failures": True,
+            "pr_reviews": True,
+            "task_completions": True,
+            "error_alerts": True,
+        },
+    },
 }
 
 
@@ -134,7 +161,9 @@ def _decode_server(name: str, raw: Mapping[str, object]) -> Server:
     url = raw.get("url")
     url_s = str(url) if url is not None else None
     raw_headers = raw.get("headers")
-    headers = {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
+    headers = (
+        {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
+    )
     return Server(command=command_s, args=args, env=env, url=url_s, headers=headers)
 
 
@@ -176,7 +205,9 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     max_queue_size = raw.get("max_queue_size")
     # Model config
     raw_model_config = raw.get("model_config")
-    model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
+    model_config = (
+        _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
+    )
 
     return ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
@@ -197,13 +228,61 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     )
 
 
+def _decode_telegram_notifications(raw: Mapping[str, object] | None) -> TelegramNotificationsConfig:
+    if not raw:
+        return TelegramNotificationsConfig()
+    return TelegramNotificationsConfig(
+        ci_failures=bool(raw.get("ci_failures", True)),
+        pr_reviews=bool(raw.get("pr_reviews", True)),
+        task_completions=bool(raw.get("task_completions", True)),
+        error_alerts=bool(raw.get("error_alerts", True)),
+    )
+
+
+def _decode_telegram(raw: Mapping[str, object] | None) -> TelegramConfig | None:
+    if not raw:
+        return None
+    cfg = TelegramConfig()
+    if "enabled" in raw:
+        cfg.enabled = bool(raw.get("enabled"))
+    if "bot_token" in raw and raw.get("bot_token") is not None:
+        cfg.bot_token = str(raw.get("bot_token"))
+    cfg.allowed_users = parse_user_ids(raw.get("allowed_users"))
+    cfg.admin_users = parse_user_ids(raw.get("admin_users"))
+    if "webhook_mode" in raw:
+        cfg.webhook_mode = bool(raw.get("webhook_mode"))
+    if "webhook_url" in raw and raw.get("webhook_url") is not None:
+        cfg.webhook_url = str(raw.get("webhook_url"))
+    if "max_message_length" in raw and raw.get("max_message_length") is not None:
+        cfg.max_message_length = int(str(raw.get("max_message_length")))
+    if "rate_limit_messages" in raw and raw.get("rate_limit_messages") is not None:
+        cfg.rate_limit_messages = int(str(raw.get("rate_limit_messages")))
+    if "session_timeout" in raw and raw.get("session_timeout") is not None:
+        cfg.session_timeout = int(str(raw.get("session_timeout")))
+    notifications = raw.get("notifications")
+    cfg.notifications = _decode_telegram_notifications(
+        notifications if isinstance(notifications, dict) else None
+    )
+    return cfg
+
+
 def load_config() -> AMCPConfig:
-    data: dict[str, Any] = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else _DEFAULT
+    if CONFIG_FILE.exists():
+        data: dict[str, Any] = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    else:
+        data = _DEFAULT
     servers_data = data.get("servers", {})
-    servers = {name: _decode_server(name, raw) for name, raw in servers_data.items() if isinstance(raw, dict)}
+    servers = {
+        name: _decode_server(name, raw)
+        for name, raw in servers_data.items()
+        if isinstance(raw, dict)
+    }
     chat_data = data.get("chat")
     chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
-    return AMCPConfig(servers=servers, chat=chat)
+    telegram_data = data.get("telegram")
+    telegram = _decode_telegram(telegram_data) if isinstance(telegram_data, dict) else None
+    telegram = apply_env_overrides(telegram)
+    return AMCPConfig(servers=servers, chat=chat, telegram=telegram)
 
 
 def _encode_server(s: Server) -> dict:
@@ -280,12 +359,47 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
     return out
 
 
+def _encode_telegram_notifications(cfg: TelegramNotificationsConfig) -> dict:
+    return {
+        "ci_failures": bool(cfg.ci_failures),
+        "pr_reviews": bool(cfg.pr_reviews),
+        "task_completions": bool(cfg.task_completions),
+        "error_alerts": bool(cfg.error_alerts),
+    }
+
+
+def _encode_telegram(cfg: TelegramConfig | None) -> dict | None:
+    if cfg is None:
+        return None
+    out: dict[str, Any] = {
+        "enabled": bool(cfg.enabled),
+        "webhook_mode": bool(cfg.webhook_mode),
+        "max_message_length": int(cfg.max_message_length),
+        "rate_limit_messages": int(cfg.rate_limit_messages),
+        "session_timeout": int(cfg.session_timeout),
+    }
+    if cfg.bot_token:
+        out["bot_token"] = cfg.bot_token
+    if cfg.allowed_users:
+        out["allowed_users"] = list(cfg.allowed_users)
+    if cfg.admin_users:
+        out["admin_users"] = list(cfg.admin_users)
+    if cfg.webhook_url:
+        out["webhook_url"] = cfg.webhook_url
+    if cfg.notifications:
+        out["notifications"] = _encode_telegram_notifications(cfg.notifications)
+    return out if out else None
+
+
 def save_config(cfg: AMCPConfig) -> Path:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     data = {"servers": {name: _encode_server(s) for name, s in cfg.servers.items()}}
     chat_obj = _encode_chat(cfg.chat)
     if chat_obj is not None:
         data["chat"] = chat_obj
+    telegram_obj = _encode_telegram(cfg.telegram)
+    if telegram_obj is not None:
+        data["telegram"] = telegram_obj
     with open(CONFIG_FILE, "wb") as f:
         tomli_w.dump(data, f)
     return CONFIG_FILE

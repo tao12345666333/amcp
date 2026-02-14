@@ -41,6 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40.0"]
+telegram = ["python-telegram-bot>=21.0"]
 tui = [
   "batrachian-toad>=0.5.18; python_version >= '3.14'",
 ]

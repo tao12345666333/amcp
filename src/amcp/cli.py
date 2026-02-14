@@ -21,7 +21,7 @@ from . import __git_commit__, __version__
 from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
 from .commands import get_command_manager
-from .config import AMCPConfig, load_config, save_default_config
+from .config import AMCPConfig, load_config, save_config, save_default_config
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
 from .skills import get_skill_manager
@@ -94,6 +94,9 @@ app.add_typer(mcp, name="mcp")
 acp = typer.Typer(help="ACP (Agent Client Protocol) utilities")
 app.add_typer(acp, name="acp")
 
+telegram = typer.Typer(help="Telegram bot utilities")
+app.add_typer(telegram, name="telegram")
+
 
 @acp.command("serve", help="Run AMCP as an ACP-compliant agent server (stdio transport)")
 def acp_serve(
@@ -125,6 +128,130 @@ def acp_info() -> None:
     console.print("[bold]Zed settings.json example:[/bold]")
     zed_config = {"agent": {"profiles": {"amcp": {"name": "AMCP Agent", "command": "amcp", "args": ["acp", "serve"]}}}}
     console.print(JSON.from_data(zed_config))
+
+
+@telegram.command("start", help="Start Telegram bot")
+def telegram_start(
+    token: Annotated[
+        str | None,
+        typer.Option("--token", help="Telegram bot token"),
+    ] = None,
+    allow_user: Annotated[
+        list[int] | None,
+        typer.Option("--allow-user", "-u", help="Allowed user ID (repeatable)"),
+    ] = None,
+    admin_user: Annotated[
+        list[int] | None,
+        typer.Option("--admin-user", "-a", help="Admin user ID (repeatable)"),
+    ] = None,
+    webhook: Annotated[
+        bool,
+        typer.Option("--webhook", help="Enable webhook mode"),
+    ] = False,
+    webhook_url: Annotated[
+        str | None,
+        typer.Option("--webhook-url", help="Webhook URL"),
+    ] = None,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            "-w",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            readable=True,
+        ),
+    ] = None,
+) -> None:
+    try:
+        from .telegram.bot import TelegramBot
+    except Exception as exc:  # pragma: no cover - optional dependency
+        console.print(f"[red]Telegram integration unavailable: {exc}[/red]")
+        raise typer.Exit(1) from exc
+    from .telegram.config import TelegramConfig
+
+    cfg = load_config()
+    telegram_cfg = cfg.telegram or TelegramConfig()
+    telegram_cfg.enabled = True
+    if token:
+        telegram_cfg.bot_token = token
+    if webhook:
+        telegram_cfg.webhook_mode = True
+    if webhook_url:
+        telegram_cfg.webhook_url = webhook_url
+
+    bot_token = telegram_cfg.bot_token
+    if not bot_token:
+        console.print("[red]Missing bot token. Provide --token or set config.[/red]")
+        raise typer.Exit(1)
+
+    allowed = set(allow_user) if allow_user is not None else set(telegram_cfg.allowed_users)
+    if not allowed:
+        console.print("[red]No allowed users. Provide --allow-user or set config.[/red]")
+        raise typer.Exit(1)
+    admin = set(admin_user) if admin_user is not None else set(telegram_cfg.admin_users)
+
+    bot = TelegramBot(
+        token=bot_token,
+        allowed_users=allowed,
+        admin_users=admin,
+        work_dir=work_dir,
+        config=telegram_cfg,
+    )
+
+    if telegram_cfg.webhook_mode:
+        if not telegram_cfg.webhook_url:
+            console.print("[red]Webhook URL required for webhook mode.[/red]")
+            raise typer.Exit(1)
+        asyncio.run(bot.start_webhook(telegram_cfg.webhook_url))
+    else:
+        asyncio.run(bot.start_polling())
+
+
+@telegram.command("status", help="Show Telegram bot configuration status")
+def telegram_status() -> None:
+    cfg = load_config()
+    if not cfg.telegram:
+        console.print("[yellow]Telegram not configured.[/yellow]")
+        return
+    summary = [
+        f"enabled: {cfg.telegram.enabled}",
+        f"bot_token: {'set' if cfg.telegram.bot_token else 'unset'}",
+        f"allowed_users: {len(cfg.telegram.allowed_users)}",
+        f"admin_users: {len(cfg.telegram.admin_users)}",
+        f"webhook_mode: {cfg.telegram.webhook_mode}",
+    ]
+    console.print("\n".join(summary))
+
+
+@telegram.command("setup", help="Interactive setup for Telegram bot")
+def telegram_setup() -> None:
+    from .telegram.config import TelegramConfig, parse_user_ids
+
+    token = typer.prompt("Bot token", hide_input=True)
+    allowed_raw = typer.prompt("Allowed user IDs (comma-separated)")
+    allowed = parse_user_ids(allowed_raw)
+    if not allowed:
+        console.print("[red]At least one allowed user ID is required.[/red]")
+        raise typer.Exit(1)
+    admin_raw = typer.prompt("Admin user IDs (comma-separated)", default="")
+    admin = parse_user_ids(admin_raw) or allowed
+
+    cfg = load_config()
+    if cfg.telegram is None:
+        cfg.telegram = TelegramConfig()
+    cfg.telegram.enabled = True
+    cfg.telegram.bot_token = token
+    cfg.telegram.allowed_users = allowed
+    cfg.telegram.admin_users = admin
+
+    path = save_config(cfg)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        console.print("[yellow]Warning: could not set config file permissions.[/yellow]")
+    console.print(f"[green]Telegram config saved to {path}[/green]")
 
 
 @app.command("tui", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -170,6 +297,10 @@ def serve_command(
         bool,
         typer.Option("--reload", help="Enable auto-reload for development"),
     ] = False,
+    telegram_enabled: Annotated[
+        bool,
+        typer.Option("--telegram", help="Start Telegram bot alongside the server"),
+    ] = False,
 ) -> None:
     """Start AMCP as an HTTP/WebSocket server.
 
@@ -189,12 +320,58 @@ def serve_command(
     """
     from .server import run_server
 
+    if telegram_enabled:
+        _start_telegram_bot(work_dir)
+
     run_server(
         host=host,
         port=port,
         work_dir=str(work_dir) if work_dir else None,
         reload=reload,
     )
+
+
+def _start_telegram_bot(work_dir: Path | None) -> None:
+    cfg = load_config()
+    if not cfg.telegram or not cfg.telegram.bot_token:
+        console.print("[red]Telegram bot token missing in config[/red]")
+        raise typer.Exit(1)
+    if not cfg.telegram.allowed_users:
+        console.print("[red]Telegram allowed_users list is empty[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from .telegram.bot import TelegramBot
+    except Exception as exc:  # pragma: no cover - optional dependency
+        console.print(f"[red]Telegram integration unavailable: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    token = cfg.telegram.bot_token
+    allowed = set(cfg.telegram.allowed_users)
+    admin = set(cfg.telegram.admin_users)
+    telegram_cfg = cfg.telegram
+
+    def run_bot() -> None:
+        try:
+            bot = TelegramBot(
+                token=token,
+                allowed_users=allowed,
+                admin_users=admin,
+                work_dir=work_dir,
+                config=telegram_cfg,
+            )
+            if telegram_cfg.webhook_mode and telegram_cfg.webhook_url:
+                asyncio.run(bot.start_webhook(telegram_cfg.webhook_url))
+            else:
+                asyncio.run(bot.start_polling())
+        except Exception:
+            console.print("[red]Telegram bot failed to start[/red]")
+
+    import threading
+
+    thread = threading.Thread(target=run_bot, daemon=True)
+    thread.start()
+    console.print("[green]Telegram bot started in background[/green]")
 
 
 @app.command("attach", help="Connect to a running AMCP server")

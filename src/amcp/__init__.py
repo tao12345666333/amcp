@@ -55,6 +55,7 @@ __all__ = [
     "AMCPConfig",
     "ChatConfig",
     "ModelConfig",
+    "TelegramConfig",
     # Project rules
     "ProjectRulesLoader",
     "load_project_rules",
@@ -121,6 +122,7 @@ from .config import (
     AMCPConfig,
     ChatConfig,
     ModelConfig,
+    TelegramConfig,
 )
 from .event_bus import (
     Event,

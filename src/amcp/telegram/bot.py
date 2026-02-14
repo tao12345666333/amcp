@@ -1,0 +1,405 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from ..agent import Agent, BusyError, create_agent_by_name
+from ..agent_spec import get_default_agent_spec
+from ..config import load_config, save_config
+from ..event_bus import EventType, get_event_bus
+from ..memory import get_memory_manager
+from ..multi_agent import get_agent_registry
+from .auth import AuthMiddleware
+from .config import TelegramConfig
+from .formatter import TelegramFormatter
+from .handlers import RateLimiter, SessionManager, TelegramHandlers, TelegramQueuedMessage
+
+if TYPE_CHECKING:
+    from telegram.ext import Application
+
+try:
+    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+except ImportError:  # pragma: no cover - optional dependency
+    ApplicationBuilder = None  # type: ignore[assignment]
+    CommandHandler = None  # type: ignore[assignment]
+    MessageHandler = None  # type: ignore[assignment]
+    filters = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramBot:
+    """Telegram bot that connects chat messages to an AMCP agent."""
+
+    def __init__(
+        self,
+        token: str,
+        allowed_users: set[int],
+        admin_users: set[int] | None = None,
+        *,
+        agent_factory: Callable[[str], Agent] | None = None,
+        work_dir: Path | None = None,
+        config: TelegramConfig | None = None,
+    ) -> None:
+        if ApplicationBuilder is None:
+            raise RuntimeError("python-telegram-bot is required. Install amcp[telegram].")
+
+        self._token = token
+        self._work_dir = work_dir
+        self._config = config or TelegramConfig(enabled=True)
+        self._config.bot_token = token
+        self._auth = AuthMiddleware(
+            allowed_users=set(allowed_users),
+            admin_users=set(admin_users or []),
+        )
+        self._auth.allowed_users.update(self._auth.admin_users)
+        self._config.allowed_users = sorted(self._auth.allowed_users)
+        self._config.admin_users = sorted(self._auth.admin_users)
+        self._formatter = TelegramFormatter(max_length=self._config.max_message_length)
+        self._session_manager = SessionManager(
+            agent_factory=agent_factory or self._default_agent_factory,
+            session_timeout=self._config.session_timeout,
+        )
+        self._rate_limiter = RateLimiter(limit=self._config.rate_limit_messages)
+        self._handlers = TelegramHandlers(
+            bot=self,
+            session_manager=self._session_manager,
+            auth=self._auth,
+            rate_limiter=self._rate_limiter,
+            work_dir=self._work_dir,
+        )
+        self._application = self._build_application()
+        self._stop_event: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._notification_handler_ids: list[str] = []
+
+    @property
+    def config(self) -> TelegramConfig:
+        return self._config
+
+    def config_summary(self) -> str:
+        token_status = "set" if self._config.bot_token else "unset"
+        return "\n".join(
+            [
+                f"enabled: {self._config.enabled}",
+                f"bot_token: {token_status}",
+                f"allowed_users: {len(self._config.allowed_users)}",
+                f"admin_users: {len(self._config.admin_users)}",
+                f"webhook_mode: {self._config.webhook_mode}",
+                f"webhook_url: {self._config.webhook_url or ''}",
+                f"max_message_length: {self._config.max_message_length}",
+                f"rate_limit_messages: {self._config.rate_limit_messages}",
+                f"session_timeout: {self._config.session_timeout}",
+            ]
+        )
+
+    def users_summary(self) -> str:
+        allowed = ", ".join(str(u) for u in sorted(self._auth.allowed_users)) or "none"
+        admins = ", ".join(str(u) for u in sorted(self._auth.admin_users)) or "none"
+        return f"allowed_users: {allowed}\nadmin_users: {admins}"
+
+    def add_allowed_user(self, user_id: int) -> None:
+        self._auth.allowed_users.add(user_id)
+        self._config.allowed_users = sorted(self._auth.allowed_users)
+
+    def remove_allowed_user(self, user_id: int) -> None:
+        self._auth.allowed_users.discard(user_id)
+        self._config.allowed_users = sorted(self._auth.allowed_users)
+        if user_id in self._auth.admin_users:
+            self._auth.admin_users.discard(user_id)
+            self._config.admin_users = sorted(self._auth.admin_users)
+
+    def add_admin_user(self, user_id: int) -> None:
+        self._auth.admin_users.add(user_id)
+        self._auth.allowed_users.add(user_id)
+        self._config.admin_users = sorted(self._auth.admin_users)
+        self._config.allowed_users = sorted(self._auth.allowed_users)
+
+    def remove_admin_user(self, user_id: int) -> None:
+        self._auth.admin_users.discard(user_id)
+        self._config.admin_users = sorted(self._auth.admin_users)
+
+    def update_config_value(self, key: str, value: str) -> tuple[bool, str]:
+        key_map = {
+            "enabled": bool,
+            "webhook_mode": bool,
+            "webhook_url": str,
+            "max_message_length": int,
+            "rate_limit_messages": int,
+            "session_timeout": int,
+        }
+        if key not in key_map:
+            return False, f"Unsupported config key: {key}"
+        try:
+            if key_map[key] is bool:
+                parsed = value.lower() in {"1", "true", "yes", "on"}
+            elif key_map[key] is int:
+                parsed = int(value)
+            else:
+                parsed = value
+            setattr(self._config, key, parsed)
+            if key == "max_message_length":
+                self._formatter.max_length = parsed
+            elif key == "rate_limit_messages":
+                self._rate_limiter.update_limit(parsed)
+            elif key == "session_timeout":
+                self._session_manager.update_session_timeout(parsed)
+            return True, f"Updated {key}."
+        except ValueError:
+            return False, f"Invalid value for {key}."
+
+    async def persist_config(self) -> None:
+        cfg = load_config()
+        cfg.telegram = self._config
+        path = save_config(cfg)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            logger.warning("Failed to set config file permissions.")
+
+    async def start_polling(self) -> None:
+        self._register_notifications()
+        await self._run_polling_loop()
+
+    async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
+        self._register_notifications()
+        await self._run_webhook_loop(url, listen=listen, port=port)
+
+    async def stop(self) -> None:
+        if self._stop_event:
+            self._stop_event.set()
+        elif self._application:
+            try:
+                await self._application.stop()
+                await self._application.shutdown()
+            except Exception:
+                logger.exception("Failed to stop Telegram application cleanly.")
+        self._unregister_notifications()
+
+    def cancel_session(self, chat_id: int) -> tuple[bool, bool]:
+        session = self._session_manager.get_or_create_session(chat_id)
+        cancelled = False
+        if session.current_task and not session.current_task.done():
+            session.current_task.cancel()
+            cancelled = True
+        queued = len(session.queue) > 0
+        session.queue.clear()
+        return cancelled, queued
+
+    async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
+        session = self._session_manager.get_or_create_session(chat_id)
+        session.last_used = datetime.now()
+        queued_message = TelegramQueuedMessage(chat_id=chat_id, user_id=user_id, text=text)
+
+        if session.lock.locked():
+            session.queue.append(queued_message)
+            await self.send_text(chat_id, "Session busy. Your message was queued.")
+            return
+
+        async with session.lock:
+            await self._process_message(session, queued_message)
+            while session.queue:
+                next_message = session.queue.popleft()
+                await self._process_message(session, next_message)
+
+    async def send_text(self, chat_id: int, text: str) -> None:
+        await self._application.bot.send_message(chat_id=chat_id, text=text)
+
+    async def send_markdown(self, chat_id: int, text: str) -> None:
+        await self._application.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+        )
+
+    async def send_notification(self, text: str) -> None:
+        if self._loop and asyncio.get_running_loop() is not self._loop:
+            future = asyncio.run_coroutine_threadsafe(
+                self._send_notification_inner(text),
+                self._loop,
+            )
+            await asyncio.wrap_future(future)
+            return
+        await self._send_notification_inner(text)
+
+    def tail_logs(self, lines: int) -> str:
+        log_path = Path.home() / ".config" / "amcp" / "logs" / "amcp.log"
+        if not log_path.exists():
+            return "No log file found."
+        content = log_path.read_text(encoding="utf-8").splitlines()
+        return "\n".join(content[-lines:]) if content else "No log entries."
+
+    async def _send_notification_inner(self, text: str) -> None:
+        for user_id in sorted(self._auth.allowed_users):
+            await self.send_text(user_id, text)
+
+    async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
+        try:
+            session.current_task = asyncio.create_task(
+                session.agent.run(
+                    user_input=message.text,
+                    work_dir=self._work_dir,
+                    stream=False,
+                    show_progress=False,
+                    queue_if_busy=False,
+                )
+            )
+            response = await session.current_task
+        except asyncio.CancelledError:
+            await self.send_text(message.chat_id, "Request cancelled.")
+            return
+        except BusyError:
+            session.queue.appendleft(message)
+            await self.send_text(message.chat_id, "Session busy. Your message was queued.")
+            return
+        except Exception as exc:
+            logger.exception("Failed to process Telegram message.")
+            await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
+            return
+        finally:
+            session.current_task = None
+
+        response_text = response or ""
+        if response_text:
+            for chunk in self._formatter.format_response(response_text):
+                await self.send_markdown(message.chat_id, chunk)
+
+        memory_manager = get_memory_manager(self._work_dir)
+        memory_manager.append_history(
+            content=(
+                f"[Telegram] User {message.user_id}: {message.text[:200]}\n"
+                f"Agent: {response_text[:300]}"
+            ),
+            session_id=session.session_id,
+            tags=["telegram", "conversation"],
+            scope="project",
+        )
+
+    def _build_application(self) -> Application:
+        application = ApplicationBuilder().token(self._token).build()
+        application.add_handler(CommandHandler("start", self._handlers.handle_start))
+        application.add_handler(CommandHandler("help", self._handlers.handle_help))
+        application.add_handler(CommandHandler("status", self._handlers.handle_status))
+        application.add_handler(CommandHandler("session", self._handlers.handle_session))
+        application.add_handler(CommandHandler("cancel", self._handlers.handle_cancel))
+        application.add_handler(CommandHandler("ask", self._handlers.handle_ask))
+        application.add_handler(CommandHandler("skills", self._handlers.handle_skills))
+        application.add_handler(CommandHandler("activate", self._handlers.handle_activate))
+        application.add_handler(CommandHandler("memory", self._handlers.handle_memory))
+        application.add_handler(CommandHandler("config", self._handlers.handle_config))
+        application.add_handler(CommandHandler("users", self._handlers.handle_users))
+        application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
+        application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handlers.handle_text)
+        )
+        application.add_handler(MessageHandler(filters.COMMAND, self._handlers.handle_unknown))
+        return application
+
+    async def _run_polling_loop(self) -> None:
+        updater = getattr(self._application, "updater", None)
+        if updater is None or not hasattr(updater, "start_polling"):
+            await asyncio.to_thread(self._application.run_polling)
+            return
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        try:
+            await self._application.initialize()
+            await self._application.start()
+        except AttributeError:
+            await asyncio.to_thread(self._application.run_polling)
+            return
+        await updater.start_polling()
+        await self._stop_event.wait()
+        await updater.stop()
+        await self._application.stop()
+        await self._application.shutdown()
+
+    async def _run_webhook_loop(self, url: str, listen: str, port: int) -> None:
+        updater = getattr(self._application, "updater", None)
+        if updater is None or not hasattr(updater, "start_webhook"):
+            await asyncio.to_thread(
+                self._application.run_webhook,
+                listen=listen,
+                port=port,
+                webhook_url=url,
+            )
+            return
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        try:
+            await self._application.initialize()
+            await self._application.start()
+        except AttributeError:
+            await asyncio.to_thread(
+                self._application.run_webhook,
+                listen=listen,
+                port=port,
+                webhook_url=url,
+            )
+            return
+        await updater.start_webhook(listen=listen, port=port, webhook_url=url)
+        await self._stop_event.wait()
+        await updater.stop()
+        await self._application.stop()
+        await self._application.shutdown()
+
+    def _register_notifications(self) -> None:
+        if not self._config.notifications:
+            return
+        bus = get_event_bus()
+        if self._config.notifications.task_completions:
+            self._notification_handler_ids.append(
+                bus.subscribe(EventType.TASK_COMPLETED, self._on_task_completed)
+            )
+        if self._config.notifications.error_alerts:
+            self._notification_handler_ids.append(
+                bus.subscribe(EventType.AGENT_ERROR, self._on_agent_error)
+            )
+            self._notification_handler_ids.append(
+                bus.subscribe(EventType.TOOL_ERROR, self._on_tool_error)
+            )
+
+    def _unregister_notifications(self) -> None:
+        bus = get_event_bus()
+        for handler_id in self._notification_handler_ids:
+            bus.unsubscribe(handler_id)
+        self._notification_handler_ids = []
+
+    async def _on_task_completed(self, event: Any) -> None:
+        description = event.data.get("description", "")
+        duration = event.data.get("duration_ms", "")
+        result = event.data.get("result", "")
+        message = (
+            "Task completed.\n"
+            f"Description: {description}\n"
+            f"Duration: {duration}\n"
+            f"Result: {str(result)[:500]}"
+        )
+        await self.send_notification(message)
+
+    async def _on_agent_error(self, event: Any) -> None:
+        error = event.data.get("error", "")
+        session_id = event.session_id or "unknown"
+        message = f"Agent error.\nSession: {session_id}\nError: {str(error)[:500]}"
+        await self.send_notification(message)
+
+    async def _on_tool_error(self, event: Any) -> None:
+        error = event.data.get("error", "")
+        tool = event.data.get("tool_name", "")
+        message = f"Tool error.\nTool: {tool}\nError: {str(error)[:500]}"
+        await self.send_notification(message)
+
+    def _default_agent_factory(self, session_id: str) -> Agent:
+        cfg = load_config()
+        if cfg.chat and cfg.chat.default_agent:
+            registry = get_agent_registry()
+            if cfg.chat.default_agent in registry.list_agents():
+                return create_agent_by_name(cfg.chat.default_agent, session_id=session_id)
+        spec = get_default_agent_spec()
+        return Agent(spec, session_id=session_id)
