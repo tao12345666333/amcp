@@ -6,11 +6,11 @@ ACP, HTTP REST API, and WebSocket protocols.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Unified error codes for all protocols.
 
     These error codes are designed to be consistent across:

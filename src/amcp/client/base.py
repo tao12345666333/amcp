@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ClientMode(str, Enum):
+class ClientMode(StrEnum):
     """Client mode enumeration."""
 
     REMOTE = "remote"  # Connect to remote server

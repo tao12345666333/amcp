@@ -962,6 +962,171 @@ Examples:
         }
 
 
+class MemoryTool(BaseTool):
+    """Tool for reading and writing persistent agent memory.
+
+    Provides access to the two-layer memory system:
+    - Long-term memory (MEMORY.md): Curated facts and knowledge
+    - History log (HISTORY.md): Append-only searchable activity log
+    """
+
+    @property
+    def name(self) -> str:
+        return "memory"
+
+    @property
+    def description(self) -> str:
+        return """Manage persistent memory across sessions.
+
+Actions:
+- read: Read long-term memory (MEMORY.md) for the given scope
+- write: Update long-term memory (overwrites). Keep it organized and compact.
+- append: Add an entry to the history log (HISTORY.md)
+- search: Search both memory layers for matching content
+- stats: Get memory statistics
+
+Scopes:
+- user: Global memory (~/.config/amcp/memory/)
+- project: Project-specific memory (.amcp/memory/)
+
+Use this tool to:
+- Remember important patterns, preferences, and project context
+- Log significant decisions and learnings
+- Search past activities and knowledge
+
+Examples:
+  Read: {"action": "read", "scope": "project"}
+  Write: {"action": "write", "content": "# Project Notes\\n- Uses Python 3.12\\n- Main entry: src/main.py", "scope": "project"}
+  Append: {"action": "append", "content": "Discovered that the auth module needs refactoring", "tags": ["discovery", "refactor"]}
+  Search: {"action": "search", "query": "auth module"}
+"""
+
+    def execute(  # type: ignore[override]
+        self,
+        action: str,
+        content: str | None = None,
+        scope: str = "user",
+        query: str | None = None,
+        tags: list[str] | None = None,
+        max_results: int = 20,
+    ) -> ToolResult:
+        """Execute memory operations."""
+        from .memory import get_memory_manager
+
+        try:
+            manager = get_memory_manager()
+
+            if action == "read":
+                memory_content = manager.read_long_term(scope)
+                if not memory_content:
+                    return ToolResult(
+                        success=True,
+                        content=f"No long-term memory found for scope '{scope}'.",
+                        metadata={"scope": scope},
+                    )
+                return ToolResult(
+                    success=True,
+                    content=memory_content,
+                    metadata={"scope": scope, "size": len(memory_content)},
+                )
+
+            elif action == "write":
+                if not content:
+                    return ToolResult(success=False, content="", error="Content is required for write action.")
+                manager.write_long_term(content, scope)
+                return ToolResult(
+                    success=True,
+                    content=f"Long-term memory updated ({len(content)} chars) in scope '{scope}'.",
+                    metadata={"scope": scope, "size": len(content)},
+                )
+
+            elif action == "append":
+                if not content:
+                    return ToolResult(success=False, content="", error="Content is required for append action.")
+                manager.append_history(content, session_id="agent", tags=tags, scope=scope)
+                return ToolResult(
+                    success=True,
+                    content="Entry appended to history log.",
+                    metadata={"scope": scope, "tags": tags or []},
+                )
+
+            elif action == "search":
+                if not query:
+                    return ToolResult(success=False, content="", error="Query is required for search action.")
+                results = manager.search(query, max_results=max_results)
+                if not results:
+                    return ToolResult(
+                        success=True,
+                        content=f"No results found for '{query}'.",
+                        metadata={"query": query, "count": 0},
+                    )
+                lines = [f"Found {len(results)} results for '{query}':"]
+                for r in results:
+                    lines.append(f"  [{r.source}:L{r.line_number}] {r.content}")
+                return ToolResult(
+                    success=True,
+                    content="\n".join(lines),
+                    metadata={"query": query, "count": len(results)},
+                )
+
+            elif action == "stats":
+                stats = manager.get_stats()
+                lines = ["Memory Statistics:"]
+                for scope_name, scope_stats in stats.items():
+                    lines.append(f"  {scope_name}:")
+                    for k, v in scope_stats.items():
+                        lines.append(f"    {k}: {v}")
+                return ToolResult(success=True, content="\n".join(lines), metadata=stats)
+
+            else:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Invalid action '{action}'. Use: read, write, append, search, stats",
+                )
+
+        except Exception as e:
+            return ToolResult(success=False, content="", error=f"Memory operation failed: {e}")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "write", "append", "search", "stats"],
+                    "description": "Action to perform",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content for read/write/append actions",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["user", "project"],
+                    "description": "Memory scope (default: user)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (for search action)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for history entries (for append action)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum search results (default: 20)",
+                },
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        }
+
+
 # Initialize default tool registry
 def create_default_tool_registry(
     enable_write: bool = True,
@@ -985,6 +1150,7 @@ def create_default_tool_registry(
     registry.register(ThinkTool())
     registry.register(BashTool())
     registry.register(TodoTool())
+    registry.register(MemoryTool())
 
     if enable_write:
         registry.register(WriteFileTool())

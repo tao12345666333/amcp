@@ -22,6 +22,7 @@ from .hooks import (
     run_user_prompt_hooks,
 )
 from .mcp_client import call_mcp_tool, list_mcp_tools
+from .memory import get_memory_manager
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
 from .project_rules import ProjectRulesLoader
@@ -253,12 +254,18 @@ class Agent:
         # Get full content of active skills
         skills_content = skill_manager.get_active_skills_content()
 
+        # Get memory context
+        memory_manager = get_memory_manager(resolved_work_dir)
+        memory_context = memory_manager.get_memory_context()
+
         # Combine all parts
         combined_prompt = base_prompt
         if project_rules:
             combined_prompt += "\n\n" + project_rules
         if skills_summary:
             combined_prompt += "\n\n" + skills_summary
+        if memory_context:
+            combined_prompt += "\n\n" + memory_context
         if skills_content:
             combined_prompt += "\n\n" + skills_content
 
@@ -512,6 +519,19 @@ class Agent:
 
                 # Save to file
                 self._save_conversation_history()
+
+                # Log to memory history
+                try:
+                    memory_mgr = get_memory_manager(work_dir)
+                    summary = f"User: {user_input[:200]}\nAgent: {result[:300]}"
+                    memory_mgr.append_history(
+                        content=summary,
+                        session_id=self.session_id,
+                        tags=["conversation"],
+                        scope="project" if work_dir else "user",
+                    )
+                except Exception:
+                    pass  # Memory logging is best-effort
 
                 return result
 
