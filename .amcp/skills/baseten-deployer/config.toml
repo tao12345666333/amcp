@@ -1,0 +1,28 @@
+[baseten]
+# Baseten API configuration
+api_key = "${BASETEN_API_KEY}"
+base_url = "https://api.baseten.co"
+default_model = "zai-org/GLM-4.6"
+
+[baseten.deployment]
+# Deployment settings
+auto_deploy = true
+monitoring = true
+scaling = "auto"
+min_instances = 1
+max_instances = 5
+
+[baseten.monitoring]
+# Monitoring and alerting
+health_check_interval = 60  # seconds
+latency_threshold = 1000    # ms
+error_rate_threshold = 0.05 # 5%
+
+[baseten.models]
+# Model configurations
+[[baseten.models.entry]]
+name = "sample-classifier"
+path = "examples/sample_classifier.pkl"
+framework = "sklearn"
+version = "1.0.0"
+description = "Sample classification model for testing"

@@ -1,0 +1,12 @@
+{
+  "deploy_demo_classifier_1771052425": {
+    "deployment_id": "deploy_demo_classifier_1771052425",
+    "model_name": "demo-classifier",
+    "framework": "sklearn",
+    "status": "deployed",
+    "endpoint": "https://api.baseten.co/v1/models/deploy_demo_classifier_1771052425",
+    "created_at": "2026-02-14T15:00:25.400385",
+    "model_path": ".amcp/skills/baseten-deployer/examples/simple_classifier.pkl",
+    "api_key": "demo_key"
+  }
+}
