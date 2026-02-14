@@ -240,14 +240,25 @@ class Agent:
         # Load project rules from AGENTS.md files
         project_rules = self._load_project_rules(resolved_work_dir)
 
-        # Get active skills content
+        # Get skills information
         skill_manager = get_skill_manager()
+
+        # Ensure skills are discovered (includes built-in skills)
+        if not skill_manager.get_all_skills():
+            skill_manager.discover_skills(resolved_work_dir)
+
+        # Build compact skills summary (progressive disclosure)
+        skills_summary = skill_manager.build_skills_summary()
+
+        # Get full content of active skills
         skills_content = skill_manager.get_active_skills_content()
 
         # Combine all parts
         combined_prompt = base_prompt
         if project_rules:
             combined_prompt += "\n\n" + project_rules
+        if skills_summary:
+            combined_prompt += "\n\n" + skills_summary
         if skills_content:
             combined_prompt += "\n\n" + skills_content
 
