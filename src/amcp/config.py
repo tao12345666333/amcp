@@ -4,7 +4,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .daemon.config import DaemonConfig
 
 try:
     import tomllib  # py311+
@@ -101,7 +104,7 @@ class AMCPConfig:
     chat: ChatConfig | None = None
     server: ServerConfig | None = None
     telegram: TelegramConfig | None = None
-    daemon: "DaemonConfig | None" = None  # Phase 8
+    daemon: DaemonConfig | None = None  # Phase 8
 
 
 _DEFAULT = {
@@ -412,7 +415,7 @@ def save_default_config() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _decode_daemon(raw: Mapping[str, object] | None) -> "DaemonConfig | None":
+def _decode_daemon(raw: Mapping[str, object] | None) -> DaemonConfig | None:
     """Decode [daemon] section from TOML."""
     if not raw:
         return None
@@ -480,7 +483,7 @@ def _decode_daemon(raw: Mapping[str, object] | None) -> "DaemonConfig | None":
     )
 
 
-def _encode_daemon(cfg: "DaemonConfig | None") -> dict | None:
+def _encode_daemon(cfg: DaemonConfig | None) -> dict | None:
     """Encode DaemonConfig to TOML-compatible dict."""
     if cfg is None:
         return None

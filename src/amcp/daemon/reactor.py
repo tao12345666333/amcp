@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..event_bus import Event, EventType, get_event_bus
 from .config import ReactorConfig
@@ -100,10 +102,8 @@ class EventReactor:
         self._running = False
         if self._server:
             self._server.close()
-            try:
+            with contextlib.suppress(Exception):
                 await self._server.wait_closed()
-            except Exception:
-                pass
         logger.info("EventReactor stopped")
 
     # ------------------------------------------------------------------

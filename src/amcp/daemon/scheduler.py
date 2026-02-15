@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from ..event_bus import Event, EventType, get_event_bus
 from .config import CronJobConfig, SchedulerConfig
@@ -40,12 +42,12 @@ def _expand_schedule(expr: str) -> str:
     m = _EVERY_RE.match(expr)
     if m:
         val, unit = int(m.group(1)), m.group(2).lower()
-        if unit == "m":
-            return f"*/{val} * * * *"
-        elif unit == "h":
-            return f"0 */{val} * * *"
-        elif unit == "d":
-            return f"0 0 */{val} * *"
+        unit_map = {
+            "m": f"*/{val} * * * *",
+            "h": f"0 */{val} * * *",
+            "d": f"0 0 */{val} * *",
+        }
+        return unit_map.get(unit, expr)
 
     return expr
 
@@ -130,7 +132,7 @@ class CronScheduler:
 
             return ZoneInfo(self.config.timezone)
         except Exception:
-            return timezone.utc
+            return UTC
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -153,10 +155,8 @@ class CronScheduler:
         self._active_tasks.clear()
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("CronScheduler stopped")
 
     # ------------------------------------------------------------------
@@ -303,7 +303,7 @@ class CronScheduler:
 
             logger.info("Job %s completed successfully (run #%d)", job.name, job.run_count)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             job.last_status = "failed"
             job.failure_count += 1
             logger.error("Job %s timed out after %ds", job.name, job.timeout)

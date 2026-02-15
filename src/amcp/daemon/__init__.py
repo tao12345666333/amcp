@@ -10,7 +10,7 @@ Provides:
 
 from .config import DaemonConfig, HeartbeatConfig, ReactorConfig, SchedulerConfig
 from .daemon import AMCPDaemon
-from .heartbeat import HeartbeatMonitor, HealthStatus
+from .heartbeat import HealthStatus, HeartbeatMonitor
 from .scheduler import CronJob, CronScheduler
 from .task_runner import TaskRunner
 

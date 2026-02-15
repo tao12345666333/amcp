@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class TaskRunner:
                 )
                 tr.result = str(result)[:2000]
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 tr.error = f"Task timed out after {timeout}s"
                 logger.error("Task %s timed out", task_id)
             except Exception as exc:
