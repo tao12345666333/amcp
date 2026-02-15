@@ -242,9 +242,7 @@ class AMCPDaemon:
         level = getattr(logging, self.config.log_level.upper(), logging.INFO)
         handler = logging.FileHandler(str(log_path))
         handler.setLevel(level)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
 
         root_logger = logging.getLogger("amcp")
         root_logger.addHandler(handler)
@@ -302,7 +300,9 @@ class AMCPDaemon:
             "started_at": self._started_at.isoformat() if self._started_at else None,
             "heartbeat": {
                 "enabled": self.heartbeat is not None,
-                "healthy": self.heartbeat.last_status.healthy if self.heartbeat and self.heartbeat.last_status else None,
+                "healthy": self.heartbeat.last_status.healthy
+                if self.heartbeat and self.heartbeat.last_status
+                else None,
             },
             "scheduler": {
                 "enabled": self.scheduler is not None,

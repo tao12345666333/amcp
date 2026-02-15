@@ -66,10 +66,7 @@ class EventReactor:
                 name="ci-on-push-main",
                 event_type="github.push",
                 filter_fn=lambda p: p.get("ref", "").endswith("/main"),
-                command_template=(
-                    "CI was triggered on the main branch. "
-                    "Monitor the run and report any failures."
-                ),
+                command_template=("CI was triggered on the main branch. Monitor the run and report any failures."),
             )
         )
 
@@ -78,10 +75,7 @@ class EventReactor:
                 name="review-new-pr",
                 event_type="github.pull_request",
                 filter_fn=lambda p: p.get("action") == "opened",
-                command_template=(
-                    "A new PR #{number} was opened: {title}. "
-                    "Review it using the gh-code-review skill."
-                ),
+                command_template=("A new PR #{number} was opened: {title}. Review it using the gh-code-review skill."),
                 skill="gh-code-review",
             )
         )
