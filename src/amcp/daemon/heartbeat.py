@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -77,10 +78,8 @@ class HeartbeatMonitor:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("HeartbeatMonitor stopped")
 
     # ------------------------------------------------------------------
@@ -183,17 +182,13 @@ class HeartbeatMonitor:
         # Active jobs / sessions (delegated to runtime callbacks)
         active_jobs = 0
         if self._active_jobs_fn:
-            try:
+            with contextlib.suppress(Exception):
                 active_jobs = self._active_jobs_fn()
-            except Exception:
-                pass
 
         active_sessions = 0
         if self._active_sessions_fn:
-            try:
+            with contextlib.suppress(Exception):
                 active_sessions = self._active_sessions_fn()
-            except Exception:
-                pass
 
         uptime = time.monotonic() - self._start_time
         healthy = all(checks.values()) if checks else True

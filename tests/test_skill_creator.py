@@ -10,7 +10,6 @@ import pytest
 
 from amcp.skills import SkillManager, SkillMetadata, reset_skill_manager
 
-
 # --- Fixtures ---
 
 @pytest.fixture(autouse=True)

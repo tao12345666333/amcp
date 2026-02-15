@@ -171,7 +171,7 @@ def daemon_stop() -> None:
         Path(DaemonConfig().pid_file).expanduser().unlink(missing_ok=True)
     except PermissionError:
         console.print(f"[red]Permission denied sending signal to PID {pid}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @daemon_cli.command("status", help="Show daemon status")

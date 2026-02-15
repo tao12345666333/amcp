@@ -148,7 +148,7 @@ class TestCronScheduler:
 class TestHeartbeatMonitor:
     @pytest.mark.asyncio
     async def test_check_health_defaults(self):
-        from amcp.daemon.heartbeat import HeartbeatMonitor, HealthStatus
+        from amcp.daemon.heartbeat import HealthStatus, HeartbeatMonitor
 
         hb = HeartbeatMonitor()
         status = await hb.check_health()

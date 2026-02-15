@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..event_bus import Event, EventType, get_event_bus
 from .config import DaemonConfig
@@ -223,14 +225,11 @@ class AMCPDaemon:
     def _setup_signals(self) -> None:
         loop = asyncio.get_event_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
+            with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(
                     sig,
                     lambda: asyncio.create_task(self.stop()),
                 )
-            except NotImplementedError:
-                # Windows doesn't support add_signal_handler
-                pass
 
     # ------------------------------------------------------------------
     # Logging
