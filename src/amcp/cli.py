@@ -97,6 +97,246 @@ app.add_typer(acp, name="acp")
 telegram = typer.Typer(help="Telegram bot utilities")
 app.add_typer(telegram, name="telegram")
 
+daemon_cli = typer.Typer(help="Daemon management (heartbeat + cron)")
+app.add_typer(daemon_cli, name="daemon")
+
+cron_cli = typer.Typer(help="Cron job management")
+app.add_typer(cron_cli, name="cron")
+
+
+# ---------------------------------------------------------------------------
+# Daemon commands
+# ---------------------------------------------------------------------------
+
+
+@daemon_cli.command("start", help="Start the AMCP daemon")
+def daemon_start(
+    foreground: Annotated[
+        bool,
+        typer.Option("--foreground", "-f", help="Run in foreground (for debugging)"),
+    ] = False,
+    config_file: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to a custom config file"),
+    ] = None,
+) -> None:
+    """Start the AMCP daemon with heartbeat and cron scheduler."""
+    from .daemon.config import DaemonConfig
+    from .daemon.daemon import AMCPDaemon
+
+    # Check if already running
+    if AMCPDaemon.is_running():
+        pid = AMCPDaemon.read_pid()
+        console.print(f"[yellow]Daemon already running (PID {pid})[/yellow]")
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    daemon_cfg = cfg.daemon or DaemonConfig()
+
+    def _agent_factory():
+        return Agent()
+
+    daemon = AMCPDaemon(config=daemon_cfg, agent_factory=_agent_factory)
+
+    console.print("[green]Starting AMCP Daemon...[/green]")
+    if daemon_cfg.scheduler.enabled:
+        console.print(f"[dim]  Scheduler: {len(daemon_cfg.scheduler.jobs)} jobs configured[/dim]")
+    if daemon_cfg.heartbeat.enabled:
+        console.print(f"[dim]  Heartbeat: every {daemon_cfg.heartbeat.interval}s[/dim]")
+    if daemon_cfg.reactor.enabled:
+        console.print(f"[dim]  Reactor: port {daemon_cfg.reactor.listen_port}[/dim]")
+
+    asyncio.run(daemon.start(foreground=foreground or True))
+
+
+@daemon_cli.command("stop", help="Stop the running AMCP daemon")
+def daemon_stop() -> None:
+    """Stop the running AMCP daemon."""
+    from .daemon.daemon import AMCPDaemon
+
+    pid = AMCPDaemon.read_pid()
+    if pid is None:
+        console.print("[yellow]No daemon PID file found[/yellow]")
+        raise typer.Exit(1)
+
+    import signal as sig_mod
+
+    try:
+        os.kill(pid, sig_mod.SIGTERM)
+        console.print(f"[green]Sent SIGTERM to daemon (PID {pid})[/green]")
+    except ProcessLookupError:
+        console.print(f"[yellow]Daemon process {pid} not found — cleaning up PID file[/yellow]")
+        from .daemon.config import DaemonConfig
+
+        Path(DaemonConfig().pid_file).expanduser().unlink(missing_ok=True)
+    except PermissionError:
+        console.print(f"[red]Permission denied sending signal to PID {pid}[/red]")
+        raise typer.Exit(1)
+
+
+@daemon_cli.command("status", help="Show daemon status")
+def daemon_status() -> None:
+    """Check whether the daemon is running and show its status."""
+    from .daemon.daemon import AMCPDaemon
+
+    if AMCPDaemon.is_running():
+        pid = AMCPDaemon.read_pid()
+        console.print(f"[green]Daemon is running (PID {pid})[/green]")
+        cfg = load_config()
+        if cfg.daemon:
+            if cfg.daemon.scheduler.enabled:
+                console.print(f"  Scheduler: {len(cfg.daemon.scheduler.jobs)} jobs configured")
+            if cfg.daemon.heartbeat.enabled:
+                console.print(f"  Heartbeat: every {cfg.daemon.heartbeat.interval}s")
+            if cfg.daemon.reactor.enabled:
+                console.print(f"  Reactor: port {cfg.daemon.reactor.listen_port}")
+    else:
+        console.print("[yellow]Daemon is not running[/yellow]")
+
+
+@daemon_cli.command("logs", help="View daemon logs")
+def daemon_logs(
+    follow: Annotated[bool, typer.Option("--follow", "-f", help="Tail logs")] = False,
+    lines: Annotated[int, typer.Option("--lines", "-n", help="Number of lines")] = 50,
+) -> None:
+    """View daemon log output."""
+    from .daemon.config import DaemonConfig
+
+    log_path = Path(DaemonConfig().log_file).expanduser()
+    if not log_path.exists():
+        console.print("[yellow]No daemon log file found[/yellow]")
+        raise typer.Exit(1)
+
+    if follow:
+        # Use tail -f via subprocess
+        subprocess.run(["tail", "-f", str(log_path)])
+    else:
+        text = log_path.read_text()
+        tail = "\n".join(text.splitlines()[-lines:])
+        console.print(tail)
+
+
+# ---------------------------------------------------------------------------
+# Cron commands
+# ---------------------------------------------------------------------------
+
+
+@cron_cli.command("list", help="List scheduled cron jobs")
+def cron_list() -> None:
+    """List all configured cron jobs."""
+    cfg = load_config()
+    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+        console.print("[yellow]No cron jobs configured[/yellow]")
+        console.print("[dim]Add jobs in config.toml under [[daemon.scheduler.jobs]][/dim]")
+        return
+
+    table = Table(title="Cron Jobs")
+    table.add_column("Name", style="cyan")
+    table.add_column("Schedule", style="magenta")
+    table.add_column("Enabled", style="green")
+    table.add_column("Notify", style="yellow")
+    table.add_column("Timeout", style="blue")
+    table.add_column("Command", style="white", max_width=40)
+
+    for job in cfg.daemon.scheduler.jobs:
+        table.add_row(
+            job.name,
+            job.schedule,
+            "✅" if job.enabled else "❌",
+            "🔔" if job.notify else "🔕",
+            f"{job.timeout}s",
+            job.command[:40] + ("…" if len(job.command) > 40 else ""),
+        )
+
+    console.print(table)
+
+
+@cron_cli.command("add", help="Add a new cron job")
+def cron_add(
+    name: Annotated[str, typer.Argument(help="Job name")],
+    schedule: Annotated[str, typer.Option("--schedule", "-s", help="Cron expression")],
+    command: Annotated[str, typer.Option("--command", "-c", help="Agent command to run")],
+    notify: Annotated[bool, typer.Option("--notify", help="Send notification on completion")] = True,
+    timeout: Annotated[int, typer.Option("--timeout", help="Timeout in seconds")] = 300,
+    skill: Annotated[str | None, typer.Option("--skill", help="Skill to activate")] = None,
+) -> None:
+    """Add a new cron job to the config."""
+    from .daemon.config import CronJobConfig, DaemonConfig, SchedulerConfig
+
+    cfg = load_config()
+    if cfg.daemon is None:
+        cfg.daemon = DaemonConfig()
+    if cfg.daemon.scheduler is None:
+        cfg.daemon.scheduler = SchedulerConfig()
+
+    new_job = CronJobConfig(
+        name=name,
+        schedule=schedule,
+        command=command,
+        notify=notify,
+        timeout=timeout,
+        skill=skill,
+    )
+    cfg.daemon.scheduler.jobs.append(new_job)
+    save_config(cfg)
+    console.print(f"[green]Added cron job '{name}' with schedule '{schedule}'[/green]")
+
+
+@cron_cli.command("run", help="Run a cron job immediately")
+def cron_run(
+    name: Annotated[str, typer.Argument(help="Job name to run")],
+) -> None:
+    """Run a cron job immediately (outside the daemon)."""
+    cfg = load_config()
+    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+        console.print("[red]No cron jobs configured[/red]")
+        raise typer.Exit(1)
+
+    job_cfg = next((j for j in cfg.daemon.scheduler.jobs if j.name == name), None)
+    if not job_cfg:
+        console.print(f"[red]Job '{name}' not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Running job '{name}'...[/green]")
+    console.print(f"[dim]Command: {job_cfg.command}[/dim]")
+
+    agent = Agent()
+    work_dir = Path(job_cfg.work_dir) if job_cfg.work_dir else None
+    result = asyncio.run(agent.run(job_cfg.command, work_dir=work_dir))
+    console.print(Panel(Markdown(result), title=f"Job: {name}", border_style="green"))
+
+
+@cron_cli.command("enable", help="Enable a cron job")
+def cron_enable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
+    cfg = load_config()
+    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+        console.print("[red]No cron jobs configured[/red]")
+        raise typer.Exit(1)
+    for job in cfg.daemon.scheduler.jobs:
+        if job.name == name:
+            job.enabled = True
+            save_config(cfg)
+            console.print(f"[green]Enabled job '{name}'[/green]")
+            return
+    console.print(f"[red]Job '{name}' not found[/red]")
+    raise typer.Exit(1)
+
+
+@cron_cli.command("disable", help="Disable a cron job")
+def cron_disable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
+    cfg = load_config()
+    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+        console.print("[red]No cron jobs configured[/red]")
+        raise typer.Exit(1)
+    for job in cfg.daemon.scheduler.jobs:
+        if job.name == name:
+            job.enabled = False
+            save_config(cfg)
+            console.print(f"[green]Disabled job '{name}'[/green]")
+            return
+    console.print(f"[red]Job '{name}' not found[/red]")
+    raise typer.Exit(1)
+
 
 @acp.command("serve", help="Run AMCP as an ACP-compliant agent server (stdio transport)")
 def acp_serve(
