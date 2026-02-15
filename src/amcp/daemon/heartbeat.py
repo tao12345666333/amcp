@@ -8,6 +8,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from ..event_bus import Event, EventType, get_event_bus
 from .config import HeartbeatConfig
@@ -271,7 +272,3 @@ class HeartbeatMonitor:
     @property
     def is_running(self) -> bool:
         return self._running
-
-
-# Needed for shutil.disk_usage Path.home()
-from pathlib import Path  # noqa: E402
