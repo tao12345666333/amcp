@@ -99,7 +99,11 @@ class EventReactor:
     async def stop(self) -> None:
         self._running = False
         if self._server:
-            self._server.should_exit = True
+            self._server.close()
+            try:
+                await self._server.wait_closed()
+            except Exception:
+                pass
         logger.info("EventReactor stopped")
 
     # ------------------------------------------------------------------

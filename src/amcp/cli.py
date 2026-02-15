@@ -146,7 +146,7 @@ def daemon_start(
     if daemon_cfg.reactor.enabled:
         console.print(f"[dim]  Reactor: port {daemon_cfg.reactor.listen_port}[/dim]")
 
-    asyncio.run(daemon.start(foreground=foreground or True))
+    asyncio.run(daemon.start(foreground=foreground))
 
 
 @daemon_cli.command("stop", help="Stop the running AMCP daemon")
