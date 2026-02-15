@@ -474,9 +474,6 @@ def _decode_daemon(raw: Mapping[str, object] | None) -> DaemonConfig | None:
 
     return DaemonConfig(
         enabled=bool(raw.get("enabled", True)),
-        pid_file=str(raw.get("pid_file", DaemonConfig.pid_file)),
-        log_file=str(raw.get("log_file", DaemonConfig.log_file)),
-        log_level=str(raw.get("log_level", "info")),
         heartbeat=hb,
         scheduler=sched,
         reactor=react,
@@ -489,9 +486,6 @@ def _encode_daemon(cfg: DaemonConfig | None) -> dict | None:
         return None
     out: dict[str, Any] = {
         "enabled": cfg.enabled,
-        "pid_file": cfg.pid_file,
-        "log_file": cfg.log_file,
-        "log_level": cfg.log_level,
     }
     # Heartbeat
     out["heartbeat"] = {

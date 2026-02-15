@@ -1,0 +1,26 @@
+# AMCP — Docker Compose example
+#
+# Start:
+#   docker compose up -d
+#
+# Logs:
+#   docker compose logs -f
+#
+# With config:
+#   Place your config.toml in the same directory and it will be mounted.
+
+services:
+  amcp:
+    build: ..
+    ports:
+      - "4096:4096"
+    volumes:
+      - ./config.toml:/root/.config/amcp/config.toml:ro
+      - amcp-data:/root/.config/amcp
+    environment:
+      - PYTHONUNBUFFERED=1
+      # - AMCP_MODEL_API_KEY=sk-xxxx
+    restart: unless-stopped
+
+volumes:
+  amcp-data:
