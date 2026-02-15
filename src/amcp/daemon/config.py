@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
@@ -55,12 +54,14 @@ class ReactorConfig:
 
 @dataclass
 class DaemonConfig:
-    """Top-level daemon configuration."""
+    """Top-level daemon configuration.
+
+    Manages application-level background services (scheduler, reactor,
+    health checks).  Process lifecycle (PID, logging, restart) should be
+    handled by the deployment platform (Docker, systemd, etc.).
+    """
 
     enabled: bool = True
-    pid_file: str = str(Path.home() / ".config" / "amcp" / "amcp.pid")
-    log_file: str = str(Path.home() / ".config" / "amcp" / "logs" / "daemon.log")
-    log_level: str = "info"
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     reactor: ReactorConfig = field(default_factory=ReactorConfig)

@@ -217,57 +217,45 @@ class TestTaskRunner:
 
 
 # ---------------------------------------------------------------------------
-# AMCPDaemon
+# BackgroundServices
 # ---------------------------------------------------------------------------
 
 
-class TestAMCPDaemon:
-    def test_pid_file_management(self, tmp_path):
-        from amcp.daemon.config import DaemonConfig
-        from amcp.daemon.daemon import AMCPDaemon
+class TestBackgroundServices:
+    def test_initial_state(self):
+        from amcp.daemon.daemon import BackgroundServices
 
-        pid_file = tmp_path / "test.pid"
-        cfg = DaemonConfig(pid_file=str(pid_file))
-
-        daemon = AMCPDaemon(config=cfg)
-        daemon._write_pid()
-        assert pid_file.exists()
-        assert pid_file.read_text() == str(os.getpid())
-
-        daemon._remove_pid()
-        assert not pid_file.exists()
-
-    def test_read_pid(self, tmp_path):
-        from amcp.daemon.config import DaemonConfig
-        from amcp.daemon.daemon import AMCPDaemon
-
-        pid_file = tmp_path / "test.pid"
-        cfg = DaemonConfig(pid_file=str(pid_file))
-
-        # No file → None
-        assert AMCPDaemon.read_pid(cfg) is None
-
-        # Write PID
-        pid_file.write_text("12345")
-        assert AMCPDaemon.read_pid(cfg) == 12345
-
-    def test_is_running_false(self, tmp_path):
-        from amcp.daemon.config import DaemonConfig
-        from amcp.daemon.daemon import AMCPDaemon
-
-        cfg = DaemonConfig(pid_file=str(tmp_path / "nope.pid"))
-        assert AMCPDaemon.is_running(cfg) is False
+        svc = BackgroundServices()
+        assert svc.is_running is False
 
     def test_get_status(self):
-        from amcp.daemon.daemon import AMCPDaemon
+        from amcp.daemon.daemon import BackgroundServices
 
-        daemon = AMCPDaemon()
-        status = daemon.get_status()
+        svc = BackgroundServices()
+        status = svc.get_status()
         assert status["running"] is False
         assert "heartbeat" in status
         assert "scheduler" in status
         assert "reactor" in status
         assert "task_runner" in status
+
+    @pytest.mark.asyncio
+    async def test_start_stop(self):
+        from amcp.daemon.config import DaemonConfig, HeartbeatConfig, ReactorConfig, SchedulerConfig
+        from amcp.daemon.daemon import BackgroundServices
+
+        cfg = DaemonConfig(
+            heartbeat=HeartbeatConfig(enabled=False),
+            scheduler=SchedulerConfig(enabled=False),
+            reactor=ReactorConfig(enabled=False),
+        )
+        svc = BackgroundServices(config=cfg)
+        await svc.start()
+        assert svc.is_running is True
+        assert svc.task_runner is not None
+
+        await svc.stop()
+        assert svc.is_running is False
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +332,6 @@ class TestDaemonConfigRoundtrip:
 
         raw = {
             "enabled": True,
-            "log_level": "debug",
             "heartbeat": {"interval": 30, "max_memory_mb": 256},
             "scheduler": {
                 "timezone": "Asia/Shanghai",
@@ -364,7 +351,6 @@ class TestDaemonConfigRoundtrip:
 
         cfg = _decode_daemon(raw)
         assert cfg is not None
-        assert cfg.log_level == "debug"
         assert cfg.heartbeat.interval == 30
         assert cfg.heartbeat.max_memory_mb == 256
         assert cfg.scheduler.timezone == "Asia/Shanghai"
@@ -375,7 +361,6 @@ class TestDaemonConfigRoundtrip:
 
         encoded = _encode_daemon(cfg)
         assert encoded is not None
-        assert encoded["log_level"] == "debug"
         assert encoded["heartbeat"]["interval"] == 30
         assert encoded["reactor"]["listen_port"] == 9090
 

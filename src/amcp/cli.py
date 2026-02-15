@@ -105,115 +105,30 @@ app.add_typer(cron_cli, name="cron")
 
 
 # ---------------------------------------------------------------------------
-# Daemon commands
+# Daemon commands (simplified — lifecycle is managed by Docker / systemd)
 # ---------------------------------------------------------------------------
 
 
-@daemon_cli.command("start", help="Start the AMCP daemon")
-def daemon_start(
-    foreground: Annotated[
-        bool,
-        typer.Option("--foreground", "-f", help="Run in foreground (for debugging)"),
-    ] = False,
-    config_file: Annotated[
-        str | None,
-        typer.Option("--config", "-c", help="Path to a custom config file"),
-    ] = None,
-) -> None:
-    """Start the AMCP daemon with heartbeat and cron scheduler."""
-    from .daemon.config import DaemonConfig
-    from .daemon.daemon import AMCPDaemon
-
-    # Check if already running
-    if AMCPDaemon.is_running():
-        pid = AMCPDaemon.read_pid()
-        console.print(f"[yellow]Daemon already running (PID {pid})[/yellow]")
-        raise typer.Exit(1)
-
-    cfg = load_config()
-    daemon_cfg = cfg.daemon or DaemonConfig()
-
-    def _agent_factory():
-        return Agent()
-
-    daemon = AMCPDaemon(config=daemon_cfg, agent_factory=_agent_factory)
-
-    console.print("[green]Starting AMCP Daemon...[/green]")
-    if daemon_cfg.scheduler.enabled:
-        console.print(f"[dim]  Scheduler: {len(daemon_cfg.scheduler.jobs)} jobs configured[/dim]")
-    if daemon_cfg.heartbeat.enabled:
-        console.print(f"[dim]  Heartbeat: every {daemon_cfg.heartbeat.interval}s[/dim]")
-    if daemon_cfg.reactor.enabled:
-        console.print(f"[dim]  Reactor: port {daemon_cfg.reactor.listen_port}[/dim]")
-
-    asyncio.run(daemon.start(foreground=foreground))
-
-
-@daemon_cli.command("stop", help="Stop the running AMCP daemon")
-def daemon_stop() -> None:
-    """Stop the running AMCP daemon."""
-    from .daemon.daemon import AMCPDaemon
-
-    pid = AMCPDaemon.read_pid()
-    if pid is None:
-        console.print("[yellow]No daemon PID file found[/yellow]")
-        raise typer.Exit(1)
-
-    import signal as sig_mod
-
-    try:
-        os.kill(pid, sig_mod.SIGTERM)
-        console.print(f"[green]Sent SIGTERM to daemon (PID {pid})[/green]")
-    except ProcessLookupError:
-        console.print(f"[yellow]Daemon process {pid} not found — cleaning up PID file[/yellow]")
-        from .daemon.config import DaemonConfig
-
-        Path(DaemonConfig().pid_file).expanduser().unlink(missing_ok=True)
-    except PermissionError:
-        console.print(f"[red]Permission denied sending signal to PID {pid}[/red]")
-        raise typer.Exit(1) from None
-
-
-@daemon_cli.command("status", help="Show daemon status")
+@daemon_cli.command("status", help="Show background services configuration")
 def daemon_status() -> None:
-    """Check whether the daemon is running and show its status."""
-    from .daemon.daemon import AMCPDaemon
+    """Show the daemon / background services configuration."""
+    cfg = load_config()
+    if cfg.daemon is None:
+        console.print("[yellow]No daemon section in config.toml[/yellow]")
+        console.print("[dim]Background services are started automatically with 'amcp serve'.[/dim]")
+        return
 
-    if AMCPDaemon.is_running():
-        pid = AMCPDaemon.read_pid()
-        console.print(f"[green]Daemon is running (PID {pid})[/green]")
-        cfg = load_config()
-        if cfg.daemon:
-            if cfg.daemon.scheduler.enabled:
-                console.print(f"  Scheduler: {len(cfg.daemon.scheduler.jobs)} jobs configured")
-            if cfg.daemon.heartbeat.enabled:
-                console.print(f"  Heartbeat: every {cfg.daemon.heartbeat.interval}s")
-            if cfg.daemon.reactor.enabled:
-                console.print(f"  Reactor: port {cfg.daemon.reactor.listen_port}")
-    else:
-        console.print("[yellow]Daemon is not running[/yellow]")
-
-
-@daemon_cli.command("logs", help="View daemon logs")
-def daemon_logs(
-    follow: Annotated[bool, typer.Option("--follow", "-f", help="Tail logs")] = False,
-    lines: Annotated[int, typer.Option("--lines", "-n", help="Number of lines")] = 50,
-) -> None:
-    """View daemon log output."""
-    from .daemon.config import DaemonConfig
-
-    log_path = Path(DaemonConfig().log_file).expanduser()
-    if not log_path.exists():
-        console.print("[yellow]No daemon log file found[/yellow]")
-        raise typer.Exit(1)
-
-    if follow:
-        # Use tail -f via subprocess
-        subprocess.run(["tail", "-f", str(log_path)])
-    else:
-        text = log_path.read_text()
-        tail = "\n".join(text.splitlines()[-lines:])
-        console.print(tail)
+    console.print("[bold]Background Services Configuration[/bold]")
+    console.print(f"  Enabled: {'✅' if cfg.daemon.enabled else '❌'}")
+    if cfg.daemon.heartbeat.enabled:
+        console.print(f"  Heartbeat: every {cfg.daemon.heartbeat.interval}s")
+    if cfg.daemon.scheduler.enabled:
+        console.print(f"  Scheduler: {len(cfg.daemon.scheduler.jobs)} jobs configured")
+    if cfg.daemon.reactor.enabled:
+        console.print(f"  Reactor: port {cfg.daemon.reactor.listen_port}")
+    console.print()
+    console.print("[dim]Start with: amcp serve (background services launch automatically)[/dim]")
+    console.print("[dim]Deploy with: docker / systemd / supervisor[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -541,33 +456,56 @@ def serve_command(
         bool,
         typer.Option("--telegram", help="Start Telegram bot alongside the server"),
     ] = False,
+    scheduler: Annotated[
+        bool,
+        typer.Option("--scheduler", help="Enable cron scheduler (default: from config)"),
+    ] = False,
+    reactor: Annotated[
+        bool,
+        typer.Option("--reactor", help="Enable webhook reactor (default: from config)"),
+    ] = False,
 ) -> None:
     """Start AMCP as an HTTP/WebSocket server.
 
     This allows remote clients to connect and interact with AMCP agents.
+    Background services (scheduler, reactor, health checks) are started
+    automatically based on config.toml settings or CLI flags.
 
     Examples:
         amcp serve                          # Start on localhost:4096
         amcp serve --port 8080             # Use custom port
         amcp serve --host 0.0.0.0          # Listen on all interfaces
         amcp serve -w /path/to/project     # Set default working directory
+        amcp serve --scheduler             # Enable cron scheduler
 
     API Documentation:
         Once running, visit http://localhost:4096/docs for API docs.
 
     Connect with:
         amcp attach http://localhost:4096   # Connect CLI to running server
+
+    Deploy with Docker or systemd for production.
     """
     from .server import run_server
 
     if telegram_enabled:
         _start_telegram_bot(work_dir)
 
+    # Build daemon config from config.toml + CLI overrides
+    cfg = load_config()
+    daemon_cfg = cfg.daemon
+    if daemon_cfg and (scheduler or reactor):
+        if scheduler:
+            daemon_cfg.scheduler.enabled = True
+        if reactor:
+            daemon_cfg.reactor.enabled = True
+
     run_server(
         host=host,
         port=port,
         work_dir=str(work_dir) if work_dir else None,
         reload=reload,
+        daemon_config=daemon_cfg,
     )
 
 
