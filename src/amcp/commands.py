@@ -475,6 +475,9 @@ def _make_skills_command(skill_manager) -> SlashCommand:
         from .skills import get_skill_manager
 
         sm = skill_manager or get_skill_manager()
+        # Re-discover skills to pick up any newly created skills
+        if context.work_dir:
+            sm.discover_skills(context.work_dir)
 
         sub_args = args.strip().split(maxsplit=1)
         subcommand = sub_args[0].lower() if sub_args else "list"

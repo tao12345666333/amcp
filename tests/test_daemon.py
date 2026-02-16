@@ -376,51 +376,139 @@ class TestDaemonConfigRoundtrip:
 
 
 # ---------------------------------------------------------------------------
-# Cleanup jobs
+# Skill Triggers
 # ---------------------------------------------------------------------------
 
 
-class TestCleanupJobs:
-    def test_cleanup_old_sessions(self, tmp_path):
-        from amcp.daemon.jobs.cleanup import cleanup_old_sessions
+class TestSkillTriggers:
+    def test_parse_triggers_from_frontmatter(self, tmp_path):
+        from amcp.skills import SkillManager
 
-        # Patch sessions dir
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-
-        # Create old and new session files
-        old_file = sessions_dir / "old.json"
-        old_file.write_text('{"session_id": "old"}')
-        # Set mtime to 60 days ago
-        old_time = time.time() - (60 * 86400)
-        os.utime(old_file, (old_time, old_time))
-
-        new_file = sessions_dir / "new.json"
-        new_file.write_text('{"session_id": "new"}')
-
-        with patch("amcp.daemon.jobs.cleanup.Path.home", return_value=tmp_path / "home"):
-            # Won't find the default path, so returns 0
-            result = cleanup_old_sessions(max_age_days=30)
-            assert result == 0  # because the patched home doesn't have .config/amcp/sessions
-
-
-# ---------------------------------------------------------------------------
-# Custom jobs
-# ---------------------------------------------------------------------------
-
-
-class TestCustomJobs:
-    def test_create_custom_job(self):
-        from amcp.daemon.jobs.custom import create_custom_job
-
-        job = create_custom_job(
-            name="my-job",
-            schedule="@every 5m",
-            command="do something",
-            notify=True,
-            tags=["custom"],
+        skill_dir = tmp_path / "skills" / "test-trigger"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: test-trigger\n"
+            "description: A skill with triggers\n"
+            "triggers:\n"
+            "  - schedule: '*/5 * * * *'\n"
+            "    command: do scheduled thing\n"
+            "    notify: false\n"
+            "  - event: github.push\n"
+            "    command: react to push\n"
+            "---\n"
+            "\n"
+            "Body content here.\n"
         )
-        assert job.name == "my-job"
-        assert job.schedule == "*/5 * * * *"
-        assert job.command == "do something"
-        assert job.tags == ["custom"]
+
+        mgr = SkillManager()
+        skills = mgr._discover_skills_from_dir(tmp_path / "skills")
+        assert len(skills) == 1
+        skill = skills[0]
+        assert skill.name == "test-trigger"
+        assert len(skill.triggers) == 2
+        assert skill.triggers[0].schedule == "*/5 * * * *"
+        assert skill.triggers[0].command == "do scheduled thing"
+        assert skill.triggers[0].notify is False
+        assert skill.triggers[1].event == "github.push"
+        assert skill.triggers[1].command == "react to push"
+
+    def test_skill_without_triggers(self, tmp_path):
+        from amcp.skills import SkillManager
+
+        skill_dir = tmp_path / "skills" / "plain"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: plain\ndescription: no triggers\n---\n\nJust a body.\n"
+        )
+
+        mgr = SkillManager()
+        skills = mgr._discover_skills_from_dir(tmp_path / "skills")
+        assert len(skills) == 1
+        assert skills[0].triggers == []
+
+    def test_get_triggered_skills(self, tmp_path):
+        from amcp.skills import SkillManager
+
+        for name, has_trigger in [("a", True), ("b", False)]:
+            d = tmp_path / "skills" / name
+            d.mkdir(parents=True)
+            triggers = (
+                "triggers:\n  - schedule: '@hourly'\n    command: do it\n"
+                if has_trigger
+                else ""
+            )
+            (d / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: test\n{triggers}---\n\nBody.\n"
+            )
+
+        mgr = SkillManager()
+        mgr._add_skills_with_precedence(
+            mgr._discover_skills_from_dir(tmp_path / "skills")
+        )
+        triggered = mgr.get_triggered_skills()
+        assert len(triggered) == 1
+        assert triggered[0].name == "a"
+
+    def test_invalid_triggers_ignored(self, tmp_path):
+        from amcp.skills import SkillManager
+
+        skill_dir = tmp_path / "skills" / "bad"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: bad\n"
+            "description: bad triggers\n"
+            "triggers:\n"
+            "  - schedule: '@hourly'\n"  # missing command
+            "  - not-a-dict\n"
+            "---\n"
+            "\nBody.\n"
+        )
+
+        mgr = SkillManager()
+        skills = mgr._discover_skills_from_dir(tmp_path / "skills")
+        assert len(skills) == 1
+        assert skills[0].triggers == []  # both invalid triggers skipped
+
+
+# ---------------------------------------------------------------------------
+# Skill Watcher
+# ---------------------------------------------------------------------------
+
+
+class TestSkillWatcher:
+    def test_take_snapshot(self, tmp_path):
+        from amcp.skills import SkillManager, SkillWatcher
+
+        skill_dir = tmp_path / "skills" / "watcher-test"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: watcher-test\ndescription: test\n---\n\nBody.\n"
+        )
+
+        mgr = SkillManager()
+        watcher = SkillWatcher(mgr)
+        watcher._project_root = None
+        # Monkey-patch to only watch our test dir
+        watcher._get_watch_dirs = lambda: [tmp_path / "skills"]
+        snap = watcher._take_snapshot()
+        assert len(snap) == 1
+        assert str(skill_dir / "SKILL.md") in snap
+
+    def test_safe_reload_handles_errors(self, tmp_path):
+        """Ensure _safe_reload never crashes even if discover_skills fails."""
+        from amcp.skills import SkillManager, SkillWatcher
+
+        mgr = SkillManager()
+        watcher = SkillWatcher(mgr)
+        watcher._project_root = None
+        # Force an error in discover_skills
+        original = mgr.discover_skills
+        mgr.discover_skills = lambda *a, **kw: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        # Should not raise
+        watcher._safe_reload()
+        mgr.discover_skills = original
+

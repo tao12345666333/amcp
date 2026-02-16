@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Start background services (scheduler, reactor, heartbeat)
     svc = None
+    skill_watcher = None
     if _daemon_config and _daemon_config.enabled:
         from ..daemon.daemon import BackgroundServices
 
@@ -59,6 +60,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             print(f"   Scheduler: {len(_daemon_config.scheduler.jobs)} jobs")
         if _daemon_config.reactor.enabled:
             print(f"   Reactor: port {_daemon_config.reactor.listen_port}")
+    else:
+        # Still enable skill hot reload even without full background services
+        from ..skills import SkillWatcher, get_skill_manager
+
+        skill_watcher = SkillWatcher(get_skill_manager())
+        await skill_watcher.start()
+        print("   Skill hot reload: enabled")
 
     yield
 
@@ -66,6 +74,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if svc:
         await svc.stop()
         print("   Background services stopped")
+    if skill_watcher:
+        await skill_watcher.stop()
 
     print("\n👋 AMCP Server shutting down...")
 
