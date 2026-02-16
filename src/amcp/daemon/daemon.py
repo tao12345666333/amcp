@@ -55,6 +55,7 @@ class BackgroundServices:
         self.scheduler: CronScheduler | None = None
         self.reactor: EventReactor | None = None
         self.task_runner: TaskRunner | None = None
+        self._skill_watcher: Any = None  # SkillWatcher (lazy import)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -91,6 +92,8 @@ class BackgroundServices:
                 agent_factory=self._agent_factory,
             )
             self.scheduler.load_jobs_from_config()
+            # Also load triggers from skills
+            self._load_skill_triggers()
             asyncio.create_task(self.scheduler.start())
 
         # 4. Reactor
@@ -100,6 +103,15 @@ class BackgroundServices:
                 schedule_fn=self._schedule_from_reactor,
             )
             asyncio.create_task(self.reactor.start())
+
+        # 5. Skill watcher (hot reload)
+        from ..skills import SkillWatcher, get_skill_manager
+
+        self._skill_watcher = SkillWatcher(
+            get_skill_manager(),
+            on_reload=self._on_skills_reloaded,
+        )
+        asyncio.create_task(self._skill_watcher.start())
 
         await bus.emit(
             Event(
@@ -124,6 +136,9 @@ class BackgroundServices:
 
         self._running = False
 
+        if self._skill_watcher:
+            await self._skill_watcher.stop()
+            self._skill_watcher = None
         if self.scheduler:
             await self.scheduler.stop()
         if self.heartbeat:
@@ -184,4 +199,57 @@ class BackgroundServices:
             "task_runner": {
                 "active_tasks": self.task_runner.active_count if self.task_runner else 0,
             },
+            "skill_watcher": {
+                "enabled": self._skill_watcher is not None,
+            },
         }
+
+    # ------------------------------------------------------------------
+    # Skill triggers
+    # ------------------------------------------------------------------
+
+    def _load_skill_triggers(self) -> None:
+        """Scan skills for triggers and register as cron / reactor rules."""
+        from ..skills import get_skill_manager
+        from .scheduler import CronJob, _expand_schedule
+
+        mgr = get_skill_manager()
+        # Remove previously registered skill-triggered jobs
+        if self.scheduler:
+            to_remove = [n for n in self.scheduler.jobs if n.startswith("skill:")]
+            for name in to_remove:
+                self.scheduler.remove_job(name)
+
+        for skill in mgr.get_triggered_skills():
+            for i, trigger in enumerate(skill.triggers):
+                if trigger.schedule and self.scheduler:
+                    job_name = f"skill:{skill.name}" if i == 0 else f"skill:{skill.name}:{i}"
+                    job = CronJob(
+                        name=job_name,
+                        schedule=_expand_schedule(trigger.schedule),
+                        command=trigger.command,
+                        skill=skill.name,
+                        notify=trigger.notify,
+                        timeout=trigger.timeout,
+                        work_dir=trigger.work_dir,
+                        tags=["skill-trigger", skill.name],
+                    )
+                    self.scheduler.add_job(job)
+                    logger.info("Registered skill trigger: %s (%s)", job_name, trigger.schedule)
+
+                if trigger.event and self.reactor:
+                    from .reactor import ReactionRule
+
+                    rule = ReactionRule(
+                        name=f"skill:{skill.name}:{trigger.event}",
+                        event_type=trigger.event,
+                        command_template=trigger.command,
+                        skill=skill.name,
+                    )
+                    self.reactor.add_rule(rule)
+                    logger.info("Registered skill event rule: %s (%s)", skill.name, trigger.event)
+
+    def _on_skills_reloaded(self) -> None:
+        """Called by SkillWatcher after successful skill re-discovery."""
+        self._load_skill_triggers()
+        logger.info("Skill triggers re-registered after hot reload")

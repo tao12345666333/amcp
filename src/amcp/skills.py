@@ -6,6 +6,7 @@ to provide specialized capabilities to the agent. They are defined as
 markdown files with YAML frontmatter containing:
 - name: The skill name
 - description: A brief description of what the skill provides
+- triggers (optional): Schedule or event triggers for autonomous execution
 
 Skills are discovered from (in order of increasing precedence):
 - Built-in skills: Bundled with AMCP (e.g., skill-creator)
@@ -15,11 +16,14 @@ Skills are discovered from (in order of increasing precedence):
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     import yaml
@@ -27,13 +31,34 @@ except ImportError:
     yaml = None  # type: ignore
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 # Regex to parse YAML frontmatter
 FRONTMATTER_REGEX = re.compile(r"^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)", re.MULTILINE)
 
 # Default config directory
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+
+
+@dataclass
+class SkillTrigger:
+    """A trigger that causes a skill to execute autonomously.
+
+    Supports two kinds:
+    - **schedule**: cron expression (e.g. ``"*/15 * * * *"``, ``"@hourly"``)
+    - **event**: event type string (e.g. ``"github.push"``, ``"github.pull_request.opened"``)
+
+    Exactly one of ``schedule`` or ``event`` must be set.
+    """
+
+    command: str  # prompt to send to the agent
+    schedule: str | None = None  # cron expression
+    event: str | None = None  # event type string
+    notify: bool = True
+    timeout: int = 300
+    work_dir: str | None = None
 
 
 @dataclass
@@ -45,6 +70,7 @@ class SkillMetadata:
     location: str
     body: str
     disabled: bool = False
+    triggers: list[SkillTrigger] = field(default_factory=list)
 
 
 @dataclass
@@ -200,15 +226,43 @@ class SkillManager:
             if not isinstance(name, str):
                 return None
 
+            # Parse triggers
+            triggers = self._parse_triggers(frontmatter.get("triggers"))
+
             return SkillMetadata(
                 name=name,
                 description=description if isinstance(description, str) else "",
                 location=str(file_path),
                 body=body,
                 disabled=name in self._disabled_skill_names,
+                triggers=triggers,
             )
         except Exception:
             return None
+
+    @staticmethod
+    def _parse_triggers(raw: Any) -> list[SkillTrigger]:
+        """Parse triggers from frontmatter."""
+        if not raw or not isinstance(raw, list):
+            return []
+        triggers: list[SkillTrigger] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            command = item.get("command", "")
+            if not command:
+                continue
+            triggers.append(
+                SkillTrigger(
+                    command=str(command),
+                    schedule=str(item["schedule"]) if item.get("schedule") else None,
+                    event=str(item["event"]) if item.get("event") else None,
+                    notify=bool(item.get("notify", True)),
+                    timeout=int(item.get("timeout", 300)),
+                    work_dir=str(item["work_dir"]) if item.get("work_dir") else None,
+                )
+            )
+        return triggers
 
     def _parse_simple_yaml(self, yaml_text: str) -> dict:
         """Simple YAML parser for name/description when PyYAML not available."""
@@ -356,6 +410,120 @@ class SkillManager:
         if skill:
             return skill.body
         return None
+
+    def get_triggered_skills(self) -> list[SkillMetadata]:
+        """Get all skills that have at least one trigger defined."""
+        return [s for s in self.get_skills() if s.triggers]
+
+
+# ---------------------------------------------------------------------------
+# Skill Watcher — debounced hot reload
+# ---------------------------------------------------------------------------
+
+
+class SkillWatcher:
+    """Watch skill directories for changes and trigger re-discovery.
+
+    Uses a simple polling approach (no external dependencies) with debounce
+    to handle partial writes safely.  When a file change is detected, the
+    watcher waits ``debounce_seconds`` before re-discovering skills.  This
+    ensures that a SKILL.md being written incrementally (e.g., by the
+    skill-creator) is fully flushed before parsing.
+
+    Parse failures are logged as warnings and never crash the server.
+    """
+
+    def __init__(
+        self,
+        skill_manager: SkillManager,
+        *,
+        poll_interval: float = 5.0,
+        debounce_seconds: float = 2.0,
+        on_reload: Callable[[], Any] | None = None,
+    ):
+        self._mgr = skill_manager
+        self._poll_interval = poll_interval
+        self._debounce_seconds = debounce_seconds
+        self._on_reload = on_reload  # callback after successful reload
+        self._running = False
+        self._task: asyncio.Task[None] | None = None
+        self._snapshot: dict[str, float] = {}  # path -> mtime
+
+    # -- lifecycle --
+
+    async def start(self, project_root: Path | None = None) -> None:
+        """Start watching skill directories."""
+        self._running = True
+        self._project_root = project_root
+        self._snapshot = self._take_snapshot()
+        self._task = asyncio.create_task(self._watch_loop())
+        logger.info("SkillWatcher started (poll=%.1fs, debounce=%.1fs)", self._poll_interval, self._debounce_seconds)
+
+    async def stop(self) -> None:
+        """Stop watching."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+        logger.info("SkillWatcher stopped")
+
+    # -- internals --
+
+    def _get_watch_dirs(self) -> list[Path]:
+        """Collect all skill directories to watch."""
+        dirs = [
+            self._mgr.get_builtin_skills_dir(),
+            self._mgr.get_user_skills_dir(),
+        ]
+        if self._project_root:
+            dirs.append(self._mgr.get_project_skills_dir(self._project_root))
+            dirs.append(self._mgr.get_agents_skills_dir(self._project_root))
+        return [d for d in dirs if d.exists()]
+
+    def _take_snapshot(self) -> dict[str, float]:
+        """Build a {path: mtime} map of all SKILL.md files."""
+        snap: dict[str, float] = {}
+        for d in self._get_watch_dirs():
+            for skill_dir in d.iterdir():
+                if not skill_dir.is_dir():
+                    continue
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    with contextlib.suppress(OSError):
+                        snap[str(skill_file)] = skill_file.stat().st_mtime
+        return snap
+
+    async def _watch_loop(self) -> None:
+        """Poll for changes, debounce, then reload."""
+        while self._running:
+            await asyncio.sleep(self._poll_interval)
+            try:
+                new_snap = self._take_snapshot()
+                if new_snap != self._snapshot:
+                    # Something changed — debounce to let writes finish
+                    logger.debug("Skill file change detected, debouncing %.1fs…", self._debounce_seconds)
+                    await asyncio.sleep(self._debounce_seconds)
+                    # Re-snapshot after debounce (file may have changed again)
+                    new_snap = self._take_snapshot()
+                    self._snapshot = new_snap
+                    self._safe_reload()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("SkillWatcher poll error", exc_info=True)
+
+    def _safe_reload(self) -> None:
+        """Re-discover skills; never crash on error."""
+        try:
+            before = len(self._mgr.get_skills())
+            self._mgr.discover_skills(self._project_root)
+            after = len(self._mgr.get_skills())
+            logger.info("Skills reloaded: %d → %d skills", before, after)
+            if self._on_reload:
+                self._on_reload()
+        except Exception:
+            logger.warning("Failed to reload skills (partial write?)", exc_info=True)
 
 
 # Global skill manager instance

@@ -76,6 +76,7 @@ class TelegramBot:
         self._stop_event: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._notification_handler_ids: list[str] = []
+        self._skill_watcher: Any = None  # SkillWatcher (lazy import)
 
     @property
     def config(self) -> TelegramConfig:
@@ -163,13 +164,18 @@ class TelegramBot:
 
     async def start_polling(self) -> None:
         self._register_notifications()
+        await self._start_skill_watcher()
         await self._run_polling_loop()
 
     async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
         self._register_notifications()
+        await self._start_skill_watcher()
         await self._run_webhook_loop(url, listen=listen, port=port)
 
     async def stop(self) -> None:
+        if self._skill_watcher:
+            await self._skill_watcher.stop()
+            self._skill_watcher = None
         if self._stop_event:
             self._stop_event.set()
         elif self._application:
@@ -387,3 +393,12 @@ class TelegramBot:
                 return create_agent_by_name(cfg.chat.default_agent, session_id=session_id)
         spec = get_default_agent_spec()
         return Agent(spec, session_id=session_id)
+
+    async def _start_skill_watcher(self) -> None:
+        """Start skill hot-reload watcher."""
+        from ..skills import SkillWatcher, get_skill_manager
+
+        mgr = get_skill_manager()
+        self._skill_watcher = SkillWatcher(mgr)
+        await self._skill_watcher.start(project_root=self._work_dir)
+        logger.info("Telegram: SkillWatcher started for hot reload")
