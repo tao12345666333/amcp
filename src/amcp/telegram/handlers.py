@@ -20,21 +20,194 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class TelegramQueuedMessage:
-    chat_id: int
-    user_id: int
-    text: str
-
-
-@dataclass
 class TelegramSession:
     session_id: str
     agent: Any
-    created_at: datetime = field(default_factory=datetime.now)
     last_used: datetime = field(default_factory=datetime.now)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     queue: deque[TelegramQueuedMessage] = field(default_factory=deque)
     current_task: asyncio.Task | None = None
+
+
+@dataclass
+class TelegramQueuedMessage:
+    chat_id: int
+    user_id: int
+    text: str = ""
+    message_type: str = "text"
+    metadata: dict[str, Any] | None = None
+
+
+def _format_photo_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    caption = _parse_caption(message)
+    photos = getattr(message, "photo", None) or []
+    if not photos:
+        formatted = "[Photo message]" + (f" Caption: {caption}" if caption else "")
+        return formatted, None
+    largest = photos[-1]
+    result = {"file_id": largest.file_id}
+    if largest.file_size:
+        result["file_size"] = largest.file_size
+    if largest.width:
+        result["width"] = largest.width
+    if largest.height:
+        result["height"] = largest.height
+    formatted = "[Photo message]" + (f" Caption: {caption}" if caption else "")
+    return formatted, result
+
+
+def _format_audio_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    audio = getattr(message, "audio", None)
+    if audio is None:
+        return "[Audio]", None
+    duration = audio.duration or 0
+    title = audio.title or "Unknown"
+    performer = audio.performer or ""
+    result = {"file_id": audio.file_id}
+    if audio.file_size:
+        result["file_size"] = audio.file_size
+    if audio.duration:
+        result["duration"] = audio.duration
+    if audio.title:
+        result["title"] = audio.title
+    if audio.performer:
+        result["performer"] = audio.performer
+    formatted = f"[Audio: {performer} - {title} ({duration}s)]" if performer else f"[Audio: {title} ({duration}s)]"
+    return formatted, result
+
+
+def _format_video_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    video = getattr(message, "video", None)
+    caption = _parse_caption(message)
+    if video is None:
+        formatted = "[Video]" + (f" Caption: {caption}" if caption else "")
+        return formatted, None
+    duration = video.duration or 0
+    result: dict[str, Any] = {"file_id": video.file_id}
+    if video.file_size:
+        result["file_size"] = video.file_size
+    if video.width:
+        result["width"] = video.width
+    if video.height:
+        result["height"] = video.height
+    if video.duration:
+        result["duration"] = video.duration
+    formatted = f"[Video: {duration}s]" + (f" Caption: {caption}" if caption else "")
+    return formatted, result
+
+
+def _format_document_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    document = getattr(message, "document", None)
+    caption = _parse_caption(message)
+    if document is None:
+        formatted = "[Document]" + (f" Caption: {caption}" if caption else "")
+        return formatted, None
+    file_name = document.file_name or "unknown"
+    mime_type = document.mime_type or "unknown"
+    result = {"file_id": document.file_id, "file_name": document.file_name, "mime_type": document.mime_type}
+    if document.file_size:
+        result["file_size"] = document.file_size
+    formatted = f"[Document: {file_name} ({mime_type})]" + (f" Caption: {caption}" if caption else "")
+    return formatted, result
+
+
+def _format_voice_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    voice = getattr(message, "voice", None)
+    if voice is None:
+        return "[Voice]", None
+    duration = voice.duration or 0
+    result = {"file_id": voice.file_id}
+    if voice.duration:
+        result["duration"] = voice.duration
+    return f"[Voice message: {duration}s]", result
+
+
+def _format_video_note_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    video_note = getattr(message, "video_note", None)
+    if video_note is None:
+        return "[Video note]", None
+    duration = video_note.duration or 0
+    result = {"file_id": video_note.file_id}
+    if video_note.duration:
+        result["duration"] = video_note.duration
+    return f"[Video note: {duration}s]", result
+
+
+def _format_sticker_message(message: Any) -> tuple[str, dict[str, Any] | None]:
+    sticker = getattr(message, "sticker", None)
+    if sticker is None:
+        return "[Sticker]", None
+    emoji = sticker.emoji or ""
+    set_name = sticker.set_name or ""
+    result = {"file_id": sticker.file_id}
+    if sticker.width:
+        result["width"] = sticker.width
+    if sticker.height:
+        result["height"] = sticker.height
+    if sticker.emoji:
+        result["emoji"] = sticker.emoji
+    if sticker.set_name:
+        result["set_name"] = sticker.set_name
+    formatted = f"[Sticker: {emoji}]" if emoji else "[Sticker]"
+    if set_name:
+        formatted += f" from {set_name}"
+    return formatted, result
+
+
+def _message_type(message: Any) -> str:
+    if getattr(message, "text", None):
+        return "text"
+    if getattr(message, "photo", None):
+        return "photo"
+    if getattr(message, "audio", None):
+        return "audio"
+    if getattr(message, "sticker", None):
+        return "sticker"
+    if getattr(message, "video", None):
+        return "video"
+    if getattr(message, "voice", None):
+        return "voice"
+    if getattr(message, "document", None):
+        return "document"
+    if getattr(message, "video_note", None):
+        return "video_note"
+    return "unknown"
+
+
+def _parse_caption(message: Any) -> str:
+    return getattr(message, "caption", None) or ""
+
+
+def _parse_message(message: Any) -> tuple[str, str, dict[str, Any] | None]:
+    """Parse message and return (text, message_type, metadata)."""
+    msg_type = _message_type(message)
+    if msg_type == "text":
+        return getattr(message, "text", None) or "", msg_type, None
+    if msg_type == "photo":
+        text, metadata = _format_photo_message(message)
+        return text, msg_type, metadata
+    if msg_type == "audio":
+        text, metadata = _format_audio_message(message)
+        return text, msg_type, metadata
+    if msg_type == "video":
+        text, metadata = _format_video_message(message)
+        return text, msg_type, metadata
+    if msg_type == "document":
+        text, metadata = _format_document_message(message)
+        return text, msg_type, metadata
+    if msg_type == "voice":
+        text, metadata = _format_voice_message(message)
+        return text, msg_type, metadata
+    if msg_type == "video_note":
+        text, metadata = _format_video_note_message(message)
+        return text, msg_type, metadata
+    if msg_type == "sticker":
+        text, metadata = _format_sticker_message(message)
+        return text, msg_type, metadata
+    return "[Unknown message type]", "unknown", None
+
+
+_MEDIA_PARSERS: dict[str, Any] = {}
 
 
 class SessionManager:
@@ -350,13 +523,21 @@ class TelegramHandlers:
         await self._bot.send_text(update.effective_chat.id, "Shutting down.")
         await self._bot.stop()
 
-    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
         if not self._rate_limiter.allow(update.effective_user.id):
             await self._bot.send_text(update.effective_chat.id, "Rate limit exceeded.")
             return
         if not update.message or not update.message.text:
+            msg_type = _message_type(update.message)
+            if msg_type == "unknown":
+                await self._bot.send_text(update.effective_chat.id, "Unsupported message type.")
+                return
+            text, msg_type, metadata = _parse_message(update.message)
+            await self._bot.handle_media(
+                update.effective_chat.id, update.effective_user.id, text, msg_type, metadata
+            )
             return
         await self._bot.handle_prompt(
             update.effective_chat.id,

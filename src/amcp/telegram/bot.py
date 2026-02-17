@@ -212,6 +212,26 @@ class TelegramBot:
                 next_message = session.queue.popleft()
                 await self._process_message(session, next_message)
 
+    async def handle_media(
+        self, chat_id: int, user_id: int, text: str, message_type: str, metadata: dict[str, Any] | None
+    ) -> None:
+        session = self._session_manager.get_or_create_session(chat_id)
+        session.last_used = datetime.now()
+        queued_message = TelegramQueuedMessage(
+            chat_id=chat_id, user_id=user_id, text=text, message_type=message_type, metadata=metadata
+        )
+
+        if session.lock.locked():
+            session.queue.append(queued_message)
+            await self.send_text(chat_id, "Session busy. Your message was queued.")
+            return
+
+        async with session.lock:
+            await self._process_message(session, queued_message)
+            while session.queue:
+                next_message = session.queue.popleft()
+                await self._process_message(session, next_message)
+
     async def send_text(self, chat_id: int, text: str) -> None:
         await self._application.bot.send_message(chat_id=chat_id, text=text)
 
@@ -298,7 +318,12 @@ class TelegramBot:
         application.add_handler(CommandHandler("users", self._handlers.handle_users))
         application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handlers.handle_text))
+        application.add_handler(
+            MessageHandler(
+                (filters.TEXT | filters.PHOTO | filters.AUDIO | filters.VIDEO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL | filters.VIDEO_NOTE) & ~filters.COMMAND,
+                self._handlers.handle_message,
+            )
+        )
         application.add_handler(MessageHandler(filters.COMMAND, self._handlers.handle_unknown))
         return application
 
