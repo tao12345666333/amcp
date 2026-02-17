@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -210,6 +211,66 @@ def _parse_message(message: Any) -> tuple[str, str, dict[str, Any] | None]:
 _MEDIA_PARSERS: dict[str, Any] = {}
 
 
+def _exclude_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Remove None values from a dict."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _extract_reply_metadata(message: Any) -> dict[str, Any] | None:
+    """Extract metadata from a reply_to_message."""
+    reply_to = getattr(message, "reply_to_message", None)
+    if reply_to is None:
+        return None
+    from_user = getattr(reply_to, "from_user", None)
+    if from_user is None:
+        return None
+    return _exclude_none({
+        "message_id": getattr(reply_to, "message_id", None),
+        "from_user_id": getattr(from_user, "id", None),
+        "from_username": getattr(from_user, "username", None),
+        "from_is_bot": getattr(from_user, "is_bot", None),
+        "text": (getattr(reply_to, "text", "") or "")[:100],
+    })
+
+
+def _build_enriched_prompt(
+    content: str,
+    message: Any,
+    msg_type: str = "text",
+    media_metadata: dict[str, Any] | None = None,
+) -> str:
+    """Build an enriched prompt with channel metadata appended as JSON.
+
+    Inspired by bub's get_session_prompt pattern — lets the agent know
+    who sent the message, which chat it came from, and how to reply.
+    """
+    user = getattr(message, "from_user", None) or getattr(message, "effective_user", None)
+    chat = getattr(message, "chat", None)
+    meta: dict[str, Any] = {
+        "channel": "telegram",
+        "chat_id": str(getattr(message, "chat_id", "")),
+        "message_id": getattr(message, "message_id", None),
+        "type": msg_type,
+        "username": getattr(user, "username", None) if user else None,
+        "full_name": getattr(user, "full_name", None) or (
+            (getattr(user, "first_name", "") or "") + " " + (getattr(user, "last_name", "") or "")
+        ).strip() if user else None,
+        "sender_id": str(getattr(user, "id", "")) if user else None,
+        "sender_is_bot": getattr(user, "is_bot", None) if user else None,
+        "chat_type": getattr(chat, "type", None) if chat else None,
+    }
+    if media_metadata:
+        meta["media"] = media_metadata
+    reply_meta = _extract_reply_metadata(message)
+    if reply_meta:
+        meta["reply_to_message"] = reply_meta
+    date = getattr(message, "date", None)
+    if date:
+        meta["date"] = date.timestamp() if hasattr(date, "timestamp") else str(date)
+    metadata_json = json.dumps(_exclude_none(meta), ensure_ascii=False)
+    return f"{content}\n———————\n{metadata_json}"
+
+
 class SessionManager:
     def __init__(self, agent_factory: Callable[[str], Any], session_timeout: int = 3600) -> None:
         self._agent_factory = agent_factory
@@ -393,6 +454,9 @@ class TelegramHandlers:
         if not prompt:
             await self._bot.send_text(update.effective_chat.id, "Usage: /ask <prompt>")
             return
+        message = update.message
+        if message:
+            prompt = _build_enriched_prompt(prompt, message)
         await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, prompt)
 
     async def handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -529,20 +593,27 @@ class TelegramHandlers:
         if not self._rate_limiter.allow(update.effective_user.id):
             await self._bot.send_text(update.effective_chat.id, "Rate limit exceeded.")
             return
-        if not update.message or not update.message.text:
-            msg_type = _message_type(update.message)
-            if msg_type == "unknown":
-                await self._bot.send_text(update.effective_chat.id, "Unsupported message type.")
-                return
-            text, msg_type, metadata = _parse_message(update.message)
-            await self._bot.handle_media(
-                update.effective_chat.id, update.effective_user.id, text, msg_type, metadata
+        message = update.message
+        if not message:
+            return
+        msg_type = _message_type(message)
+        if msg_type == "unknown":
+            await self._bot.send_text(update.effective_chat.id, "Unsupported message type.")
+            return
+        if msg_type == "text":
+            raw_text = message.text or ""
+            enriched = _build_enriched_prompt(raw_text, message, msg_type)
+            await self._bot.handle_prompt(
+                update.effective_chat.id,
+                update.effective_user.id,
+                enriched,
             )
             return
-        await self._bot.handle_prompt(
-            update.effective_chat.id,
-            update.effective_user.id,
-            update.message.text,
+        # Media messages
+        text, msg_type, media_metadata = _parse_message(message)
+        enriched = _build_enriched_prompt(text, message, msg_type, media_metadata)
+        await self._bot.handle_media(
+            update.effective_chat.id, update.effective_user.id, enriched, msg_type, media_metadata
         )
 
     async def handle_unknown(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
