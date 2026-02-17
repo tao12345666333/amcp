@@ -147,3 +147,4 @@ Thumbs.db
 *.pid
 *.seed
 *.pid.lock
+.amcp/memory/
