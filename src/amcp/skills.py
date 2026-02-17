@@ -351,8 +351,8 @@ class SkillManager:
         Build a compact skills summary for the system prompt.
 
         This implements progressive disclosure: only a compact summary
-        (name + description) is included in the system prompt. The full
-        skill body is only loaded when the skill is activated.
+        (name + description + location) is included in the system prompt. The full
+        skill body is only loaded when the agent reads the skill file.
 
         Returns:
             Compact skills summary string, or empty string if no skills
@@ -365,7 +365,7 @@ class SkillManager:
         lines.append("<skills>")
         lines.append(
             "You can use specialized 'skills' to help you with complex tasks. "
-            "Each skill has a name and a description listed below."
+            "Each skill has a name, description, and location listed below."
         )
         lines.append("")
         lines.append(
@@ -383,15 +383,17 @@ class SkillManager:
         lines.append("- **assets/** - Templates and other files")
         lines.append("")
         lines.append(
-            "If a skill seems relevant to your current task, activate it using "
-            "/skills activate <name> to load its full instructions."
+            "If a skill seems relevant to your current task, you MUST use the `read_file` tool "
+            "on the SKILL.md file to read its full instructions before proceeding. "
+            "Once you have read the instructions, follow them exactly as documented."
         )
         lines.append("")
 
-        # List skills with their status
+        # List skills with their status and location
         for skill in skills:
             active_marker = " ⭐" if self.is_skill_active(skill.name) else ""
             lines.append(f"- **{skill.name}**{active_marker}: {skill.description}")
+            lines.append(f"  Location: `{skill.location}`")
 
         lines.append("</skills>")
         return "\n".join(lines)
