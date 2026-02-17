@@ -320,7 +320,17 @@ class TelegramBot:
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
         application.add_handler(
             MessageHandler(
-                (filters.TEXT | filters.PHOTO | filters.AUDIO | filters.VIDEO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL | filters.VIDEO_NOTE) & ~filters.COMMAND,
+                (
+                    filters.TEXT
+                    | filters.PHOTO
+                    | filters.AUDIO
+                    | filters.VIDEO
+                    | filters.VOICE
+                    | filters.Document.ALL
+                    | filters.Sticker.ALL
+                    | filters.VIDEO_NOTE
+                )
+                & ~filters.COMMAND,
                 self._handlers.handle_message,
             )
         )
