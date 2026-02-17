@@ -4,10 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .daemon.config import DaemonConfig
+from typing import Any
 
 try:
     import tomllib  # py311+
@@ -99,12 +96,36 @@ class ServerConfig:
 
 
 @dataclass
+class AutomationJobConfig:
+    """Configuration for a single automation job."""
+
+    name: str = ""
+    command: str = ""
+    skill: str | None = None
+    enabled: bool = True
+    notify: bool = True
+    timeout: int = 300
+    work_dir: str | None = None
+    tags: list[str] = field(default_factory=list)
+    schedule: str | None = None
+
+
+@dataclass
+class AutomationConfig:
+    """Lightweight automation config for external orchestrators."""
+
+    enabled: bool = True
+    default_timeout: int = 300
+    jobs: list[AutomationJobConfig] = field(default_factory=list)
+
+
+@dataclass
 class AMCPConfig:
     servers: dict[str, Server]
     chat: ChatConfig | None = None
     server: ServerConfig | None = None
     telegram: TelegramConfig | None = None
-    daemon: DaemonConfig | None = None  # Phase 8
+    automation: AutomationConfig | None = None
 
 
 _DEFAULT = {
@@ -149,6 +170,11 @@ _DEFAULT = {
             "task_completions": True,
             "error_alerts": True,
         },
+    },
+    "automation": {
+        "enabled": True,
+        "default_timeout": 300,
+        "jobs": [],
     },
 }
 
@@ -274,9 +300,14 @@ def load_config() -> AMCPConfig:
     telegram_data = data.get("telegram")
     telegram = _decode_telegram(telegram_data) if isinstance(telegram_data, dict) else None
     telegram = apply_env_overrides(telegram)
-    daemon_data = data.get("daemon")
-    daemon = _decode_daemon(daemon_data) if isinstance(daemon_data, dict) else None
-    return AMCPConfig(servers=servers, chat=chat, telegram=telegram, daemon=daemon)
+    automation_data = data.get("automation")
+    automation = _decode_automation(automation_data) if isinstance(automation_data, dict) else None
+    return AMCPConfig(
+        servers=servers,
+        chat=chat,
+        telegram=telegram,
+        automation=automation,
+    )
 
 
 def _encode_server(s: Server) -> dict:
@@ -394,9 +425,9 @@ def save_config(cfg: AMCPConfig) -> Path:
     telegram_obj = _encode_telegram(cfg.telegram)
     if telegram_obj is not None:
         data["telegram"] = telegram_obj
-    daemon_obj = _encode_daemon(cfg.daemon)
-    if daemon_obj is not None:
-        data["daemon"] = daemon_obj
+    automation_obj = _encode_automation(cfg.automation)
+    if automation_obj is not None:
+        data["automation"] = automation_obj
     with open(CONFIG_FILE, "wb") as f:
         tomli_w.dump(data, f)
     return CONFIG_FILE
@@ -411,103 +442,57 @@ def save_default_config() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Daemon config decode / encode (Phase 8)
+# Automation config decode / encode
 # ---------------------------------------------------------------------------
 
 
-def _decode_daemon(raw: Mapping[str, object] | None) -> DaemonConfig | None:
-    """Decode [daemon] section from TOML."""
+def _decode_automation(raw: Mapping[str, object] | None) -> AutomationConfig | None:
+    """Decode [automation] section from TOML."""
     if not raw:
         return None
-    from .daemon.config import (
-        CronJobConfig,
-        DaemonConfig,
-        HeartbeatConfig,
-        ReactorConfig,
-        SchedulerConfig,
-    )
 
-    # Heartbeat
-    hb_raw = raw.get("heartbeat")
-    hb = HeartbeatConfig()
-    if isinstance(hb_raw, dict):
-        hb.enabled = bool(hb_raw.get("enabled", True))
-        hb.interval = int(str(hb_raw.get("interval", 60)))
-        hb.unhealthy_threshold = int(str(hb_raw.get("unhealthy_threshold", 3)))
-        hb.check_memory = bool(hb_raw.get("check_memory", True))
-        hb.check_disk = bool(hb_raw.get("check_disk", True))
-        hb.max_memory_mb = int(str(hb_raw.get("max_memory_mb", 512)))
-
-    # Scheduler
-    sched_raw = raw.get("scheduler")
-    sched = SchedulerConfig()
-    jobs_list: list[CronJobConfig] = []
-    if isinstance(sched_raw, dict):
-        sched.enabled = bool(sched_raw.get("enabled", True))
-        sched.timezone = str(sched_raw.get("timezone", "UTC"))
-        sched.max_concurrent_jobs = int(str(sched_raw.get("max_concurrent_jobs", 3)))
-        sched.job_timeout = int(str(sched_raw.get("job_timeout", 300)))
-
-        for j in sched_raw.get("jobs", []):
-            if isinstance(j, dict):
-                jc = CronJobConfig(
-                    name=str(j.get("name", "")),
-                    schedule=str(j.get("schedule", "*/15 * * * *")),
-                    command=str(j.get("command", "")),
-                    skill=str(j["skill"]) if j.get("skill") else None,
-                    enabled=bool(j.get("enabled", True)),
-                    notify=bool(j.get("notify", True)),
-                    timeout=int(str(j.get("timeout", 300))),
-                    work_dir=str(j["work_dir"]) if j.get("work_dir") else None,
-                    tags=[str(t) for t in j.get("tags", [])],
-                )
-                jobs_list.append(jc)
-        sched.jobs = jobs_list
-
-    # Reactor
-    react_raw = raw.get("reactor")
-    react = ReactorConfig()
-    if isinstance(react_raw, dict):
-        react.enabled = bool(react_raw.get("enabled", False))
-        react.listen_port = int(str(react_raw.get("listen_port", 4097)))
-        react.github_webhook_secret = str(react_raw.get("github_webhook_secret", ""))
-
-    return DaemonConfig(
+    cfg = AutomationConfig(
         enabled=bool(raw.get("enabled", True)),
-        heartbeat=hb,
-        scheduler=sched,
-        reactor=react,
+        default_timeout=int(str(raw.get("default_timeout", 300))),
     )
 
+    jobs: list[AutomationJobConfig] = []
+    for j in raw.get("jobs", []):
+        if not isinstance(j, dict):
+            continue
+        timeout = int(str(j.get("timeout", cfg.default_timeout)))
+        jobs.append(
+            AutomationJobConfig(
+                name=str(j.get("name", "")),
+                command=str(j.get("command", "")),
+                skill=str(j["skill"]) if j.get("skill") else None,
+                enabled=bool(j.get("enabled", True)),
+                notify=bool(j.get("notify", True)),
+                timeout=timeout,
+                work_dir=str(j["work_dir"]) if j.get("work_dir") else None,
+                tags=[str(t) for t in j.get("tags", [])],
+                schedule=str(j["schedule"]) if j.get("schedule") else None,
+            )
+        )
 
-def _encode_daemon(cfg: DaemonConfig | None) -> dict | None:
-    """Encode DaemonConfig to TOML-compatible dict."""
+    cfg.jobs = jobs
+    return cfg
+
+
+def _encode_automation(cfg: AutomationConfig | None) -> dict | None:
+    """Encode AutomationConfig to TOML-compatible dict."""
     if cfg is None:
         return None
+
     out: dict[str, Any] = {
         "enabled": cfg.enabled,
+        "default_timeout": cfg.default_timeout,
     }
-    # Heartbeat
-    out["heartbeat"] = {
-        "enabled": cfg.heartbeat.enabled,
-        "interval": cfg.heartbeat.interval,
-        "unhealthy_threshold": cfg.heartbeat.unhealthy_threshold,
-        "check_memory": cfg.heartbeat.check_memory,
-        "check_disk": cfg.heartbeat.check_disk,
-        "max_memory_mb": cfg.heartbeat.max_memory_mb,
-    }
-    # Scheduler
-    sched: dict[str, Any] = {
-        "enabled": cfg.scheduler.enabled,
-        "timezone": cfg.scheduler.timezone,
-        "max_concurrent_jobs": cfg.scheduler.max_concurrent_jobs,
-        "job_timeout": cfg.scheduler.job_timeout,
-    }
-    jobs = []
-    for j in cfg.scheduler.jobs:
+
+    jobs: list[dict[str, Any]] = []
+    for j in cfg.jobs:
         jd: dict[str, Any] = {
             "name": j.name,
-            "schedule": j.schedule,
             "command": j.command,
             "enabled": j.enabled,
             "notify": j.notify,
@@ -519,14 +504,13 @@ def _encode_daemon(cfg: DaemonConfig | None) -> dict | None:
             jd["work_dir"] = j.work_dir
         if j.tags:
             jd["tags"] = j.tags
+        if j.schedule:
+            jd["schedule"] = j.schedule
         jobs.append(jd)
+
     if jobs:
-        sched["jobs"] = jobs
-    out["scheduler"] = sched
-    # Reactor
-    out["reactor"] = {
-        "enabled": cfg.reactor.enabled,
-        "listen_port": cfg.reactor.listen_port,
-        "github_webhook_secret": cfg.reactor.github_webhook_secret,
-    }
+        out["jobs"] = jobs
+
     return out
+
+

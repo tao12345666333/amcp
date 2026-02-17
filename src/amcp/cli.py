@@ -21,7 +21,14 @@ from . import __git_commit__, __version__
 from .agent import Agent, create_agent_by_name
 from .agent_spec import get_default_agent_spec, list_available_agents, load_agent_spec
 from .commands import get_command_manager
-from .config import AMCPConfig, load_config, save_config, save_default_config
+from .config import (
+    AMCPConfig,
+    AutomationConfig,
+    AutomationJobConfig,
+    load_config,
+    save_config,
+    save_default_config,
+)
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
 from .skills import get_skill_manager
@@ -97,38 +104,15 @@ app.add_typer(acp, name="acp")
 telegram = typer.Typer(help="Telegram bot utilities")
 app.add_typer(telegram, name="telegram")
 
-daemon_cli = typer.Typer(help="Daemon management (heartbeat + cron)")
-app.add_typer(daemon_cli, name="daemon")
-
-cron_cli = typer.Typer(help="Cron job management")
+cron_cli = typer.Typer(help="Automation job management (external scheduler friendly)")
 app.add_typer(cron_cli, name="cron")
 
 
-# ---------------------------------------------------------------------------
-# Daemon commands (simplified — lifecycle is managed by Docker / systemd)
-# ---------------------------------------------------------------------------
-
-
-@daemon_cli.command("status", help="Show background services configuration")
-def daemon_status() -> None:
-    """Show the daemon / background services configuration."""
-    cfg = load_config()
-    if cfg.daemon is None:
-        console.print("[yellow]No daemon section in config.toml[/yellow]")
-        console.print("[dim]Background services are started automatically with 'amcp serve'.[/dim]")
-        return
-
-    console.print("[bold]Background Services Configuration[/bold]")
-    console.print(f"  Enabled: {'✅' if cfg.daemon.enabled else '❌'}")
-    if cfg.daemon.heartbeat.enabled:
-        console.print(f"  Heartbeat: every {cfg.daemon.heartbeat.interval}s")
-    if cfg.daemon.scheduler.enabled:
-        console.print(f"  Scheduler: {len(cfg.daemon.scheduler.jobs)} jobs configured")
-    if cfg.daemon.reactor.enabled:
-        console.print(f"  Reactor: port {cfg.daemon.reactor.listen_port}")
-    console.print()
-    console.print("[dim]Start with: amcp serve (background services launch automatically)[/dim]")
-    console.print("[dim]Deploy with: docker / systemd / supervisor[/dim]")
+def _get_configured_jobs(cfg: AMCPConfig) -> list[AutomationJobConfig]:
+    """Return configured jobs from [automation.jobs]."""
+    if cfg.automation and cfg.automation.jobs:
+        return cfg.automation.jobs
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +124,10 @@ def daemon_status() -> None:
 def cron_list() -> None:
     """List all configured cron jobs."""
     cfg = load_config()
-    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+    jobs = _get_configured_jobs(cfg)
+    if not jobs:
         console.print("[yellow]No cron jobs configured[/yellow]")
-        console.print("[dim]Add jobs in config.toml under [[daemon.scheduler.jobs]][/dim]")
+        console.print("[dim]Add jobs in config.toml under [[automation.jobs]] (recommended).[/dim]")
         return
 
     table = Table(title="Cron Jobs")
@@ -153,10 +138,11 @@ def cron_list() -> None:
     table.add_column("Timeout", style="blue")
     table.add_column("Command", style="white", max_width=40)
 
-    for job in cfg.daemon.scheduler.jobs:
+    for job in jobs:
+        schedule = getattr(job, "schedule", None) or "-"
         table.add_row(
             job.name,
-            job.schedule,
+            schedule,
             "✅" if job.enabled else "❌",
             "🔔" if job.notify else "🔕",
             f"{job.timeout}s",
@@ -169,45 +155,51 @@ def cron_list() -> None:
 @cron_cli.command("add", help="Add a new cron job")
 def cron_add(
     name: Annotated[str, typer.Argument(help="Job name")],
-    schedule: Annotated[str, typer.Option("--schedule", "-s", help="Cron expression")],
     command: Annotated[str, typer.Option("--command", "-c", help="Agent command to run")],
+    schedule: Annotated[
+        str | None,
+        typer.Option(
+            "--schedule",
+            "-s",
+            help="Legacy cron expression (recommended: schedule externally via systemd/cron/K8s)",
+        ),
+    ] = None,
     notify: Annotated[bool, typer.Option("--notify", help="Send notification on completion")] = True,
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout in seconds")] = 300,
     skill: Annotated[str | None, typer.Option("--skill", help="Skill to activate")] = None,
 ) -> None:
-    """Add a new cron job to the config."""
-    from .daemon.config import CronJobConfig, DaemonConfig, SchedulerConfig
+    """Add a new automation job to the config."""
 
     cfg = load_config()
-    if cfg.daemon is None:
-        cfg.daemon = DaemonConfig()
-    if cfg.daemon.scheduler is None:
-        cfg.daemon.scheduler = SchedulerConfig()
+    if cfg.automation is None:
+        cfg.automation = AutomationConfig()
 
-    new_job = CronJobConfig(
+    new_job = AutomationJobConfig(
         name=name,
-        schedule=schedule,
         command=command,
         notify=notify,
         timeout=timeout,
         skill=skill,
+        schedule=schedule,
     )
-    cfg.daemon.scheduler.jobs.append(new_job)
+    cfg.automation.jobs.append(new_job)
     save_config(cfg)
-    console.print(f"[green]Added cron job '{name}' with schedule '{schedule}'[/green]")
+    schedule_msg = f" (schedule: {schedule})" if schedule else ""
+    console.print(f"[green]Added automation job '{name}'{schedule_msg}[/green]")
 
 
 @cron_cli.command("run", help="Run a cron job immediately")
 def cron_run(
     name: Annotated[str, typer.Argument(help="Job name to run")],
 ) -> None:
-    """Run a cron job immediately (outside the daemon)."""
+    """Run an automation job immediately."""
     cfg = load_config()
-    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+    jobs = _get_configured_jobs(cfg)
+    if not jobs:
         console.print("[red]No cron jobs configured[/red]")
         raise typer.Exit(1)
 
-    job_cfg = next((j for j in cfg.daemon.scheduler.jobs if j.name == name), None)
+    job_cfg = next((j for j in jobs if j.name == name), None)
     if not job_cfg:
         console.print(f"[red]Job '{name}' not found[/red]")
         raise typer.Exit(1)
@@ -216,6 +208,9 @@ def cron_run(
     console.print(f"[dim]Command: {job_cfg.command}[/dim]")
 
     agent = Agent()
+    if getattr(job_cfg, "skill", None):
+        get_skill_manager().activate_skill(job_cfg.skill)
+
     work_dir = Path(job_cfg.work_dir) if job_cfg.work_dir else None
     result = asyncio.run(agent.run(job_cfg.command, work_dir=work_dir))
     console.print(Panel(Markdown(result), title=f"Job: {name}", border_style="green"))
@@ -224,10 +219,11 @@ def cron_run(
 @cron_cli.command("enable", help="Enable a cron job")
 def cron_enable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
     cfg = load_config()
-    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+    jobs = _get_configured_jobs(cfg)
+    if not jobs:
         console.print("[red]No cron jobs configured[/red]")
         raise typer.Exit(1)
-    for job in cfg.daemon.scheduler.jobs:
+    for job in jobs:
         if job.name == name:
             job.enabled = True
             save_config(cfg)
@@ -240,10 +236,11 @@ def cron_enable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
 @cron_cli.command("disable", help="Disable a cron job")
 def cron_disable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
     cfg = load_config()
-    if not cfg.daemon or not cfg.daemon.scheduler.jobs:
+    jobs = _get_configured_jobs(cfg)
+    if not jobs:
         console.print("[red]No cron jobs configured[/red]")
         raise typer.Exit(1)
-    for job in cfg.daemon.scheduler.jobs:
+    for job in jobs:
         if job.name == name:
             job.enabled = False
             save_config(cfg)
@@ -456,27 +453,19 @@ def serve_command(
         bool,
         typer.Option("--telegram", help="Start Telegram bot alongside the server"),
     ] = False,
-    scheduler: Annotated[
-        bool,
-        typer.Option("--scheduler", help="Enable cron scheduler (default: from config)"),
-    ] = False,
-    reactor: Annotated[
-        bool,
-        typer.Option("--reactor", help="Enable webhook reactor (default: from config)"),
-    ] = False,
 ) -> None:
     """Start AMCP as an HTTP/WebSocket server.
 
     This allows remote clients to connect and interact with AMCP agents.
-    Background services (scheduler, reactor, health checks) are started
-    automatically based on config.toml settings or CLI flags.
+    AMCP does not start in-process daemon background orchestration.
+    Use external orchestrators (systemd/cron/K8s) and `amcp cron run` for jobs.
 
     Examples:
         amcp serve                          # Start on localhost:4096
         amcp serve --port 8080             # Use custom port
         amcp serve --host 0.0.0.0          # Listen on all interfaces
         amcp serve -w /path/to/project     # Set default working directory
-        amcp serve --scheduler             # Enable cron scheduler
+        amcp cron run ci-check             # Execute automation job once (for systemd/cron/K8s)
 
     API Documentation:
         Once running, visit http://localhost:4096/docs for API docs.
@@ -491,21 +480,14 @@ def serve_command(
     if telegram_enabled:
         _start_telegram_bot(work_dir)
 
-    # Build daemon config from config.toml + CLI overrides
-    cfg = load_config()
-    daemon_cfg = cfg.daemon
-    if daemon_cfg and (scheduler or reactor):
-        if scheduler:
-            daemon_cfg.scheduler.enabled = True
-        if reactor:
-            daemon_cfg.reactor.enabled = True
+    console.print("[green]Running without in-process daemon background orchestration.[/green]")
+    console.print("[dim]Use systemd/cron/K8s + `amcp cron run <job>` for automation.[/dim]")
 
     run_server(
         host=host,
         port=port,
         work_dir=str(work_dir) if work_dir else None,
         reload=reload,
-        daemon_config=daemon_cfg,
     )
 
 
