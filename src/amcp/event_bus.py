@@ -101,22 +101,8 @@ class EventType(Enum):
     SHUTDOWN = "system.shutdown"
     ERROR = "system.error"
 
-    # Daemon events
-    DAEMON_STARTED = "daemon.started"
-    DAEMON_STOPPED = "daemon.stopped"
-    DAEMON_RECOVERED = "daemon.recovered"
-
-    # Heartbeat events
+    # Heartbeat event
     HEARTBEAT = "heartbeat"
-    HEALTH_CHECK_FAILED = "heartbeat.check_failed"
-
-    # Cron job events
-    CRON_JOB_STARTED = "cron.job_started"
-    CRON_JOB_COMPLETED = "cron.job_completed"
-    CRON_JOB_FAILED = "cron.job_failed"
-
-    # Webhook events
-    WEBHOOK_RECEIVED = "webhook.received"
 
     # Custom events
     CUSTOM = "custom"
