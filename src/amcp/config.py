@@ -512,5 +512,3 @@ def _encode_automation(cfg: AutomationConfig | None) -> dict | None:
         out["jobs"] = jobs
 
     return out
-
-

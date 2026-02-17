@@ -122,7 +122,8 @@ def main():
     send_parser.add_argument("--token", "-t", help="Bot token (defaults to AMCP_TELEGRAM_BOT_TOKEN env)")
     send_parser.add_argument("--reply-to", "-r", type=int, help="Message ID to reply to")
     send_parser.add_argument(
-        "--source-is-bot", action="store_true",
+        "--source-is-bot",
+        action="store_true",
         help="Source message sender is a bot; disables reply and uses @username style",
     )
     send_parser.add_argument("--source-username", help="Username for @mention when --source-is-bot is set")

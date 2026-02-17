@@ -224,13 +224,15 @@ def _extract_reply_metadata(message: Any) -> dict[str, Any] | None:
     from_user = getattr(reply_to, "from_user", None)
     if from_user is None:
         return None
-    return _exclude_none({
-        "message_id": getattr(reply_to, "message_id", None),
-        "from_user_id": getattr(from_user, "id", None),
-        "from_username": getattr(from_user, "username", None),
-        "from_is_bot": getattr(from_user, "is_bot", None),
-        "text": (getattr(reply_to, "text", "") or "")[:100],
-    })
+    return _exclude_none(
+        {
+            "message_id": getattr(reply_to, "message_id", None),
+            "from_user_id": getattr(from_user, "id", None),
+            "from_username": getattr(from_user, "username", None),
+            "from_is_bot": getattr(from_user, "is_bot", None),
+            "text": (getattr(reply_to, "text", "") or "")[:100],
+        }
+    )
 
 
 def _build_enriched_prompt(
@@ -252,9 +254,10 @@ def _build_enriched_prompt(
         "message_id": getattr(message, "message_id", None),
         "type": msg_type,
         "username": getattr(user, "username", None) if user else None,
-        "full_name": getattr(user, "full_name", None) or (
-            (getattr(user, "first_name", "") or "") + " " + (getattr(user, "last_name", "") or "")
-        ).strip() if user else None,
+        "full_name": getattr(user, "full_name", None)
+        or ((getattr(user, "first_name", "") or "") + " " + (getattr(user, "last_name", "") or "")).strip()
+        if user
+        else None,
         "sender_id": str(getattr(user, "id", "")) if user else None,
         "sender_is_bot": getattr(user, "is_bot", None) if user else None,
         "chat_type": getattr(chat, "type", None) if chat else None,
