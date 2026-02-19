@@ -64,6 +64,9 @@ class MemoryStore:
         Append-only log of past activities, decisions, and learnings.
         Searchable via grep-style queries.
         Grows over time.
+
+    Layer 3 - SQLite+FTS5 Backend (memory.db):
+        Episodic events and declarative facts with full-text search.
     """
 
     def __init__(self, memory_dir: Path):
@@ -75,6 +78,13 @@ class MemoryStore:
         self.memory_dir = memory_dir
         self.memory_file = memory_dir / "MEMORY.md"
         self.history_file = memory_dir / "HISTORY.md"
+        self._init_sqlite()
+
+    def _init_sqlite(self) -> None:
+        """Lazily initialize the SQLite memory store."""
+        from .memory_store import SQLiteMemoryStore
+
+        self._sqlite = SQLiteMemoryStore(self.memory_dir / "memory.db")
 
     @staticmethod
     def get_user_memory_dir() -> Path:
@@ -150,6 +160,17 @@ class MemoryStore:
         except Exception as e:
             logger.error(f"Could not append to history: {e}")
 
+        # Also write to SQLite events table
+        try:
+            self._sqlite.append_event(
+                content=content.strip(),
+                session_id=session_id,
+                tags=tags or [],
+                source="history",
+            )
+        except Exception as e:
+            logger.warning(f"Could not append to SQLite events: {e}")
+
     def read_history(self, max_lines: int = 500) -> str:
         """Read history log content.
 
@@ -174,6 +195,8 @@ class MemoryStore:
     def search_history(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
         """Search history log for matching entries.
 
+        Uses SQLite FTS5 when available, falls back to regex grep.
+
         Args:
             query: Search query (case-insensitive substring match)
             max_results: Maximum results to return
@@ -181,6 +204,17 @@ class MemoryStore:
         Returns:
             List of matching results with line numbers
         """
+        # Try SQLite FTS5 first
+        try:
+            fts_results = self._sqlite.search_events(
+                query, max_results=max_results
+            )
+            if fts_results:
+                return fts_results
+        except Exception as e:
+            logger.debug(f"SQLite search_events failed, falling back: {e}")
+
+        # Fallback to regex grep on markdown file
         results: list[MemorySearchResult] = []
         if not self.history_file.exists():
             return results
@@ -206,18 +240,18 @@ class MemoryStore:
         return results
 
     def search_memory(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
-        """Search both long-term memory and history.
+        """Search both long-term memory, history, and SQLite stores.
 
         Args:
             query: Search query
             max_results: Maximum results to return
 
         Returns:
-            Combined results from both memory layers
+            Combined results from all memory layers
         """
         results: list[MemorySearchResult] = []
 
-        # Search long-term memory first
+        # Search long-term memory first (MEMORY.md)
         if self.memory_file.exists():
             try:
                 pattern = re.compile(re.escape(query), re.IGNORECASE)
@@ -236,10 +270,22 @@ class MemoryStore:
             except Exception as e:
                 logger.warning(f"Could not search memory: {e}")
 
-        # Then search history
+        # Search SQLite (facts + events via FTS5)
         remaining = max_results - len(results)
         if remaining > 0:
-            results.extend(self.search_history(query, max_results=remaining))
+            try:
+                sqlite_results = self._sqlite.search(
+                    query, max_results=remaining
+                )
+                results.extend(sqlite_results)
+            except Exception as e:
+                logger.debug(f"SQLite search failed, falling back: {e}")
+                # Fallback to history grep
+                remaining = max_results - len(results)
+                if remaining > 0:
+                    results.extend(
+                        self.search_history(query, max_results=remaining)
+                    )
 
         return results
 
@@ -267,6 +313,79 @@ class MemoryStore:
             "</memory>"
         )
 
+    # --- Facts (delegated to SQLite) ---
+
+    def upsert_fact(
+        self,
+        key: str,
+        value: str,
+        category: str = "general",
+        source: str = "agent",
+        confidence: float = 1.0,
+    ) -> None:
+        """Insert or update a declarative fact.
+
+        Args:
+            key: Unique key for the fact.
+            value: Fact value/content.
+            category: Category for grouping.
+            source: Source of the fact.
+            confidence: Confidence score (0.0-1.0).
+        """
+        self._sqlite.upsert_fact(key, value, category, source, confidence)
+
+    def get_fact(self, key: str) -> dict | None:
+        """Get a specific fact by key.
+
+        Args:
+            key: The fact key.
+
+        Returns:
+            Fact dict or None.
+        """
+        return self._sqlite.get_fact(key)
+
+    def search_facts(
+        self, query: str, max_results: int = 20
+    ) -> list[dict]:
+        """Search facts using FTS5.
+
+        Args:
+            query: Search query.
+            max_results: Maximum results.
+
+        Returns:
+            List of matching fact dicts.
+        """
+        return self._sqlite.search_facts(query, max_results)
+
+    def list_facts(
+        self, category: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        """List facts, optionally filtered by category.
+
+        Args:
+            category: Optional category filter.
+            limit: Maximum number of facts.
+
+        Returns:
+            List of fact dicts.
+        """
+        return self._sqlite.list_facts(category, limit)
+
+    def delete_fact(self, key: str) -> bool:
+        """Delete a fact by key.
+
+        Args:
+            key: The fact key to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        return self._sqlite.delete_fact(key)
+
+    # --- Stats ---
+
     def get_stats(self) -> dict[str, int | bool]:
         """Get memory statistics.
 
@@ -292,6 +411,15 @@ class MemoryStore:
                 stats["history_entries"] = content.count("### [")
             except Exception:
                 pass
+
+        # SQLite stats
+        try:
+            sqlite_stats = self._sqlite.get_stats()
+            stats["sqlite_event_count"] = sqlite_stats["event_count"]
+            stats["sqlite_fact_count"] = sqlite_stats["fact_count"]
+            stats["sqlite_db_size"] = sqlite_stats["db_size_bytes"]
+        except Exception as e:
+            logger.debug(f"Could not get SQLite stats: {e}")
 
         return stats
 
@@ -389,6 +517,94 @@ class MemoryManager:
         if remaining > 0:
             results.extend(self.user_store.search_memory(query, remaining))
         return results
+
+    # --- Facts (delegated to scoped store) ---
+
+    def upsert_fact(
+        self,
+        key: str,
+        value: str,
+        category: str = "general",
+        source: str = "agent",
+        confidence: float = 1.0,
+        scope: str = "user",
+    ) -> None:
+        """Insert or update a declarative fact.
+
+        Args:
+            key: Unique key for the fact.
+            value: Fact value/content.
+            category: Category for grouping.
+            source: Source of the fact.
+            confidence: Confidence score (0.0-1.0).
+            scope: "user" or "project".
+        """
+        store = self.project_store if scope == "project" else self.user_store
+        store.upsert_fact(key, value, category, source, confidence)
+
+    def get_fact(self, key: str, scope: str = "user") -> dict | None:
+        """Get a specific fact by key.
+
+        Args:
+            key: The fact key.
+            scope: "user" or "project".
+
+        Returns:
+            Fact dict or None.
+        """
+        store = self.project_store if scope == "project" else self.user_store
+        return store.get_fact(key)
+
+    def search_facts(
+        self,
+        query: str,
+        max_results: int = 20,
+        scope: str = "user",
+    ) -> list[dict]:
+        """Search facts using FTS5.
+
+        Args:
+            query: Search query.
+            max_results: Maximum results.
+            scope: "user" or "project".
+
+        Returns:
+            List of matching fact dicts.
+        """
+        store = self.project_store if scope == "project" else self.user_store
+        return store.search_facts(query, max_results)
+
+    def list_facts(
+        self,
+        category: str | None = None,
+        limit: int = 100,
+        scope: str = "user",
+    ) -> list[dict]:
+        """List facts, optionally filtered by category.
+
+        Args:
+            category: Optional category filter.
+            limit: Maximum number of facts.
+            scope: "user" or "project".
+
+        Returns:
+            List of fact dicts.
+        """
+        store = self.project_store if scope == "project" else self.user_store
+        return store.list_facts(category, limit)
+
+    def delete_fact(self, key: str, scope: str = "user") -> bool:
+        """Delete a fact by key.
+
+        Args:
+            key: The fact key to delete.
+            scope: "user" or "project".
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        store = self.project_store if scope == "project" else self.user_store
+        return store.delete_fact(key)
 
     def get_stats(self) -> dict[str, dict[str, int | bool]]:
         """Get stats for both stores.

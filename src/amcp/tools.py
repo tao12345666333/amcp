@@ -981,9 +981,13 @@ class MemoryTool(BaseTool):
 Actions:
 - read: Read long-term memory (MEMORY.md) for the given scope
 - write: Update long-term memory (overwrites). Keep it organized and compact.
-- append: Add an entry to the history log (HISTORY.md)
-- search: Search both memory layers for matching content
+- append: Add an entry to the history log (HISTORY.md + SQLite events)
+- search: Search all memory layers (MEMORY.md, facts, events) using FTS5
 - stats: Get memory statistics
+- upsert_fact: Save a fact (key-value with category) to declarative memory
+- get_fact: Get a specific fact by key
+- list_facts: List facts, optionally filtered by category
+- delete_fact: Delete a fact by key
 
 Scopes:
 - user: Global memory (~/.config/amcp/memory/)
@@ -992,13 +996,18 @@ Scopes:
 Use this tool to:
 - Remember important patterns, preferences, and project context
 - Log significant decisions and learnings
-- Search past activities and knowledge
+- Store and retrieve structured facts and knowledge
+- Search past activities and knowledge with full-text search
 
 Examples:
   Read: {"action": "read", "scope": "project"}
-  Write: {"action": "write", "content": "# Project Notes\\n- Uses Python 3.12\\n- Main entry: src/main.py", "scope": "project"}
-  Append: {"action": "append", "content": "Discovered that the auth module needs refactoring", "tags": ["discovery", "refactor"]}
+  Write: {"action": "write", "content": "# Project Notes\\n- Uses Python 3.12", "scope": "project"}
+  Append: {"action": "append", "content": "Discovered auth module needs refactoring", "tags": ["discovery"]}
   Search: {"action": "search", "query": "auth module"}
+  Upsert fact: {"action": "upsert_fact", "key": "python_version", "content": "3.12", "category": "config"}
+  Get fact: {"action": "get_fact", "key": "python_version"}
+  List facts: {"action": "list_facts", "category": "config"}
+  Delete fact: {"action": "delete_fact", "key": "python_version"}
 """
 
     def execute(  # type: ignore[override]
@@ -1009,6 +1018,8 @@ Examples:
         query: str | None = None,
         tags: list[str] | None = None,
         max_results: int = 20,
+        key: str | None = None,
+        category: str | None = None,
     ) -> ToolResult:
         """Execute memory operations."""
         from .memory import get_memory_manager
@@ -1032,18 +1043,29 @@ Examples:
 
             elif action == "write":
                 if not content:
-                    return ToolResult(success=False, content="", error="Content is required for write action.")
+                    return ToolResult(
+                        success=False, content="",
+                        error="Content is required for write action.",
+                    )
                 manager.write_long_term(content, scope)
                 return ToolResult(
                     success=True,
-                    content=f"Long-term memory updated ({len(content)} chars) in scope '{scope}'.",
+                    content=(
+                        f"Long-term memory updated ({len(content)} chars)"
+                        f" in scope '{scope}'."
+                    ),
                     metadata={"scope": scope, "size": len(content)},
                 )
 
             elif action == "append":
                 if not content:
-                    return ToolResult(success=False, content="", error="Content is required for append action.")
-                manager.append_history(content, session_id="agent", tags=tags, scope=scope)
+                    return ToolResult(
+                        success=False, content="",
+                        error="Content is required for append action.",
+                    )
+                manager.append_history(
+                    content, session_id="agent", tags=tags, scope=scope
+                )
                 return ToolResult(
                     success=True,
                     content="Entry appended to history log.",
@@ -1052,7 +1074,10 @@ Examples:
 
             elif action == "search":
                 if not query:
-                    return ToolResult(success=False, content="", error="Query is required for search action.")
+                    return ToolResult(
+                        success=False, content="",
+                        error="Query is required for search action.",
+                    )
                 results = manager.search(query, max_results=max_results)
                 if not results:
                     return ToolResult(
@@ -1062,7 +1087,9 @@ Examples:
                     )
                 lines = [f"Found {len(results)} results for '{query}':"]
                 for r in results:
-                    lines.append(f"  [{r.source}:L{r.line_number}] {r.content}")
+                    lines.append(
+                        f"  [{r.source}:L{r.line_number}] {r.content}"
+                    )
                 return ToolResult(
                     success=True,
                     content="\n".join(lines),
@@ -1076,17 +1103,120 @@ Examples:
                     lines.append(f"  {scope_name}:")
                     for k, v in scope_stats.items():
                         lines.append(f"    {k}: {v}")
-                return ToolResult(success=True, content="\n".join(lines), metadata=stats)
+                return ToolResult(
+                    success=True,
+                    content="\n".join(lines),
+                    metadata=stats,
+                )
+
+            elif action == "upsert_fact":
+                if not key:
+                    return ToolResult(
+                        success=False, content="",
+                        error="Key is required for upsert_fact action.",
+                    )
+                if not content:
+                    return ToolResult(
+                        success=False, content="",
+                        error="Content is required for upsert_fact action.",
+                    )
+                manager.upsert_fact(
+                    key=key,
+                    value=content,
+                    category=category or "general",
+                    scope=scope,
+                )
+                return ToolResult(
+                    success=True,
+                    content=f"Fact '{key}' saved in scope '{scope}'.",
+                    metadata={"key": key, "scope": scope},
+                )
+
+            elif action == "get_fact":
+                if not key:
+                    return ToolResult(
+                        success=False, content="",
+                        error="Key is required for get_fact action.",
+                    )
+                fact = manager.get_fact(key, scope=scope)
+                if not fact:
+                    return ToolResult(
+                        success=True,
+                        content=f"No fact found for key '{key}'.",
+                        metadata={"key": key, "scope": scope},
+                    )
+                lines = [
+                    f"Fact: {fact['key']}",
+                    f"  Value: {fact['value']}",
+                    f"  Category: {fact['category']}",
+                    f"  Confidence: {fact['confidence']}",
+                    f"  Updated: {fact['updated_at']}",
+                ]
+                return ToolResult(
+                    success=True,
+                    content="\n".join(lines),
+                    metadata=fact,
+                )
+
+            elif action == "list_facts":
+                facts = manager.list_facts(
+                    category=category, scope=scope
+                )
+                if not facts:
+                    cat_msg = (
+                        f" in category '{category}'" if category else ""
+                    )
+                    return ToolResult(
+                        success=True,
+                        content=f"No facts found{cat_msg}.",
+                        metadata={"count": 0},
+                    )
+                lines = [f"Found {len(facts)} facts:"]
+                for f in facts:
+                    lines.append(
+                        f"  [{f['category']}] {f['key']}: {f['value']}"
+                    )
+                return ToolResult(
+                    success=True,
+                    content="\n".join(lines),
+                    metadata={"count": len(facts)},
+                )
+
+            elif action == "delete_fact":
+                if not key:
+                    return ToolResult(
+                        success=False, content="",
+                        error="Key is required for delete_fact action.",
+                    )
+                deleted = manager.delete_fact(key, scope=scope)
+                if deleted:
+                    return ToolResult(
+                        success=True,
+                        content=f"Fact '{key}' deleted.",
+                        metadata={"key": key, "scope": scope},
+                    )
+                return ToolResult(
+                    success=True,
+                    content=f"No fact found for key '{key}'.",
+                    metadata={"key": key, "scope": scope},
+                )
 
             else:
+                valid = (
+                    "read, write, append, search, stats, "
+                    "upsert_fact, get_fact, list_facts, delete_fact"
+                )
                 return ToolResult(
                     success=False,
                     content="",
-                    error=f"Invalid action '{action}'. Use: read, write, append, search, stats",
+                    error=f"Invalid action '{action}'. Use: {valid}",
                 )
 
         except Exception as e:
-            return ToolResult(success=False, content="", error=f"Memory operation failed: {e}")
+            return ToolResult(
+                success=False, content="",
+                error=f"Memory operation failed: {e}",
+            )
 
     def get_parameters_schema(self) -> dict[str, Any]:
         return {
@@ -1094,12 +1224,19 @@ Examples:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["read", "write", "append", "search", "stats"],
+                    "enum": [
+                        "read", "write", "append", "search", "stats",
+                        "upsert_fact", "get_fact", "list_facts",
+                        "delete_fact",
+                    ],
                     "description": "Action to perform",
                 },
                 "content": {
                     "type": "string",
-                    "description": "Content for read/write/append actions",
+                    "description": (
+                        "Content for write/append actions, or "
+                        "value for upsert_fact"
+                    ),
                 },
                 "scope": {
                     "type": "string",
@@ -1113,13 +1250,28 @@ Examples:
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Tags for history entries (for append action)",
+                    "description": (
+                        "Tags for history entries (for append action)"
+                    ),
                 },
                 "max_results": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 100,
                     "description": "Maximum search results (default: 20)",
+                },
+                "key": {
+                    "type": "string",
+                    "description": (
+                        "Fact key (for upsert_fact, get_fact, "
+                        "delete_fact actions)"
+                    ),
+                },
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "Fact category (for upsert_fact, list_facts)"
+                    ),
                 },
             },
             "required": ["action"],

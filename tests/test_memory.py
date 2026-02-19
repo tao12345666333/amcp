@@ -92,7 +92,7 @@ class TestMemoryStore:
 
         results = store.search_history("auth")
         assert len(results) == 2
-        assert all(r.source == "history" for r in results)
+        assert all(r.source in ("history", "events") for r in results)
 
     def test_search_history_case_insensitive(self, store: MemoryStore):
         """Search is case insensitive."""
@@ -101,7 +101,7 @@ class TestMemoryStore:
         assert len(results) >= 1
 
     def test_search_memory_both_layers(self, store: MemoryStore):
-        """search_memory searches both long-term and history."""
+        """search_memory searches both long-term and history/events."""
         store.write_long_term("Project uses FastAPI framework")
         store.append_history("Deployed FastAPI service", session_id="s1")
 
@@ -109,7 +109,7 @@ class TestMemoryStore:
         assert len(results) == 2
         sources = {r.source for r in results}
         assert "memory" in sources
-        assert "history" in sources
+        assert sources & {"history", "events"}
 
     def test_search_no_results(self, store: MemoryStore):
         """Search returns empty list for non-matching query."""
