@@ -60,6 +60,7 @@ class TelegramConfig:
     pairing: TelegramPairingConfig = field(default_factory=TelegramPairingConfig)
     groups: dict[str, TelegramGroupConfig] = field(default_factory=dict)
     notifications: TelegramNotificationsConfig = field(default_factory=TelegramNotificationsConfig)
+    assistant_mode: bool = False
 
 
 def normalize_dm_policy(value: str | None) -> str:

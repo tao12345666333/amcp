@@ -92,6 +92,7 @@ class TelegramBot:
         self._skill_watcher: Any = None  # SkillWatcher (lazy import)
         self._typing_tasks: dict[int, asyncio.Task[None]] = {}
         self._pairing_requests: dict[str, PairingRequest] = {}
+        self._scheduler: Any = None  # AssistantScheduler (lazy import)
 
     @property
     def config(self) -> TelegramConfig:
@@ -198,15 +199,22 @@ class TelegramBot:
         self._register_telegram_send_tool()
         self._register_notifications()
         await self._start_skill_watcher()
+        if self._config.assistant_mode:
+            await self._start_assistant_scheduler()
         await self._run_polling_loop()
 
     async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
         self._register_telegram_send_tool()
         self._register_notifications()
         await self._start_skill_watcher()
+        if self._config.assistant_mode:
+            await self._start_assistant_scheduler()
         await self._run_webhook_loop(url, listen=listen, port=port)
 
     async def stop(self) -> None:
+        if self._scheduler:
+            await self._scheduler.stop()
+            self._scheduler = None
         if self._skill_watcher:
             await self._skill_watcher.stop()
             self._skill_watcher = None
@@ -490,7 +498,6 @@ class TelegramBot:
     def _register_telegram_send_tool(self) -> None:
         """Register the TelegramSendTool with the global tool registry."""
         from ..tools import get_tool_registry
-
         from .tools import TelegramSendTool
 
         registry = get_tool_registry()
@@ -560,6 +567,21 @@ class TelegramBot:
         self._skill_watcher = SkillWatcher(mgr)
         await self._skill_watcher.start(project_root=self._work_dir)
         logger.info("Telegram: SkillWatcher started for hot reload")
+
+    async def _start_assistant_scheduler(self) -> None:
+        """Start the assistant scheduler for cron-triggered skills."""
+        from ..skills import get_skill_manager
+        from .scheduler import AssistantScheduler
+
+        mgr = get_skill_manager()
+        self._scheduler = AssistantScheduler(
+            skill_manager=mgr,
+            agent_factory=self._session_manager._agent_factory,
+            send_notification=self.send_notification,
+            work_dir=self._work_dir,
+        )
+        await self._scheduler.start()
+        logger.info("Telegram: AssistantScheduler started")
 
     async def _start_typing(self, chat_id: int) -> None:
         if not self._config.typing_indicator:
