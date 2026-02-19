@@ -195,11 +195,13 @@ class TelegramBot:
             logger.warning("Failed to set config file permissions.")
 
     async def start_polling(self) -> None:
+        self._register_telegram_send_tool()
         self._register_notifications()
         await self._start_skill_watcher()
         await self._run_polling_loop()
 
     async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
+        self._register_telegram_send_tool()
         self._register_notifications()
         await self._start_skill_watcher()
         await self._run_webhook_loop(url, listen=listen, port=port)
@@ -218,6 +220,7 @@ class TelegramBot:
             except Exception:
                 logger.exception("Failed to stop Telegram application cleanly.")
         self._unregister_notifications()
+        self._unregister_telegram_send_tool()
 
     def cancel_session(self, chat_id: int) -> tuple[bool, bool]:
         session = self._session_manager.get_or_create_session(chat_id)
@@ -483,6 +486,27 @@ class TelegramBot:
         await updater.stop()
         await self._application.stop()
         await self._application.shutdown()
+
+    def _register_telegram_send_tool(self) -> None:
+        """Register the TelegramSendTool with the global tool registry."""
+        from ..tools import get_tool_registry
+
+        from .tools import TelegramSendTool
+
+        registry = get_tool_registry()
+        if registry.get_tool("telegram_send") is None:
+            tool = TelegramSendTool(bot_token=self._token)
+            registry.register(tool)
+            logger.info("Registered telegram_send tool")
+
+    def _unregister_telegram_send_tool(self) -> None:
+        """Unregister the TelegramSendTool from the global tool registry."""
+        from ..tools import get_tool_registry
+
+        registry = get_tool_registry()
+        if registry.get_tool("telegram_send") is not None:
+            registry.unregister("telegram_send")
+            logger.info("Unregistered telegram_send tool")
 
     def _register_notifications(self) -> None:
         if not self._config.notifications:
