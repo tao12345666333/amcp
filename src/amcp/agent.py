@@ -13,8 +13,8 @@ from rich.status import Status
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
-from .compaction import SmartCompactor
-from .config import load_config
+from .compaction import SmartCompactor, estimate_tokens
+from .config import ContextConfig, load_config
 from .hooks import (
     HookDecision,
     run_post_tool_use_hooks,
@@ -25,6 +25,11 @@ from .mcp_client import call_mcp_tool, list_mcp_tools
 from .memory import get_memory_manager
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
+from .progressive.context_budget import ContextBudget, ContextBudgetManager, estimate_text_tokens
+from .progressive.relevance import RelevanceScorer
+from .progressive.skill_view import ProgressiveSkillView
+from .progressive.tool_view import ProgressiveToolView
+from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
 from .skills import get_skill_manager
 from .tools import ToolRegistry
@@ -91,6 +96,11 @@ class Agent:
 
         # Event callbacks for real-time monitoring (used by server)
         self._event_callbacks: list[Callable[[str, dict[str, Any]], None]] = []
+
+        # Progressive context selection components
+        self._relevance_scorer = RelevanceScorer()
+        self._progressive_tool_view = ProgressiveToolView(self._relevance_scorer)
+        self._progressive_skill_view = ProgressiveSkillView(self._relevance_scorer)
 
         # Load existing conversation history if available
         self._load_conversation_history()
@@ -215,11 +225,61 @@ class Agent:
             with contextlib.suppress(Exception):
                 callback(event_type, event_data)
 
-    def _get_system_prompt(self, work_dir: Path | None = None) -> str:
+    def _resolve_context_config(self) -> ContextConfig:
+        """Load context config with defaults."""
+        cfg = load_config()
+        return cfg.context or ContextConfig()
+
+    def _resolve_model_name(self, cfg=None) -> str:
+        """Resolve model name used for budget and token decisions."""
+        resolved_cfg = cfg or load_config()
+        if self.agent_spec.model:
+            return self.agent_spec.model
+        if resolved_cfg.chat and resolved_cfg.chat.model:
+            return resolved_cfg.chat.model
+        return "DeepSeek-V3.1-Terminus"
+
+    def _calculate_context_budget(self, conversation_tokens: int, model_name: str | None = None) -> ContextBudget:
+        """Calculate context budget for current request."""
+        context_cfg = self._resolve_context_config()
+        model = model_name or self._resolve_model_name()
+        manager = ContextBudgetManager(model=model, config=context_cfg)
+        return manager.calculate_budget(conversation_tokens)
+
+    def _trim_to_token_budget(self, text: str, token_budget: int) -> str:
+        """Trim long text to token budget using a stable head/tail strategy."""
+        if token_budget <= 0 or not text:
+            return ""
+
+        current_tokens = estimate_text_tokens(text)
+        if current_tokens <= token_budget:
+            return text
+
+        char_budget = max(token_budget * 4, 200)
+        if len(text) <= char_budget:
+            return text
+
+        head_chars = int(char_budget * 0.7)
+        tail_chars = max(char_budget - head_chars, 0)
+        if tail_chars > 0:
+            return (
+                text[:head_chars].rstrip()
+                + "\n\n[... trimmed for context budget ...]\n\n"
+                + text[-tail_chars:].lstrip()
+            )
+        return text[:char_budget].rstrip() + "\n\n[... trimmed for context budget ...]"
+
+    def _get_system_prompt(self, work_dir: Path | None = None, user_input: str = "") -> str:
         """Get resolved system prompt with template variables and project rules."""
         current_time = datetime.now().isoformat()
         resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
         work_dir_str = str(resolved_work_dir)
+        cfg = load_config()
+        context_cfg = cfg.context or ContextConfig()
+        model_name = self._resolve_model_name(cfg)
+
+        conversation_tokens = estimate_tokens(self.conversation_history)
+        budget = self._calculate_context_budget(conversation_tokens, model_name=model_name)
 
         # Note: MCP tools info will be loaded asynchronously during execution
         mcp_tools_info: list[dict[str, Any]] = []
@@ -248,15 +308,31 @@ class Agent:
         if not skill_manager.get_all_skills():
             skill_manager.discover_skills(resolved_work_dir)
 
-        # Build compact skills summary (progressive disclosure)
-        skills_summary = skill_manager.build_skills_summary()
-
-        # Get full content of active skills
-        skills_content = skill_manager.get_active_skills_content()
+        # Build skills context
+        skills_summary = ""
+        skills_content = ""
+        if context_cfg.progressive_skills:
+            skill_result = self._progressive_skill_view.build_prompt(
+                skills=skill_manager.get_skills(),
+                user_input=user_input,
+                active_skills={s.name for s in skill_manager.get_active_skills()},
+                budget_tokens=budget.skills,
+                relevance_threshold=context_cfg.skill_relevance_threshold,
+            )
+            skills_summary = skill_result.prompt
+        else:
+            skills_summary = skill_manager.build_skills_summary()
+            skills_content = skill_manager.get_active_skills_content()
 
         # Get memory context
         memory_manager = get_memory_manager(resolved_work_dir)
         memory_context = memory_manager.get_memory_context()
+
+        # Respect per-component budgets for noisy sections
+        if project_rules:
+            project_rules = self._trim_to_token_budget(project_rules, budget.rules)
+        if memory_context:
+            memory_context = self._trim_to_token_budget(memory_context, budget.memory)
 
         # Combine all parts
         combined_prompt = base_prompt
@@ -268,6 +344,19 @@ class Agent:
             combined_prompt += "\n\n" + memory_context
         if skills_content:
             combined_prompt += "\n\n" + skills_content
+
+        self._emit_event(
+            "context.budget_allocated",
+            {
+                "model": model_name,
+                "conversation_tokens": conversation_tokens,
+                "prompt_budget": budget.prompt_budget,
+                "tools_budget": budget.tools,
+                "skills_budget": budget.skills,
+                "memory_budget": budget.memory,
+                "rules_budget": budget.rules,
+            },
+        )
 
         return combined_prompt
 
@@ -485,7 +574,7 @@ class Agent:
                 status.update(f"[bold]Agent {self.name}[/bold] thinking...")
 
                 # Prepare messages with conversation history
-                system_prompt = self._get_system_prompt(work_dir)
+                system_prompt = self._get_system_prompt(work_dir, user_input=user_input)
                 messages = [{"role": "system", "content": system_prompt}]
 
                 # Add conversation history with compaction if needed
@@ -507,7 +596,10 @@ class Agent:
                 messages.extend(history_to_add)
 
                 # Build tools and registry (combined to avoid duplicate MCP calls)
-                tools, tool_registry = await self._build_tools_and_registry()
+                tools, tool_registry = await self._build_tools_and_registry(
+                    user_input=user_input,
+                    conversation_history=history_to_add,
+                )
 
                 # Run chat with tools
                 result = await self._run_with_tools(
@@ -566,7 +658,11 @@ class Agent:
         """Get queue status for this session."""
         return get_message_queue_manager().get_queue_status(self.session_id)
 
-    async def _build_tools_and_registry(self) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
+    async def _build_tools_and_registry(
+        self,
+        user_input: str = "",
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
         """Build list of available tools and registry for MCP tool dispatch.
 
         Combined method to avoid duplicate MCP server calls.
@@ -576,12 +672,20 @@ class Agent:
         """
         tools: list[dict[str, Any]] = []
         registry: dict[str, tuple[str, str]] = {}
+        conversation = conversation_history or self.conversation_history
 
         # Add all built-in tools from registry
         from .tools import get_tool_registry
 
+        allowed_tools = set(self.agent_spec.tools) if self.agent_spec.tools else None
+        excluded_tools = set(self.agent_spec.exclude_tools or [])
+
         tool_registry = get_tool_registry()
         for tool_name in tool_registry.list_tools():
+            if allowed_tools is not None and tool_name not in allowed_tools:
+                continue
+            if tool_name in excluded_tools:
+                continue
             tool = tool_registry.get_tool(tool_name)
             if tool and hasattr(tool, "get_spec"):
                 tools.append(tool.get_spec())
@@ -592,10 +696,8 @@ class Agent:
 
         # Decide which servers to include
         if chat_cfg and chat_cfg.mcp_tools_enabled is False:
-            return tools, registry
-
-        selected = None
-        if chat_cfg and chat_cfg.mcp_servers:
+            selected = []
+        elif chat_cfg and chat_cfg.mcp_servers:
             selected = [s for s in chat_cfg.mcp_servers if s in cfg.servers]
         else:
             selected = list(cfg.servers.keys())
@@ -608,6 +710,10 @@ class Agent:
                 for info in info_list:
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
+                    if allowed_tools is not None and oname not in allowed_tools:
+                        continue
+                    if oname in excluded_tools:
+                        continue
                     params = info.get("inputSchema") or {"type": "object"}
                     tools.append(
                         {
@@ -624,7 +730,41 @@ class Agent:
             except Exception as e:
                 self.console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
 
-        return tools, registry
+        context_cfg = cfg.context or ContextConfig()
+        if not context_cfg.progressive_tools:
+            return tools, registry
+
+        conversation_tokens = estimate_tokens(conversation)
+        budget = self._calculate_context_budget(conversation_tokens)
+        usage_snapshot = ToolUsageTracker.from_history(self.tool_calls_history)
+
+        selection = self._progressive_tool_view.select_tools(
+            tools=tools,
+            user_input=user_input,
+            conversation=conversation,
+            usage=usage_snapshot,
+            budget_tokens=budget.tools,
+            relevance_threshold=context_cfg.tool_relevance_threshold,
+            tier_overrides=context_cfg.tool_tiers,
+        )
+
+        selected_tools = selection.selected_tools
+        selected_names = {
+            tool.get("function", {}).get("name", "") for tool in selected_tools if tool.get("function", {}).get("name")
+        }
+        filtered_registry = {name: ref for name, ref in registry.items() if name in selected_names}
+
+        self._emit_event(
+            "context.tools_filtered",
+            {
+                "selected_count": len(selected_tools),
+                "total_count": len(tools),
+                "hidden_count": selection.hidden_count,
+                "excluded_tools": selection.excluded_tools,
+            },
+        )
+
+        return selected_tools, filtered_registry
 
     def _get_read_file_tool_spec(self) -> dict[str, Any]:
         """Get read_file tool specification."""

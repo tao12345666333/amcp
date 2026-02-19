@@ -54,6 +54,7 @@ __all__ = [
     # Config
     "AMCPConfig",
     "ChatConfig",
+    "ContextConfig",
     "ModelConfig",
     "TelegramConfig",
     # Project rules
@@ -121,6 +122,7 @@ from .compaction import (
 from .config import (
     AMCPConfig,
     ChatConfig,
+    ContextConfig,
     ModelConfig,
     TelegramConfig,
 )

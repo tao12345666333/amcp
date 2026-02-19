@@ -80,6 +80,28 @@ class ChatConfig:
 
 
 @dataclass
+class ContextConfig:
+    """Configuration for progressive context optimization."""
+
+    progressive_tools: bool = True
+    progressive_skills: bool = True
+
+    response_ratio: float = 0.30
+    min_prompt_budget: int = 2500
+    base_prompt_max_tokens: int = 2200
+
+    tool_budget_ratio: float = 0.45
+    skill_budget_ratio: float = 0.30
+    memory_budget_ratio: float = 0.15
+    rules_budget_ratio: float = 0.10
+
+    tool_relevance_threshold: float = 0.12
+    skill_relevance_threshold: float = 0.25
+
+    tool_tiers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class AuthConfig:
     enabled: bool = False
     api_keys: list[str] = field(default_factory=list)
@@ -123,6 +145,7 @@ class AutomationConfig:
 class AMCPConfig:
     servers: dict[str, Server]
     chat: ChatConfig | None = None
+    context: ContextConfig | None = None
     server: ServerConfig | None = None
     telegram: TelegramConfig | None = None
     automation: AutomationConfig | None = None
@@ -154,6 +177,31 @@ _DEFAULT = {
         # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
+    },
+    "context": {
+        "progressive_tools": True,
+        "progressive_skills": True,
+        "response_ratio": 0.30,
+        "min_prompt_budget": 2500,
+        "base_prompt_max_tokens": 2200,
+        "tool_budget_ratio": 0.45,
+        "skill_budget_ratio": 0.30,
+        "memory_budget_ratio": 0.15,
+        "rules_budget_ratio": 0.10,
+        "tool_relevance_threshold": 0.12,
+        "skill_relevance_threshold": 0.25,
+        "tool_tiers": {
+            "read_file": "always",
+            "grep": "always",
+            "think": "always",
+            "apply_patch": "frequent",
+            "write_file": "frequent",
+            "bash": "frequent",
+            "todo": "frequent",
+            "memory": "on_demand",
+            "task": "on_demand",
+            "mcp.*": "on_demand",
+        },
     },
     "telegram": {
         "enabled": False,
@@ -252,6 +300,29 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     )
 
 
+def _decode_context(raw: Mapping[str, object] | None) -> ContextConfig | None:
+    if not raw:
+        return None
+
+    tool_tiers_raw = raw.get("tool_tiers")
+    tool_tiers = {str(k): str(v) for k, v in tool_tiers_raw.items()} if isinstance(tool_tiers_raw, dict) else {}
+
+    return ContextConfig(
+        progressive_tools=bool(raw.get("progressive_tools", True)),
+        progressive_skills=bool(raw.get("progressive_skills", True)),
+        response_ratio=float(raw.get("response_ratio", 0.30)),
+        min_prompt_budget=int(str(raw.get("min_prompt_budget", 2500))),
+        base_prompt_max_tokens=int(str(raw.get("base_prompt_max_tokens", 2200))),
+        tool_budget_ratio=float(raw.get("tool_budget_ratio", 0.45)),
+        skill_budget_ratio=float(raw.get("skill_budget_ratio", 0.30)),
+        memory_budget_ratio=float(raw.get("memory_budget_ratio", 0.15)),
+        rules_budget_ratio=float(raw.get("rules_budget_ratio", 0.10)),
+        tool_relevance_threshold=float(raw.get("tool_relevance_threshold", 0.12)),
+        skill_relevance_threshold=float(raw.get("skill_relevance_threshold", 0.25)),
+        tool_tiers=tool_tiers,
+    )
+
+
 def _decode_telegram_notifications(raw: Mapping[str, object] | None) -> TelegramNotificationsConfig:
     if not raw:
         return TelegramNotificationsConfig()
@@ -297,6 +368,8 @@ def load_config() -> AMCPConfig:
     servers = {name: _decode_server(name, raw) for name, raw in servers_data.items() if isinstance(raw, dict)}
     chat_data = data.get("chat")
     chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
+    context_data = data.get("context")
+    context = _decode_context(context_data) if isinstance(context_data, dict) else None
     telegram_data = data.get("telegram")
     telegram = _decode_telegram(telegram_data) if isinstance(telegram_data, dict) else None
     telegram = apply_env_overrides(telegram)
@@ -305,6 +378,7 @@ def load_config() -> AMCPConfig:
     return AMCPConfig(
         servers=servers,
         chat=chat,
+        context=context,
         telegram=telegram,
         automation=automation,
     )
@@ -384,6 +458,26 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
     return out
 
 
+def _encode_context(c: ContextConfig | None) -> dict | None:
+    if c is None:
+        return None
+
+    return {
+        "progressive_tools": bool(c.progressive_tools),
+        "progressive_skills": bool(c.progressive_skills),
+        "response_ratio": float(c.response_ratio),
+        "min_prompt_budget": int(c.min_prompt_budget),
+        "base_prompt_max_tokens": int(c.base_prompt_max_tokens),
+        "tool_budget_ratio": float(c.tool_budget_ratio),
+        "skill_budget_ratio": float(c.skill_budget_ratio),
+        "memory_budget_ratio": float(c.memory_budget_ratio),
+        "rules_budget_ratio": float(c.rules_budget_ratio),
+        "tool_relevance_threshold": float(c.tool_relevance_threshold),
+        "skill_relevance_threshold": float(c.skill_relevance_threshold),
+        "tool_tiers": dict(c.tool_tiers),
+    }
+
+
 def _encode_telegram_notifications(cfg: TelegramNotificationsConfig) -> dict:
     return {
         "ci_failures": bool(cfg.ci_failures),
@@ -422,6 +516,9 @@ def save_config(cfg: AMCPConfig) -> Path:
     chat_obj = _encode_chat(cfg.chat)
     if chat_obj is not None:
         data["chat"] = chat_obj
+    context_obj = _encode_context(cfg.context)
+    if context_obj is not None:
+        data["context"] = context_obj
     telegram_obj = _encode_telegram(cfg.telegram)
     if telegram_obj is not None:
         data["telegram"] = telegram_obj

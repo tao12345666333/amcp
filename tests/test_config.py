@@ -10,6 +10,34 @@ def test_load_config():
     config = config_module.load_config()
     assert isinstance(config, config_module.AMCPConfig)
     assert isinstance(config.servers, dict)
+    assert config.context is None or isinstance(config.context, config_module.ContextConfig)
+
+
+def test_decode_encode_context_roundtrip():
+    raw = {
+        "progressive_tools": True,
+        "progressive_skills": False,
+        "response_ratio": 0.25,
+        "min_prompt_budget": 1500,
+        "base_prompt_max_tokens": 1200,
+        "tool_budget_ratio": 0.5,
+        "skill_budget_ratio": 0.2,
+        "memory_budget_ratio": 0.2,
+        "rules_budget_ratio": 0.1,
+        "tool_relevance_threshold": 0.2,
+        "skill_relevance_threshold": 0.3,
+        "tool_tiers": {"task": "hidden"},
+    }
+
+    cfg = config_module._decode_context(raw)
+    assert cfg is not None
+    assert cfg.progressive_skills is False
+    assert cfg.tool_tiers["task"] == "hidden"
+
+    encoded = config_module._encode_context(cfg)
+    assert encoded is not None
+    assert encoded["min_prompt_budget"] == 1500
+    assert encoded["tool_tiers"]["task"] == "hidden"
 
 
 def test_decode_encode_automation_roundtrip():
