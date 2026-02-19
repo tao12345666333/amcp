@@ -4,6 +4,9 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+VALID_DM_POLICIES = {"allowlist", "pairing", "open", "disabled"}
+VALID_GROUP_POLICIES = {"mention", "open", "allowlist", "disabled"}
+
 
 @dataclass
 class TelegramNotificationsConfig:
@@ -11,6 +14,30 @@ class TelegramNotificationsConfig:
     pr_reviews: bool = True
     task_completions: bool = True
     error_alerts: bool = True
+
+
+@dataclass
+class TelegramPairingConfig:
+    enabled: bool = True
+    code_ttl_seconds: int = 1800
+    max_pending: int = 200
+
+
+@dataclass
+class TelegramTopicConfig:
+    enabled: bool = True
+    group_policy: str | None = None
+    require_mention: bool | None = None
+    allow_users: list[int] = field(default_factory=list)
+
+
+@dataclass
+class TelegramGroupConfig:
+    enabled: bool = True
+    group_policy: str | None = None
+    require_mention: bool | None = None
+    allow_users: list[int] = field(default_factory=list)
+    topics: dict[str, TelegramTopicConfig] = field(default_factory=dict)
 
 
 @dataclass
@@ -24,7 +51,33 @@ class TelegramConfig:
     max_message_length: int = 4096
     rate_limit_messages: int = 20
     session_timeout: int = 3600
+    dm_policy: str = "allowlist"
+    group_policy: str = "mention"
+    group_allow_users: list[int] = field(default_factory=list)
+    typing_indicator: bool = True
+    typing_interval_seconds: int = 4
+    max_queue_size: int = 20
+    pairing: TelegramPairingConfig = field(default_factory=TelegramPairingConfig)
+    groups: dict[str, TelegramGroupConfig] = field(default_factory=dict)
     notifications: TelegramNotificationsConfig = field(default_factory=TelegramNotificationsConfig)
+
+
+def normalize_dm_policy(value: str | None) -> str:
+    if not value:
+        return "allowlist"
+    lowered = value.strip().lower()
+    if lowered in VALID_DM_POLICIES:
+        return lowered
+    return "allowlist"
+
+
+def normalize_group_policy(value: str | None) -> str:
+    if not value:
+        return "mention"
+    lowered = value.strip().lower()
+    if lowered in VALID_GROUP_POLICIES:
+        return lowered
+    return "mention"
 
 
 def _coerce_user_ids(values: Iterable[object]) -> list[int]:

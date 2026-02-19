@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import secrets
+import string
 from collections.abc import Callable
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +18,7 @@ from ..event_bus import EventType, get_event_bus
 from ..memory import get_memory_manager
 from ..multi_agent import get_agent_registry
 from .auth import AuthMiddleware
-from .config import TelegramConfig
+from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
 from .formatter import TelegramFormatter
 from .handlers import RateLimiter, SessionManager, TelegramHandlers, TelegramQueuedMessage
 
@@ -30,6 +34,15 @@ except ImportError:  # pragma: no cover - optional dependency
     filters = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PairingRequest:
+    code: str
+    user_id: int
+    chat_id: int
+    username: str | None
+    created_at: datetime
 
 
 class TelegramBot:
@@ -77,6 +90,8 @@ class TelegramBot:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._notification_handler_ids: list[str] = []
         self._skill_watcher: Any = None  # SkillWatcher (lazy import)
+        self._typing_tasks: dict[int, asyncio.Task[None]] = {}
+        self._pairing_requests: dict[str, PairingRequest] = {}
 
     @property
     def config(self) -> TelegramConfig:
@@ -95,6 +110,12 @@ class TelegramBot:
                 f"max_message_length: {self._config.max_message_length}",
                 f"rate_limit_messages: {self._config.rate_limit_messages}",
                 f"session_timeout: {self._config.session_timeout}",
+                f"dm_policy: {self._config.dm_policy}",
+                f"group_policy: {self._config.group_policy}",
+                f"group_allow_users: {len(self._config.group_allow_users)}",
+                f"typing_indicator: {self._config.typing_indicator}",
+                f"typing_interval_seconds: {self._config.typing_interval_seconds}",
+                f"max_queue_size: {self._config.max_queue_size}",
             ]
         )
 
@@ -132,14 +153,25 @@ class TelegramBot:
             "max_message_length": int,
             "rate_limit_messages": int,
             "session_timeout": int,
+            "typing_indicator": bool,
+            "typing_interval_seconds": int,
+            "max_queue_size": int,
+            "dm_policy": str,
+            "group_policy": str,
         }
         if key not in key_map:
             return False, f"Unsupported config key: {key}"
         try:
-            if key_map[key] is bool:
+            if key in {"dm_policy", "group_policy"}:
+                parsed = normalize_dm_policy(value) if key == "dm_policy" else normalize_group_policy(value)
+                if parsed != value.strip().lower():
+                    return False, f"Invalid value for {key}."
+            elif key_map[key] is bool:
                 parsed = value.lower() in {"1", "true", "yes", "on"}
             elif key_map[key] is int:
                 parsed = int(value)
+                if key in {"typing_interval_seconds", "max_queue_size"} and parsed < 1:
+                    return False, f"{key} must be >= 1."
             else:
                 parsed = value
             setattr(self._config, key, parsed)
@@ -176,6 +208,7 @@ class TelegramBot:
         if self._skill_watcher:
             await self._skill_watcher.stop()
             self._skill_watcher = None
+        await self._stop_all_typing()
         if self._stop_event:
             self._stop_event.set()
         elif self._application:
@@ -196,12 +229,69 @@ class TelegramBot:
         session.queue.clear()
         return cancelled, queued
 
+    def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None) -> tuple[str, bool]:
+        self._prune_pairing_requests()
+        for request in self._pairing_requests.values():
+            if request.user_id == user_id:
+                request.chat_id = chat_id
+                request.username = username
+                return request.code, False
+
+        if len(self._pairing_requests) >= self._config.pairing.max_pending:
+            oldest = min(self._pairing_requests.values(), key=lambda item: item.created_at)
+            self._pairing_requests.pop(oldest.code, None)
+
+        alphabet = string.ascii_uppercase + string.digits
+        code = ""
+        while not code or code in self._pairing_requests:
+            code = "".join(secrets.choice(alphabet) for _ in range(8))
+
+        self._pairing_requests[code] = PairingRequest(
+            code=code,
+            user_id=user_id,
+            chat_id=chat_id,
+            username=username,
+            created_at=datetime.now(),
+        )
+        return code, True
+
+    def approve_pairing_code(self, code: str) -> tuple[bool, str]:
+        self._prune_pairing_requests()
+        normalized = code.strip().upper()
+        if not normalized:
+            return False, "Pairing code is required."
+        request = self._pairing_requests.pop(normalized, None)
+        if request is None:
+            return False, "Pairing code not found or expired."
+        self.add_allowed_user(request.user_id)
+        return True, f"Approved Telegram user {request.user_id}."
+
+    def list_pairing_requests(self) -> list[PairingRequest]:
+        self._prune_pairing_requests()
+        return sorted(self._pairing_requests.values(), key=lambda req: req.created_at)
+
+    def _prune_pairing_requests(self) -> None:
+        ttl = max(60, int(self._config.pairing.code_ttl_seconds))
+        cutoff = datetime.now() - timedelta(seconds=ttl)
+        for code, request in list(self._pairing_requests.items()):
+            if request.created_at < cutoff:
+                self._pairing_requests.pop(code, None)
+
+    def _is_queue_full(self, session: Any) -> bool:
+        max_queue_size = self._config.max_queue_size
+        if max_queue_size <= 0:
+            return False
+        return len(session.queue) >= max_queue_size
+
     async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
         session = self._session_manager.get_or_create_session(chat_id)
         session.last_used = datetime.now()
         queued_message = TelegramQueuedMessage(chat_id=chat_id, user_id=user_id, text=text)
 
         if session.lock.locked():
+            if self._is_queue_full(session):
+                await self.send_text(chat_id, "Session queue is full. Please try again later.")
+                return
             session.queue.append(queued_message)
             await self.send_text(chat_id, "Session busy. Your message was queued.")
             return
@@ -222,6 +312,9 @@ class TelegramBot:
         )
 
         if session.lock.locked():
+            if self._is_queue_full(session):
+                await self.send_text(chat_id, "Session queue is full. Please try again later.")
+                return
             session.queue.append(queued_message)
             await self.send_text(chat_id, "Session busy. Your message was queued.")
             return
@@ -265,6 +358,7 @@ class TelegramBot:
             await self.send_text(user_id, text)
 
     async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
+        await self._start_typing(message.chat_id)
         try:
             session.current_task = asyncio.create_task(
                 session.agent.run(
@@ -280,8 +374,11 @@ class TelegramBot:
             await self.send_text(message.chat_id, "Request cancelled.")
             return
         except BusyError:
-            session.queue.appendleft(message)
-            await self.send_text(message.chat_id, "Session busy. Your message was queued.")
+            if self._is_queue_full(session):
+                await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
+            else:
+                session.queue.appendleft(message)
+                await self.send_text(message.chat_id, "Session busy. Your message was queued.")
             return
         except Exception as exc:
             logger.exception("Failed to process Telegram message.")
@@ -289,6 +386,7 @@ class TelegramBot:
             return
         finally:
             session.current_task = None
+            await self._stop_typing(message.chat_id)
 
         response_text = response or ""
         if response_text:
@@ -316,6 +414,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("memory", self._handlers.handle_memory))
         application.add_handler(CommandHandler("config", self._handlers.handle_config))
         application.add_handler(CommandHandler("users", self._handlers.handle_users))
+        application.add_handler(CommandHandler("pair", self._handlers.handle_pair))
         application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
         application.add_handler(
@@ -437,3 +536,33 @@ class TelegramBot:
         self._skill_watcher = SkillWatcher(mgr)
         await self._skill_watcher.start(project_root=self._work_dir)
         logger.info("Telegram: SkillWatcher started for hot reload")
+
+    async def _start_typing(self, chat_id: int) -> None:
+        if not self._config.typing_indicator:
+            return
+        await self._stop_typing(chat_id)
+        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+
+    async def _stop_typing(self, chat_id: int) -> None:
+        task = self._typing_tasks.pop(chat_id, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _stop_all_typing(self) -> None:
+        chat_ids = list(self._typing_tasks)
+        for chat_id in chat_ids:
+            await self._stop_typing(chat_id)
+
+    async def _typing_loop(self, chat_id: int) -> None:
+        interval = max(1, int(self._config.typing_interval_seconds))
+        try:
+            while True:
+                await self._application.bot.send_chat_action(chat_id=chat_id, action="typing")
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug("Typing loop stopped for chat %s: %s", chat_id, exc)
