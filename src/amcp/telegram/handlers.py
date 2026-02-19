@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from ..memory import get_memory_manager
 from ..skills import get_skill_manager
 from .auth import AuthMiddleware
+from .config import normalize_dm_policy, normalize_group_policy
 
 if TYPE_CHECKING:
     from telegram import Update
@@ -209,6 +210,7 @@ def _parse_message(message: Any) -> tuple[str, str, dict[str, Any] | None]:
 
 
 _MEDIA_PARSERS: dict[str, Any] = {}
+_GROUP_CHAT_TYPES = {"group", "supergroup"}
 
 
 def _exclude_none(d: dict[str, Any]) -> dict[str, Any]:
@@ -240,6 +242,9 @@ def _build_enriched_prompt(
     message: Any,
     msg_type: str = "text",
     media_metadata: dict[str, Any] | None = None,
+    *,
+    was_mentioned: bool | None = None,
+    delegated_by: str | None = None,
 ) -> str:
     """Build an enriched prompt with channel metadata appended as JSON.
 
@@ -261,6 +266,9 @@ def _build_enriched_prompt(
         "sender_id": str(getattr(user, "id", "")) if user else None,
         "sender_is_bot": getattr(user, "is_bot", None) if user else None,
         "chat_type": getattr(chat, "type", None) if chat else None,
+        "message_thread_id": getattr(message, "message_thread_id", None),
+        "was_mentioned": was_mentioned,
+        "delegated_by": delegated_by,
     }
     if media_metadata:
         meta["media"] = media_metadata
@@ -272,6 +280,121 @@ def _build_enriched_prompt(
         meta["date"] = date.timestamp() if hasattr(date, "timestamp") else str(date)
     metadata_json = json.dumps(_exclude_none(meta), ensure_ascii=False)
     return f"{content}\n———————\n{metadata_json}"
+
+
+@dataclass
+class MessageAccessDecision:
+    allowed: bool
+    was_mentioned: bool = False
+    notify_message: str | None = None
+    pairing_code: str | None = None
+    pairing_is_new: bool = False
+
+
+def _extract_bot_identity(message: Any) -> tuple[int | None, str | None]:
+    bot = None
+    if hasattr(message, "get_bot"):
+        try:
+            bot = message.get_bot()
+        except Exception:
+            bot = None
+    bot_id = getattr(bot, "id", None)
+    username = getattr(bot, "username", None)
+    if isinstance(username, str):
+        username = username.lower().lstrip("@")
+    return bot_id, username
+
+
+def _entity_mentions_bot(text: str, entities: list[Any], bot_id: int | None, bot_username: str | None) -> bool:
+    for entity in entities:
+        entity_type = str(getattr(entity, "type", "")).lower()
+        if entity_type == "textmention":
+            entity_type = "text_mention"
+        if entity_type == "text_mention":
+            user = getattr(entity, "user", None)
+            if user and bot_id is not None and getattr(user, "id", None) == bot_id:
+                return True
+        elif entity_type == "mention" and bot_username:
+            offset = int(getattr(entity, "offset", 0))
+            length = int(getattr(entity, "length", 0))
+            mention = text[offset : offset + length].lower().lstrip("@")
+            if mention == bot_username:
+                return True
+    return False
+
+
+def _reply_to_bot(message: Any, bot_id: int | None) -> bool:
+    if bot_id is None:
+        return False
+    reply_to = getattr(message, "reply_to_message", None)
+    if not reply_to:
+        return False
+    from_user = getattr(reply_to, "from_user", None)
+    if not from_user:
+        return False
+    return getattr(from_user, "id", None) == bot_id
+
+
+def _is_bot_mentioned(message: Any, bot_id: int | None, bot_username: str | None) -> bool:
+    if _reply_to_bot(message, bot_id):
+        return True
+
+    text = getattr(message, "text", None) or ""
+    caption = getattr(message, "caption", None) or ""
+    if bot_username and (f"@{bot_username}" in text.lower() or f"@{bot_username}" in caption.lower()):
+        return True
+
+    entities = list(getattr(message, "entities", None) or [])
+    caption_entities = list(getattr(message, "caption_entities", None) or [])
+    return _entity_mentions_bot(text, entities, bot_id, bot_username) or _entity_mentions_bot(
+        caption,
+        caption_entities,
+        bot_id,
+        bot_username,
+    )
+
+
+def _resolve_group_config(config: Any, chat_id: int) -> Any | None:
+    groups = getattr(config, "groups", None) or {}
+    return groups.get(str(chat_id)) or groups.get("*")
+
+
+def _resolve_topic_config(group_cfg: Any | None, thread_id: int | None) -> Any | None:
+    if group_cfg is None:
+        return None
+    topics = getattr(group_cfg, "topics", None) or {}
+    if thread_id is not None:
+        topic_cfg = topics.get(str(thread_id))
+        if topic_cfg:
+            return topic_cfg
+    return topics.get("*")
+
+
+def _effective_group_policy(config: Any, group_cfg: Any | None, topic_cfg: Any | None) -> str:
+    if topic_cfg and topic_cfg.group_policy:
+        return normalize_group_policy(topic_cfg.group_policy)
+    if group_cfg and group_cfg.group_policy:
+        return normalize_group_policy(group_cfg.group_policy)
+    return normalize_group_policy(config.group_policy)
+
+
+def _effective_group_allow_users(config: Any, group_cfg: Any | None, topic_cfg: Any | None) -> set[int]:
+    if topic_cfg and topic_cfg.allow_users:
+        return set(topic_cfg.allow_users)
+    if group_cfg and group_cfg.allow_users:
+        return set(group_cfg.allow_users)
+    group_users = set(config.group_allow_users or [])
+    if group_users:
+        return group_users
+    return set(config.allowed_users or [])
+
+
+def _effective_require_mention(policy: str, group_cfg: Any | None, topic_cfg: Any | None) -> bool:
+    if topic_cfg and topic_cfg.require_mention is not None:
+        return bool(topic_cfg.require_mention)
+    if group_cfg and group_cfg.require_mention is not None:
+        return bool(group_cfg.require_mention)
+    return policy == "mention"
 
 
 class SessionManager:
@@ -313,6 +436,12 @@ class SessionManager:
 
     def get_current_session_id(self, chat_id: int) -> str | None:
         return self._current_sessions.get(chat_id)
+
+    def get_current_session(self, chat_id: int) -> TelegramSession | None:
+        current_id = self._current_sessions.get(chat_id)
+        if not current_id:
+            return None
+        return self._sessions.get(chat_id, {}).get(current_id)
 
     def prune_expired(self) -> None:
         if self._session_timeout <= 0:
@@ -378,26 +507,27 @@ class TelegramHandlers:
     async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
+        lines = [
+            "Commands:",
+            "/start - Initialize bot",
+            "/help - Show commands",
+            "/status - Agent status",
+            "/session new|list|switch <id> - Manage sessions",
+            "/cancel - Cancel current operation",
+            "/ask <prompt> - Send a prompt",
+            "/skills - List skills",
+            "/activate <skill> - Activate a skill",
+            "/memory search <query> - Search memory",
+            "/config show|set <key> <value> - View/update config (admin)",
+            "/users list|add|remove <id> - Manage users (admin)",
+            "/logs <n> - Show recent logs (admin)",
+            "/shutdown - Stop the bot (admin)",
+        ]
+        if self._auth.is_admin(update.effective_user.id):
+            lines.append("/pair list|approve <code> - Manage DM pairing requests (admin)")
         await self._bot.send_text(
             update.effective_chat.id,
-            "\n".join(
-                [
-                    "Commands:",
-                    "/start - Initialize bot",
-                    "/help - Show commands",
-                    "/status - Agent status",
-                    "/session new|list|switch <id> - Manage sessions",
-                    "/cancel - Cancel current operation",
-                    "/ask <prompt> - Send a prompt",
-                    "/skills - List skills",
-                    "/activate <skill> - Activate a skill",
-                    "/memory search <query> - Search memory",
-                    "/config show|set <key> <value> - View/update config (admin)",
-                    "/users list|add|remove <id> - Manage users (admin)",
-                    "/logs <n> - Show recent logs (admin)",
-                    "/shutdown - Stop the bot (admin)",
-                ]
-            ),
+            "\n".join(lines),
         )
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -406,9 +536,21 @@ class TelegramHandlers:
         chat_id = update.effective_chat.id
         sessions = self._session_manager.list_sessions(chat_id)
         current = self._session_manager.get_current_session_id(chat_id)
+        current_session = self._session_manager.get_current_session(chat_id)
+        queued = len(current_session.queue) if current_session else 0
+        active = bool(current_session and current_session.current_task and not current_session.current_task.done())
+        policy = self._describe_chat_policy(update.message)
         await self._bot.send_text(
             chat_id,
-            f"Sessions: {len(sessions)}\nCurrent session: {current or 'none'}",
+            "\n".join(
+                [
+                    f"Sessions: {len(sessions)}",
+                    f"Current session: {current or 'none'}",
+                    f"Active task: {active}",
+                    f"Queued: {queued}",
+                    f"Policy: {policy}",
+                ]
+            ),
         )
 
     async def handle_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -571,6 +713,37 @@ class TelegramHandlers:
             return
         await self._bot.send_text(update.effective_chat.id, "Usage: /users list|add|remove <id>")
 
+    async def handle_pair(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._ensure_admin(update):
+            return
+        args = context.args or []
+        chat_id = update.effective_chat.id
+
+        if not args or args[0] == "list":
+            requests = self._bot.list_pairing_requests()
+            if not requests:
+                await self._bot.send_text(chat_id, "No pending pairing requests.")
+                return
+            now = datetime.now()
+            lines = ["Pending pairing requests:"]
+            for request in requests:
+                age = int((now - request.created_at).total_seconds())
+                username = f"@{request.username}" if request.username else "(no username)"
+                lines.append(
+                    f"- {request.code}: user={request.user_id} {username}, age={age}s"
+                )
+            await self._bot.send_text(chat_id, "\n".join(lines))
+            return
+
+        if args[0] == "approve" and len(args) > 1:
+            ok, message = self._bot.approve_pairing_code(args[1])
+            if ok:
+                await self._bot.persist_config()
+            await self._bot.send_text(chat_id, message)
+            return
+
+        await self._bot.send_text(chat_id, "Usage: /pair list|approve <code>")
+
     async def handle_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_admin(update):
             return
@@ -591,32 +764,55 @@ class TelegramHandlers:
         await self._bot.stop()
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._ensure_authorized(update):
-            return
-        if not self._rate_limiter.allow(update.effective_user.id):
-            await self._bot.send_text(update.effective_chat.id, "Rate limit exceeded.")
-            return
         message = update.message
-        if not message:
+        user = update.effective_user
+        chat = update.effective_chat
+        if not message or not user or not chat:
             return
+
+        decision = self._evaluate_message_access(message, user.id)
+        if not decision.allowed:
+            if decision.pairing_code:
+                await self._bot.send_text(
+                    chat.id,
+                    self._build_pairing_message(user.id, decision.pairing_code, decision.pairing_is_new),
+                )
+            elif decision.notify_message:
+                await self._bot.send_text(chat.id, decision.notify_message)
+            return
+
+        if not self._rate_limiter.allow(user.id):
+            await self._bot.send_text(chat.id, "Rate limit exceeded.")
+            return
+
         msg_type = _message_type(message)
         if msg_type == "unknown":
-            await self._bot.send_text(update.effective_chat.id, "Unsupported message type.")
+            await self._bot.send_text(chat.id, "Unsupported message type.")
             return
         if msg_type == "text":
             raw_text = message.text or ""
-            enriched = _build_enriched_prompt(raw_text, message, msg_type)
+            enriched = _build_enriched_prompt(raw_text, message, msg_type, was_mentioned=decision.was_mentioned)
             await self._bot.handle_prompt(
-                update.effective_chat.id,
-                update.effective_user.id,
+                chat.id,
+                user.id,
                 enriched,
             )
             return
         # Media messages
         text, msg_type, media_metadata = _parse_message(message)
-        enriched = _build_enriched_prompt(text, message, msg_type, media_metadata)
+        enriched = _build_enriched_prompt(
+            text,
+            message,
+            msg_type,
+            media_metadata,
+            was_mentioned=decision.was_mentioned,
+        )
         await self._bot.handle_media(
-            update.effective_chat.id, update.effective_user.id, enriched, msg_type, media_metadata
+            chat.id,
+            user.id,
+            enriched,
+            msg_type,
+            media_metadata,
         )
 
     async def handle_unknown(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -627,9 +823,45 @@ class TelegramHandlers:
     async def _ensure_authorized(self, update: Update) -> bool:
         user = update.effective_user
         chat = update.effective_chat
+        message = update.message
         if not user or not chat:
             return False
-        if not self._auth.is_authorized(user.id):
+
+        if self._auth.is_authorized(user.id):
+            return True
+
+        chat_type = getattr(chat, "type", "private")
+        config = self._bot.config
+
+        if chat_type not in _GROUP_CHAT_TYPES:
+            dm_policy = normalize_dm_policy(config.dm_policy)
+            if dm_policy == "open":
+                return True
+            if dm_policy == "pairing" and config.pairing.enabled:
+                code, is_new = self._bot.create_pairing_request(user.id, chat.id, getattr(user, "username", None))
+                await self._bot.send_text(chat.id, self._build_pairing_message(user.id, code, is_new))
+                return False
+            await self._bot.send_text(chat.id, "Access denied.")
+            return False
+
+        if message is None:
+            return False
+        group_cfg = _resolve_group_config(config, chat.id)
+        thread_id = getattr(message, "message_thread_id", None)
+        topic_cfg = _resolve_topic_config(group_cfg, thread_id)
+
+        if group_cfg and not group_cfg.enabled:
+            return False
+        if topic_cfg and not topic_cfg.enabled:
+            return False
+
+        policy = _effective_group_policy(config, group_cfg, topic_cfg)
+        if policy == "disabled":
+            return False
+        if policy == "allowlist":
+            allowed = _effective_group_allow_users(config, group_cfg, topic_cfg)
+            if user.id in allowed:
+                return True
             await self._bot.send_text(chat.id, "Access denied.")
             return False
         return True
@@ -643,3 +875,85 @@ class TelegramHandlers:
             await self._bot.send_text(chat.id, "Admin access required.")
             return False
         return True
+
+    def _describe_chat_policy(self, message: Any | None) -> str:
+        config = self._bot.config
+        if message is None:
+            return f"dm_policy={normalize_dm_policy(config.dm_policy)}"
+        chat = getattr(message, "chat", None)
+        chat_type = getattr(chat, "type", "private")
+        if chat_type not in _GROUP_CHAT_TYPES:
+            return f"dm_policy={normalize_dm_policy(config.dm_policy)}"
+
+        chat_id = getattr(chat, "id", 0)
+        group_cfg = _resolve_group_config(config, chat_id)
+        topic_cfg = _resolve_topic_config(group_cfg, getattr(message, "message_thread_id", None))
+        policy = _effective_group_policy(config, group_cfg, topic_cfg)
+        require_mention = _effective_require_mention(policy, group_cfg, topic_cfg)
+        return f"group_policy={policy}, require_mention={require_mention}"
+
+    def _build_pairing_message(self, user_id: int, code: str, is_new: bool) -> str:
+        heading = "Pairing request created." if is_new else "Pairing request already exists."
+        return "\n".join(
+            [
+                heading,
+                f"Your Telegram user ID: {user_id}",
+                f"Pairing code: {code}",
+                "Ask an admin to approve with: /pair approve <code>",
+            ]
+        )
+
+    def _evaluate_message_access(self, message: Any, user_id: int) -> MessageAccessDecision:
+        config = self._bot.config
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        chat_type = getattr(chat, "type", "private")
+        is_authorized = self._auth.is_authorized(user_id)
+
+        if chat_type not in _GROUP_CHAT_TYPES:
+            dm_policy = normalize_dm_policy(config.dm_policy)
+            if dm_policy == "disabled":
+                return MessageAccessDecision(allowed=False)
+            if dm_policy == "open" or is_authorized:
+                return MessageAccessDecision(allowed=True)
+            if dm_policy == "pairing" and config.pairing.enabled and chat_id is not None:
+                code, is_new = self._bot.create_pairing_request(
+                    user_id,
+                    chat_id,
+                    getattr(getattr(message, "from_user", None), "username", None),
+                )
+                return MessageAccessDecision(
+                    allowed=False,
+                    pairing_code=code,
+                    pairing_is_new=is_new,
+                )
+            return MessageAccessDecision(allowed=False, notify_message="Access denied.")
+
+        if chat_id is None:
+            return MessageAccessDecision(allowed=False)
+
+        group_cfg = _resolve_group_config(config, chat_id)
+        thread_id = getattr(message, "message_thread_id", None)
+        topic_cfg = _resolve_topic_config(group_cfg, thread_id)
+        if group_cfg and not group_cfg.enabled:
+            return MessageAccessDecision(allowed=False)
+        if topic_cfg and not topic_cfg.enabled:
+            return MessageAccessDecision(allowed=False)
+
+        policy = _effective_group_policy(config, group_cfg, topic_cfg)
+        if policy == "disabled":
+            return MessageAccessDecision(allowed=False)
+
+        bot_id, bot_username = _extract_bot_identity(message)
+        was_mentioned = _is_bot_mentioned(message, bot_id, bot_username)
+
+        if policy == "allowlist":
+            allow_users = _effective_group_allow_users(config, group_cfg, topic_cfg)
+            if user_id not in allow_users and not is_authorized:
+                return MessageAccessDecision(allowed=False)
+
+        require_mention = _effective_require_mention(policy, group_cfg, topic_cfg)
+        if require_mention and not was_mentioned:
+            return MessageAccessDecision(allowed=False, was_mentioned=False)
+
+        return MessageAccessDecision(allowed=True, was_mentioned=was_mentioned)

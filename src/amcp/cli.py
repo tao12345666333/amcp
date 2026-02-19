@@ -339,10 +339,14 @@ def telegram_start(
         raise typer.Exit(1)
 
     allowed = set(allow_user) if allow_user is not None else set(telegram_cfg.allowed_users)
-    if not allowed:
+    admin = set(admin_user) if admin_user is not None else set(telegram_cfg.admin_users)
+
+    if telegram_cfg.dm_policy == "allowlist" and not allowed:
         console.print("[red]No allowed users. Provide --allow-user or set config.[/red]")
         raise typer.Exit(1)
-    admin = set(admin_user) if admin_user is not None else set(telegram_cfg.admin_users)
+    if telegram_cfg.dm_policy == "pairing" and not admin:
+        console.print("[red]At least one admin user is required for pairing mode.[/red]")
+        raise typer.Exit(1)
 
     bot = TelegramBot(
         token=bot_token,
@@ -373,6 +377,10 @@ def telegram_status() -> None:
         f"allowed_users: {len(cfg.telegram.allowed_users)}",
         f"admin_users: {len(cfg.telegram.admin_users)}",
         f"webhook_mode: {cfg.telegram.webhook_mode}",
+        f"dm_policy: {cfg.telegram.dm_policy}",
+        f"group_policy: {cfg.telegram.group_policy}",
+        f"typing_indicator: {cfg.telegram.typing_indicator}",
+        f"max_queue_size: {cfg.telegram.max_queue_size}",
     ]
     console.print("\n".join(summary))
 

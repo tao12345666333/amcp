@@ -2,9 +2,12 @@ import json
 from types import SimpleNamespace
 
 from amcp.telegram.auth import AuthMiddleware
+from amcp.telegram.config import TelegramConfig, TelegramGroupConfig, TelegramPairingConfig, TelegramTopicConfig
 from amcp.telegram.formatter import TelegramFormatter
 from amcp.telegram.handlers import (
+    RateLimiter,
     SessionManager,
+    TelegramHandlers,
     _build_enriched_prompt,
     _exclude_none,
     _extract_reply_metadata,
@@ -14,6 +17,16 @@ from amcp.telegram.handlers import (
 class _FakeAgent:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
+
+
+class _FakeBot:
+    def __init__(self, config: TelegramConfig) -> None:
+        self.config = config
+        self.pairing_requests: list[tuple[int, int, str | None]] = []
+
+    def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
+        self.pairing_requests.append((user_id, chat_id, username))
+        return "PAIRCODE", True
 
 
 def test_auth_middleware():
@@ -65,24 +78,45 @@ def test_exclude_none_keeps_falsy():
     assert result == {"a": 0, "b": "", "c": False}
 
 
-def _make_message(text="hello", chat_id=123, message_id=10, reply_to=None):
+def _make_message(
+    text="hello",
+    chat_id=123,
+    message_id=10,
+    reply_to=None,
+    *,
+    chat_type="private",
+    username="tester",
+    user_id=42,
+    entities=None,
+    caption=None,
+    caption_entities=None,
+    thread_id=None,
+    bot_username="amcp_bot",
+    bot_id=700,
+):
     user = SimpleNamespace(
-        id=42,
-        username="tester",
+        id=user_id,
+        username=username,
         full_name="Test User",
         first_name="Test",
         last_name="User",
         is_bot=False,
     )
-    chat = SimpleNamespace(type="private")
+    chat = SimpleNamespace(id=chat_id, type=chat_type)
+    bot = SimpleNamespace(id=bot_id, username=bot_username)
     return SimpleNamespace(
         chat_id=chat_id,
         chat=chat,
         message_id=message_id,
         text=text,
+        caption=caption,
+        entities=entities or [],
+        caption_entities=caption_entities or [],
         from_user=user,
         reply_to_message=reply_to,
+        message_thread_id=thread_id,
         date=None,
+        get_bot=lambda: bot,
     )
 
 
@@ -150,3 +184,72 @@ def test_build_enriched_prompt_with_reply():
     reply = data["reply_to_message"]
     assert reply["message_id"] == 5
     assert reply["from_is_bot"] is True
+
+
+def _make_handlers(config: TelegramConfig, allowed_users: set[int] | None = None):
+    fake_bot = _FakeBot(config)
+    manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
+    handlers = TelegramHandlers(
+        bot=fake_bot,
+        session_manager=manager,
+        auth=AuthMiddleware(allowed_users=allowed_users or set(), admin_users=set()),
+        rate_limiter=RateLimiter(limit=100),
+    )
+    return handlers, fake_bot
+
+
+def test_message_access_dm_pairing_generates_code():
+    handlers, fake_bot = _make_handlers(
+        TelegramConfig(dm_policy="pairing", pairing=TelegramPairingConfig(enabled=True)),
+        allowed_users=set(),
+    )
+    message = _make_message(chat_type="private", user_id=222, username="new_user")
+
+    decision = handlers._evaluate_message_access(message, 222)
+
+    assert decision.allowed is False
+    assert decision.pairing_code == "PAIRCODE"
+    assert fake_bot.pairing_requests == [(222, 123, "new_user")]
+
+
+def test_message_access_group_mention_policy_requires_mention():
+    handlers, _ = _make_handlers(TelegramConfig(group_policy="mention"), allowed_users=set())
+
+    plain_message = _make_message(chat_type="supergroup", chat_id=-1001, text="hello")
+    decision_plain = handlers._evaluate_message_access(plain_message, 42)
+    assert decision_plain.allowed is False
+
+    mention_message = _make_message(chat_type="supergroup", chat_id=-1001, text="@amcp_bot hello")
+    decision_mention = handlers._evaluate_message_access(mention_message, 42)
+    assert decision_mention.allowed is True
+    assert decision_mention.was_mentioned is True
+
+
+def test_message_access_group_reply_to_bot_counts_as_mention():
+    handlers, _ = _make_handlers(TelegramConfig(group_policy="mention"), allowed_users=set())
+    reply_to = SimpleNamespace(from_user=SimpleNamespace(id=700, is_bot=True), text="prev")
+    message = _make_message(chat_type="group", chat_id=-1001, text="reply", reply_to=reply_to)
+
+    decision = handlers._evaluate_message_access(message, 42)
+
+    assert decision.allowed is True
+    assert decision.was_mentioned is True
+
+
+def test_message_access_topic_override_precedence():
+    group_cfg = TelegramGroupConfig(
+        group_policy="allowlist",
+        allow_users=[10],
+        topics={"42": TelegramTopicConfig(group_policy="open", require_mention=False)},
+    )
+    cfg = TelegramConfig(group_policy="mention", groups={"-1001": group_cfg})
+    handlers, _ = _make_handlers(cfg, allowed_users=set())
+
+    topic_message = _make_message(chat_type="supergroup", chat_id=-1001, thread_id=42, user_id=99)
+    non_topic_message = _make_message(chat_type="supergroup", chat_id=-1001, thread_id=43, user_id=99)
+
+    topic_decision = handlers._evaluate_message_access(topic_message, 99)
+    non_topic_decision = handlers._evaluate_message_access(non_topic_message, 99)
+
+    assert topic_decision.allowed is True
+    assert non_topic_decision.allowed is False

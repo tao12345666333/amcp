@@ -92,3 +92,73 @@ def test_decode_automation_uses_default_timeout():
 def test_decode_encode_automation_none():
     assert config_module._decode_automation(None) is None
     assert config_module._encode_automation(None) is None
+
+
+def test_decode_encode_telegram_roundtrip_with_policies():
+    raw = {
+        "enabled": True,
+        "bot_token": "token",
+        "allowed_users": [1],
+        "admin_users": [1],
+        "dm_policy": "pairing",
+        "group_policy": "mention",
+        "group_allow_users": [2, 3],
+        "typing_indicator": True,
+        "typing_interval_seconds": 5,
+        "max_queue_size": 25,
+        "pairing": {
+            "enabled": True,
+            "code_ttl_seconds": 900,
+            "max_pending": 50,
+        },
+        "groups": {
+            "-100123": {
+                "enabled": True,
+                "group_policy": "allowlist",
+                "require_mention": True,
+                "allow_users": [4],
+                "topics": {
+                    "42": {
+                        "enabled": True,
+                        "group_policy": "open",
+                        "require_mention": False,
+                        "allow_users": [5],
+                    }
+                },
+            }
+        },
+    }
+
+    cfg = config_module._decode_telegram(raw)
+    assert cfg is not None
+    assert cfg.dm_policy == "pairing"
+    assert cfg.group_policy == "mention"
+    assert cfg.group_allow_users == [2, 3]
+    assert cfg.typing_interval_seconds == 5
+    assert cfg.max_queue_size == 25
+    assert cfg.pairing.code_ttl_seconds == 900
+    assert cfg.groups["-100123"].topics["42"].group_policy == "open"
+
+    encoded = config_module._encode_telegram(cfg)
+    assert encoded is not None
+    assert encoded["dm_policy"] == "pairing"
+    assert encoded["group_policy"] == "mention"
+    assert encoded["pairing"]["max_pending"] == 50
+    assert encoded["groups"]["-100123"]["topics"]["42"]["group_policy"] == "open"
+
+
+def test_decode_telegram_invalid_policy_falls_back_to_defaults():
+    cfg = config_module._decode_telegram(
+        {
+            "dm_policy": "invalid",
+            "group_policy": "invalid",
+            "typing_interval_seconds": 0,
+            "max_queue_size": 0,
+        }
+    )
+
+    assert cfg is not None
+    assert cfg.dm_policy == "allowlist"
+    assert cfg.group_policy == "mention"
+    assert cfg.typing_interval_seconds == 1
+    assert cfg.max_queue_size == 1
