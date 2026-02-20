@@ -12,6 +12,7 @@ from amcp.skills import SkillManager, SkillMetadata, reset_skill_manager
 
 # --- Fixtures ---
 
+
 @pytest.fixture(autouse=True)
 def _reset_manager():
     """Reset global skill manager before each test."""
@@ -43,6 +44,7 @@ def tmp_skills_root(tmp_path: Path, tmp_skill_dir: Path):
 
 
 # --- Tests: Built-in Skills Discovery ---
+
 
 class TestBuiltinSkillsDiscovery:
     def test_builtin_skills_dir_exists(self):
@@ -122,6 +124,7 @@ class TestPrecedenceOrder:
 
 # --- Tests: Skills Summary (Progressive Disclosure) ---
 
+
 class TestSkillsSummary:
     def test_summary_empty_when_no_skills(self):
         """Summary is empty when no skills are discovered."""
@@ -178,10 +181,19 @@ class TestGetSkillContent:
 
 # --- Tests: init_skill.py ---
 
+
 class TestInitSkillScript:
     @pytest.fixture
     def init_script(self):
-        return Path(__file__).resolve().parent.parent / "src" / "amcp" / "builtin_skills" / "skill-creator" / "scripts" / "init_skill.py"
+        return (
+            Path(__file__).resolve().parent.parent
+            / "src"
+            / "amcp"
+            / "builtin_skills"
+            / "skill-creator"
+            / "scripts"
+            / "init_skill.py"
+        )
 
     def test_creates_skill_directory(self, tmp_path: Path, init_script: Path):
         """init_skill.py creates a proper skill directory."""
@@ -237,10 +249,19 @@ class TestInitSkillScript:
 
 # --- Tests: validate_skill.py ---
 
+
 class TestValidateSkillScript:
     @pytest.fixture
     def validate_script(self):
-        return Path(__file__).resolve().parent.parent / "src" / "amcp" / "builtin_skills" / "skill-creator" / "scripts" / "validate_skill.py"
+        return (
+            Path(__file__).resolve().parent.parent
+            / "src"
+            / "amcp"
+            / "builtin_skills"
+            / "skill-creator"
+            / "scripts"
+            / "validate_skill.py"
+        )
 
     def test_validates_good_skill(self, tmp_skill_dir: Path, validate_script: Path):
         """validate_skill.py passes for a valid skill."""
@@ -302,4 +323,6 @@ class TestValidateSkillScript:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"Built-in skill-creator failed validation:\nstdout={result.stdout}\nstderr={result.stderr}"
+        assert result.returncode == 0, (
+            f"Built-in skill-creator failed validation:\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
