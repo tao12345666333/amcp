@@ -201,7 +201,7 @@ _DEFAULT = {
             "think": "always",
             "apply_patch": "frequent",
             "write_file": "frequent",
-            "bash": "frequent",
+            "bash": "always",
             "todo": "frequent",
             "memory": "on_demand",
             "task": "on_demand",

@@ -1,5 +1,7 @@
+import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from amcp.telegram.auth import AuthMiddleware
 from amcp.telegram.config import TelegramConfig, TelegramGroupConfig, TelegramPairingConfig, TelegramTopicConfig
@@ -8,6 +10,7 @@ from amcp.telegram.handlers import (
     RateLimiter,
     SessionManager,
     TelegramHandlers,
+    TelegramQueuedMessage,
     _build_enriched_prompt,
     _exclude_none,
     _extract_reply_metadata,
@@ -253,3 +256,162 @@ def test_message_access_topic_override_precedence():
 
     assert topic_decision.allowed is True
     assert non_topic_decision.allowed is False
+
+
+# --- Typing lifecycle tests ---
+
+
+def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int = 1):
+    """Build a TelegramBot with mocked internals for typing tests."""
+    config = TelegramConfig(
+        enabled=True,
+        bot_token="fake-token",
+        typing_indicator=typing_indicator,
+        typing_interval_seconds=typing_interval,
+    )
+    mock_app = MagicMock()
+    mock_app.bot = MagicMock()
+    mock_app.bot.send_chat_action = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+
+    with patch("amcp.telegram.bot.ApplicationBuilder") as builder_cls, \
+         patch("amcp.telegram.bot.CommandHandler", MagicMock()), \
+         patch("amcp.telegram.bot.MessageHandler", MagicMock()), \
+         patch("amcp.telegram.bot.filters", MagicMock()):
+        builder_cls.return_value.token.return_value.build.return_value = mock_app
+
+        from amcp.telegram.bot import TelegramBot
+
+        bot = TelegramBot(
+            token="fake-token",
+            allowed_users={1},
+            admin_users={1},
+            config=config,
+        )
+    return bot
+
+
+def test_typing_start_creates_task():
+    async def _run():
+        bot = _make_bot_for_typing()
+        await bot._start_typing(100)
+
+        assert 100 in bot._typing_tasks
+        task = bot._typing_tasks[100]
+        assert not task.done()
+
+        await bot._stop_typing(100)
+        assert 100 not in bot._typing_tasks
+
+    asyncio.run(_run())
+
+
+def test_typing_stop_cancels_task():
+    async def _run():
+        bot = _make_bot_for_typing()
+        await bot._start_typing(200)
+        task = bot._typing_tasks[200]
+
+        await bot._stop_typing(200)
+
+        assert 200 not in bot._typing_tasks
+        assert task.cancelled() or task.done()
+
+    asyncio.run(_run())
+
+
+def test_typing_disabled_skips():
+    async def _run():
+        bot = _make_bot_for_typing(typing_indicator=False)
+        await bot._start_typing(300)
+
+        assert 300 not in bot._typing_tasks
+
+    asyncio.run(_run())
+
+
+def test_typing_loop_sends_chat_action():
+    async def _run():
+        bot = _make_bot_for_typing(typing_interval=1)
+        await bot._start_typing(400)
+
+        # Let the loop fire at least once
+        await asyncio.sleep(0.05)
+
+        bot._application.bot.send_chat_action.assert_called_with(chat_id=400, action="typing")
+
+        await bot._stop_typing(400)
+
+    asyncio.run(_run())
+
+
+def test_typing_stop_all():
+    async def _run():
+        bot = _make_bot_for_typing()
+        await bot._start_typing(501)
+        await bot._start_typing(502)
+        assert len(bot._typing_tasks) == 2
+
+        await bot._stop_all_typing()
+
+        assert len(bot._typing_tasks) == 0
+
+    asyncio.run(_run())
+
+
+def test_process_message_starts_and_stops_typing():
+    async def _run():
+        bot = _make_bot_for_typing()
+
+        class _MockAgent:
+            session_id = "test"
+
+            async def run(self, **kwargs):
+                return "ok"
+
+        session = SimpleNamespace(
+            session_id="test",
+            agent=_MockAgent(),
+            lock=asyncio.Lock(),
+            queue=__import__("collections").deque(),
+            current_task=None,
+        )
+        msg = TelegramQueuedMessage(chat_id=600, user_id=1, text="hi")
+
+        with patch.object(bot, "_start_typing", new_callable=AsyncMock) as start, \
+             patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop:
+            await bot._process_message(session, msg)
+
+        start.assert_called_once_with(600)
+        stop.assert_called_once_with(600)
+
+    asyncio.run(_run())
+
+
+def test_process_message_stops_typing_on_error():
+    async def _run():
+        bot = _make_bot_for_typing()
+
+        class _ErrorAgent:
+            session_id = "test"
+
+            async def run(self, **kwargs):
+                raise RuntimeError("boom")
+
+        session = SimpleNamespace(
+            session_id="test",
+            agent=_ErrorAgent(),
+            lock=asyncio.Lock(),
+            queue=__import__("collections").deque(),
+            current_task=None,
+        )
+        msg = TelegramQueuedMessage(chat_id=700, user_id=1, text="hi")
+
+        with patch.object(bot, "_start_typing", new_callable=AsyncMock) as start, \
+             patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop:
+            await bot._process_message(session, msg)
+
+        start.assert_called_once_with(700)
+        stop.assert_called_once_with(700)
+
+    asyncio.run(_run())
