@@ -24,7 +24,7 @@ DEFAULT_TOOL_TIERS: dict[str, ToolTier] = {
     "think": ToolTier.ALWAYS,
     "write_file": ToolTier.ALWAYS,
     "apply_patch": ToolTier.FREQUENT,
-    "bash": ToolTier.FREQUENT,
+    "bash": ToolTier.ALWAYS,
     "todo": ToolTier.FREQUENT,
     "memory": ToolTier.ON_DEMAND,
     "task": ToolTier.ON_DEMAND,
