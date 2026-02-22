@@ -74,8 +74,7 @@ The text supports Markdown formatting which is auto-converted to MarkdownV2."""
             return ToolResult(
                 success=False,
                 content="",
-                error="Telegram bot token not configured. "
-                "Set AMCP_TELEGRAM_BOT_TOKEN or pass bot_token.",
+                error="Telegram bot token not configured. Set AMCP_TELEGRAM_BOT_TOKEN or pass bot_token.",
             )
 
         if action == "send":

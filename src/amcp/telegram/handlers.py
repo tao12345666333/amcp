@@ -729,9 +729,7 @@ class TelegramHandlers:
             for request in requests:
                 age = int((now - request.created_at).total_seconds())
                 username = f"@{request.username}" if request.username else "(no username)"
-                lines.append(
-                    f"- {request.code}: user={request.user_id} {username}, age={age}s"
-                )
+                lines.append(f"- {request.code}: user={request.user_id} {username}, age={age}s")
             await self._bot.send_text(chat_id, "\n".join(lines))
             return
 

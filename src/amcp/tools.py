@@ -1044,28 +1044,25 @@ Examples:
             elif action == "write":
                 if not content:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Content is required for write action.",
                     )
                 manager.write_long_term(content, scope)
                 return ToolResult(
                     success=True,
-                    content=(
-                        f"Long-term memory updated ({len(content)} chars)"
-                        f" in scope '{scope}'."
-                    ),
+                    content=(f"Long-term memory updated ({len(content)} chars) in scope '{scope}'."),
                     metadata={"scope": scope, "size": len(content)},
                 )
 
             elif action == "append":
                 if not content:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Content is required for append action.",
                     )
-                manager.append_history(
-                    content, session_id="agent", tags=tags, scope=scope
-                )
+                manager.append_history(content, session_id="agent", tags=tags, scope=scope)
                 return ToolResult(
                     success=True,
                     content="Entry appended to history log.",
@@ -1075,7 +1072,8 @@ Examples:
             elif action == "search":
                 if not query:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Query is required for search action.",
                     )
                 results = manager.search(query, max_results=max_results)
@@ -1087,9 +1085,7 @@ Examples:
                     )
                 lines = [f"Found {len(results)} results for '{query}':"]
                 for r in results:
-                    lines.append(
-                        f"  [{r.source}:L{r.line_number}] {r.content}"
-                    )
+                    lines.append(f"  [{r.source}:L{r.line_number}] {r.content}")
                 return ToolResult(
                     success=True,
                     content="\n".join(lines),
@@ -1112,12 +1108,14 @@ Examples:
             elif action == "upsert_fact":
                 if not key:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Key is required for upsert_fact action.",
                     )
                 if not content:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Content is required for upsert_fact action.",
                     )
                 manager.upsert_fact(
@@ -1135,7 +1133,8 @@ Examples:
             elif action == "get_fact":
                 if not key:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Key is required for get_fact action.",
                     )
                 fact = manager.get_fact(key, scope=scope)
@@ -1159,13 +1158,9 @@ Examples:
                 )
 
             elif action == "list_facts":
-                facts = manager.list_facts(
-                    category=category, scope=scope
-                )
+                facts = manager.list_facts(category=category, scope=scope)
                 if not facts:
-                    cat_msg = (
-                        f" in category '{category}'" if category else ""
-                    )
+                    cat_msg = f" in category '{category}'" if category else ""
                     return ToolResult(
                         success=True,
                         content=f"No facts found{cat_msg}.",
@@ -1173,9 +1168,7 @@ Examples:
                     )
                 lines = [f"Found {len(facts)} facts:"]
                 for f in facts:
-                    lines.append(
-                        f"  [{f['category']}] {f['key']}: {f['value']}"
-                    )
+                    lines.append(f"  [{f['category']}] {f['key']}: {f['value']}")
                 return ToolResult(
                     success=True,
                     content="\n".join(lines),
@@ -1185,7 +1178,8 @@ Examples:
             elif action == "delete_fact":
                 if not key:
                     return ToolResult(
-                        success=False, content="",
+                        success=False,
+                        content="",
                         error="Key is required for delete_fact action.",
                     )
                 deleted = manager.delete_fact(key, scope=scope)
@@ -1202,10 +1196,7 @@ Examples:
                 )
 
             else:
-                valid = (
-                    "read, write, append, search, stats, "
-                    "upsert_fact, get_fact, list_facts, delete_fact"
-                )
+                valid = "read, write, append, search, stats, upsert_fact, get_fact, list_facts, delete_fact"
                 return ToolResult(
                     success=False,
                     content="",
@@ -1214,7 +1205,8 @@ Examples:
 
         except Exception as e:
             return ToolResult(
-                success=False, content="",
+                success=False,
+                content="",
                 error=f"Memory operation failed: {e}",
             )
 
@@ -1225,18 +1217,21 @@ Examples:
                 "action": {
                     "type": "string",
                     "enum": [
-                        "read", "write", "append", "search", "stats",
-                        "upsert_fact", "get_fact", "list_facts",
+                        "read",
+                        "write",
+                        "append",
+                        "search",
+                        "stats",
+                        "upsert_fact",
+                        "get_fact",
+                        "list_facts",
                         "delete_fact",
                     ],
                     "description": "Action to perform",
                 },
                 "content": {
                     "type": "string",
-                    "description": (
-                        "Content for write/append actions, or "
-                        "value for upsert_fact"
-                    ),
+                    "description": ("Content for write/append actions, or value for upsert_fact"),
                 },
                 "scope": {
                     "type": "string",
@@ -1250,9 +1245,7 @@ Examples:
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": (
-                        "Tags for history entries (for append action)"
-                    ),
+                    "description": ("Tags for history entries (for append action)"),
                 },
                 "max_results": {
                     "type": "integer",
@@ -1262,16 +1255,11 @@ Examples:
                 },
                 "key": {
                     "type": "string",
-                    "description": (
-                        "Fact key (for upsert_fact, get_fact, "
-                        "delete_fact actions)"
-                    ),
+                    "description": ("Fact key (for upsert_fact, get_fact, delete_fact actions)"),
                 },
                 "category": {
                     "type": "string",
-                    "description": (
-                        "Fact category (for upsert_fact, list_facts)"
-                    ),
+                    "description": ("Fact category (for upsert_fact, list_facts)"),
                 },
             },
             "required": ["action"],

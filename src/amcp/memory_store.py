@@ -116,9 +116,7 @@ class SQLiteMemoryStore:
             return self._conn
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            str(self._db_path), check_same_thread=False
-        )
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema(self._conn)
@@ -152,16 +150,13 @@ class SQLiteMemoryStore:
         now = datetime.now().isoformat(timespec="seconds")
         tags_json = json.dumps(tags or [])
         cursor = conn.execute(
-            "INSERT INTO events (timestamp, session_id, content, tags, source) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO events (timestamp, session_id, content, tags, source) VALUES (?, ?, ?, ?, ?)",
             (now, session_id, content, tags_json, source),
         )
         conn.commit()
         return cursor.lastrowid  # type: ignore[return-value]
 
-    def search_events(
-        self, query: str, max_results: int = 20
-    ) -> list[MemorySearchResult]:
+    def search_events(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
         """Search episodic events using FTS5 full-text search.
 
         Args:
@@ -209,8 +204,7 @@ class SQLiteMemoryStore:
         """
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT id, timestamp, session_id, content, tags, source "
-            "FROM events ORDER BY id DESC LIMIT ?",
+            "SELECT id, timestamp, session_id, content, tags, source FROM events ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -259,15 +253,12 @@ class SQLiteMemoryStore:
         """
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT id, key, value, category, source, confidence, "
-            "created_at, updated_at FROM facts WHERE key = ?",
+            "SELECT id, key, value, category, source, confidence, created_at, updated_at FROM facts WHERE key = ?",
             (key,),
         ).fetchone()
         return dict(row) if row else None
 
-    def search_facts(
-        self, query: str, max_results: int = 20
-    ) -> list[dict]:
+    def search_facts(self, query: str, max_results: int = 20) -> list[dict]:
         """Search facts using FTS5 full-text search.
 
         Args:
@@ -298,9 +289,7 @@ class SQLiteMemoryStore:
 
         return [dict(row) for row in rows]
 
-    def list_facts(
-        self, category: str | None = None, limit: int = 100
-    ) -> list[dict]:
+    def list_facts(self, category: str | None = None, limit: int = 100) -> list[dict]:
         """List facts, optionally filtered by category.
 
         Args:
@@ -343,9 +332,7 @@ class SQLiteMemoryStore:
 
     # --- Combined search ---
 
-    def search(
-        self, query: str, max_results: int = 20
-    ) -> list[MemorySearchResult]:
+    def search(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
         """Search across both events and facts.
 
         Facts are returned first, then events.
@@ -386,15 +373,9 @@ class SQLiteMemoryStore:
             Dictionary with event and fact counts and DB size.
         """
         conn = self._get_conn()
-        event_count = conn.execute(
-            "SELECT COUNT(*) FROM events"
-        ).fetchone()[0]
-        fact_count = conn.execute(
-            "SELECT COUNT(*) FROM facts"
-        ).fetchone()[0]
-        db_size = (
-            self._db_path.stat().st_size if self._db_path.exists() else 0
-        )
+        event_count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        fact_count = conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+        db_size = self._db_path.stat().st_size if self._db_path.exists() else 0
         return {
             "event_count": event_count,
             "fact_count": fact_count,
