@@ -102,9 +102,7 @@ class AssistantScheduler:
                     self._last_run[key] = now
                     continue
                 try:
-                    next_run = croniter(
-                        trigger.schedule, last
-                    ).get_next(datetime)
+                    next_run = croniter(trigger.schedule, last).get_next(datetime)
                     if next_run.tzinfo is None:
                         next_run = next_run.replace(tzinfo=UTC)
                 except (ValueError, KeyError):
@@ -142,24 +140,16 @@ class AssistantScheduler:
         except TimeoutError:
             logger.warning("Trigger %s timed out after %ds", key, trigger.timeout)
             if trigger.notify:
-                await self._notify(
-                    f"⏰ Scheduled skill *{skill.name}* timed out "
-                    f"after {trigger.timeout}s."
-                )
+                await self._notify(f"⏰ Scheduled skill *{skill.name}* timed out after {trigger.timeout}s.")
             return
         except Exception:
             logger.exception("Trigger %s failed", key)
             if trigger.notify:
-                await self._notify(
-                    f"❌ Scheduled skill *{skill.name}* failed. "
-                    f"Check logs for details."
-                )
+                await self._notify(f"❌ Scheduled skill *{skill.name}* failed. Check logs for details.")
             return
 
         if trigger.notify and result:
-            await self._notify(
-                f"📋 Scheduled skill *{skill.name}*:\n{result[:3000]}"
-            )
+            await self._notify(f"📋 Scheduled skill *{skill.name}*:\n{result[:3000]}")
 
     async def _notify(self, text: str) -> None:
         """Send a notification, handling both sync and async callables."""

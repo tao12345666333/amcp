@@ -206,9 +206,7 @@ class MemoryStore:
         """
         # Try SQLite FTS5 first
         try:
-            fts_results = self._sqlite.search_events(
-                query, max_results=max_results
-            )
+            fts_results = self._sqlite.search_events(query, max_results=max_results)
             if fts_results:
                 return fts_results
         except Exception as e:
@@ -274,18 +272,14 @@ class MemoryStore:
         remaining = max_results - len(results)
         if remaining > 0:
             try:
-                sqlite_results = self._sqlite.search(
-                    query, max_results=remaining
-                )
+                sqlite_results = self._sqlite.search(query, max_results=remaining)
                 results.extend(sqlite_results)
             except Exception as e:
                 logger.debug(f"SQLite search failed, falling back: {e}")
                 # Fallback to history grep
                 remaining = max_results - len(results)
                 if remaining > 0:
-                    results.extend(
-                        self.search_history(query, max_results=remaining)
-                    )
+                    results.extend(self.search_history(query, max_results=remaining))
 
         return results
 
@@ -345,9 +339,7 @@ class MemoryStore:
         """
         return self._sqlite.get_fact(key)
 
-    def search_facts(
-        self, query: str, max_results: int = 20
-    ) -> list[dict]:
+    def search_facts(self, query: str, max_results: int = 20) -> list[dict]:
         """Search facts using FTS5.
 
         Args:
@@ -359,9 +351,7 @@ class MemoryStore:
         """
         return self._sqlite.search_facts(query, max_results)
 
-    def list_facts(
-        self, category: str | None = None, limit: int = 100
-    ) -> list[dict]:
+    def list_facts(self, category: str | None = None, limit: int = 100) -> list[dict]:
         """List facts, optionally filtered by category.
 
         Args:
