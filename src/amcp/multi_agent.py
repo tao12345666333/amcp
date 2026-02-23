@@ -224,6 +224,14 @@ class AgentRegistry:
         """
         return list(self._agents.keys())
 
+    def iter_agents(self) -> list[tuple[str, AgentConfig]]:
+        """List all registered agent entries as (name, config) pairs."""
+        return list(self._agents.items())
+
+    def total_agents(self) -> int:
+        """Get total number of registered agents."""
+        return len(self._agents)
+
     def list_primary_agents(self) -> list[str]:
         """List all primary agent names.
 

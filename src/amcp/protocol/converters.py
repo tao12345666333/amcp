@@ -19,33 +19,34 @@ from ..server.models import EventType, ServerEvent, WSMessage
 # ACP Event Type Mappings
 # ============================================================================
 
+# Canonical mapping table:
+# (acp_update, event_type, use_for_reverse_mapping)
+ACP_EVENT_MAPPINGS: list[tuple[str, EventType, bool]] = [
+    ("agent_message", EventType.MESSAGE_CHUNK, True),
+    ("agent_response", EventType.MESSAGE_COMPLETE, True),
+    ("agent_thought", EventType.AGENT_THINKING, True),
+    ("tool_call_start", EventType.TOOL_CALL_START, True),
+    ("tool_call_update", EventType.TOOL_CALL_COMPLETE, True),
+    ("current_mode_update", EventType.SESSION_STATUS_CHANGED, False),
+    ("available_commands_update", EventType.SESSION_STATUS_CHANGED, False),
+    ("plan", EventType.AGENT_THINKING, False),
+]
+
 # ACP session_update types to our EventType
-ACP_UPDATE_TO_EVENT_TYPE: dict[str, EventType] = {
-    # Message events
-    "agent_message": EventType.MESSAGE_CHUNK,
-    "agent_response": EventType.MESSAGE_COMPLETE,
-    "agent_thought": EventType.AGENT_THINKING,
-    # Tool events
-    "tool_call_start": EventType.TOOL_CALL_START,
-    "tool_call_update": EventType.TOOL_CALL_COMPLETE,
-    # Session events
-    "current_mode_update": EventType.SESSION_STATUS_CHANGED,
-    "available_commands_update": EventType.SESSION_STATUS_CHANGED,
-    "plan": EventType.AGENT_THINKING,
-}
+ACP_UPDATE_TO_EVENT_TYPE: dict[str, EventType] = {acp: event_type for acp, event_type, _ in ACP_EVENT_MAPPINGS}
 
 # Our EventType to ACP session_update types
 EVENT_TYPE_TO_ACP_UPDATE: dict[EventType, str] = {
-    EventType.MESSAGE_START: "agent_message",
-    EventType.MESSAGE_CHUNK: "agent_message",
-    EventType.MESSAGE_COMPLETE: "agent_response",
-    EventType.MESSAGE_ERROR: "agent_message",
-    EventType.TOOL_CALL_START: "tool_call_start",
-    EventType.TOOL_CALL_COMPLETE: "tool_call_update",
-    EventType.TOOL_CALL_ERROR: "tool_call_update",
-    EventType.AGENT_THINKING: "agent_thought",
-    EventType.AGENT_IDLE: "idle",
+    event_type: acp for acp, event_type, include_reverse in ACP_EVENT_MAPPINGS if include_reverse
 }
+EVENT_TYPE_TO_ACP_UPDATE.update(
+    {
+        EventType.MESSAGE_START: "agent_message",
+        EventType.MESSAGE_ERROR: "agent_message",
+        EventType.TOOL_CALL_ERROR: "tool_call_update",
+        EventType.AGENT_IDLE: "idle",
+    }
+)
 
 
 # ============================================================================

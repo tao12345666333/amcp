@@ -653,13 +653,7 @@ class HooksManager:
         if not handler.command:
             return HookOutput()
 
-        # Set up environment
-        env = os.environ.copy()
-        env["AMCP_PROJECT_DIR"] = str(self.project_dir)
-        env["AMCP_SESSION_ID"] = hook_input.session_id
-        env["AMCP_HOOK_EVENT"] = hook_input.hook_event_name
-        if hook_input.tool_name:
-            env["AMCP_TOOL_NAME"] = hook_input.tool_name
+        env = self._build_hook_env(hook_input)
 
         # Pass input via stdin
         input_json = hook_input.to_json()
@@ -674,22 +668,7 @@ class HooksManager:
                 cwd=str(self.project_dir),
                 env=env,
             )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(input=input_json.encode()),
-                    timeout=handler.timeout,
-                )
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-                raise
-
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
-            exit_code = process.returncode or 0
-
-            return HookOutput.from_exit_code(exit_code, stdout_str, stderr_str)
+            return await self._run_hook_process(process, input_json=input_json, timeout=handler.timeout)
 
         except Exception as e:
             logger.error(f"Failed to execute hook command: {e}")
@@ -715,12 +694,7 @@ class HooksManager:
             return HookOutput(success=False, feedback=f"Hook script not found: {script_path}")
 
         # Run the script with the input as an argument
-        env = os.environ.copy()
-        env["AMCP_PROJECT_DIR"] = str(self.project_dir)
-        env["AMCP_SESSION_ID"] = hook_input.session_id
-        env["AMCP_HOOK_EVENT"] = hook_input.hook_event_name
-        if hook_input.tool_name:
-            env["AMCP_TOOL_NAME"] = hook_input.tool_name
+        env = self._build_hook_env(hook_input)
 
         input_json = hook_input.to_json()
 
@@ -734,26 +708,44 @@ class HooksManager:
                 cwd=str(self.project_dir),
                 env=env,
             )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(input=input_json.encode()),
-                    timeout=handler.timeout,
-                )
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-                raise
-
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
-            exit_code = process.returncode or 0
-
-            return HookOutput.from_exit_code(exit_code, stdout_str, stderr_str)
+            return await self._run_hook_process(process, input_json=input_json, timeout=handler.timeout)
 
         except Exception as e:
             logger.error(f"Failed to execute hook script: {e}")
             return HookOutput(success=False, feedback=f"Hook script failed: {e}")
+
+    def _build_hook_env(self, hook_input: HookInput) -> dict[str, str]:
+        """Build environment variables for hook subprocesses."""
+        env = os.environ.copy()
+        env["AMCP_PROJECT_DIR"] = str(self.project_dir)
+        env["AMCP_SESSION_ID"] = hook_input.session_id
+        env["AMCP_HOOK_EVENT"] = hook_input.hook_event_name
+        if hook_input.tool_name:
+            env["AMCP_TOOL_NAME"] = hook_input.tool_name
+        return env
+
+    async def _run_hook_process(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        input_json: str,
+        timeout: int,
+    ) -> HookOutput:
+        """Run a hook subprocess and normalize output handling."""
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(input=input_json.encode()),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            raise
+
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+        exit_code = process.returncode or 0
+        return HookOutput.from_exit_code(exit_code, stdout_str, stderr_str)
 
     async def _execute_python_function(self, handler: HookHandler, hook_input: HookInput) -> HookOutput:
         """Execute a Python function hook."""

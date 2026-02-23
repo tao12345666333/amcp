@@ -17,7 +17,7 @@ async def list_agents() -> AgentListResponse:
     registry = get_agent_registry()
 
     agents = []
-    for name, config in registry._agents.items():
+    for name, config in registry.iter_agents():
         # Check mode properly - AgentConfig has mode as AgentMode enum
         is_subagent = config.mode == AgentMode.SUBAGENT
         agents.append(

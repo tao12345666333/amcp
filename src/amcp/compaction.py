@@ -594,9 +594,9 @@ class SmartCompactor:
         target = self.target_tokens
         kept: list[dict[str, Any]] = []
         total_tokens = 0
+        message_tokens = self._estimate_message_tokens(messages)
 
-        for msg in reversed(messages):
-            msg_tokens = estimate_tokens([msg])
+        for msg, msg_tokens in zip(reversed(messages), reversed(message_tokens), strict=False):
             if total_tokens + msg_tokens > target:
                 break
             kept.insert(0, msg)
@@ -624,9 +624,9 @@ class SmartCompactor:
         target = self.target_tokens // 2  # Leave room for summary
         kept: list[dict[str, Any]] = []
         total_tokens = 0
+        message_tokens = self._estimate_message_tokens(messages)
 
-        for msg in reversed(messages):
-            msg_tokens = estimate_tokens([msg])
+        for msg, msg_tokens in zip(reversed(messages), reversed(message_tokens), strict=False):
             if total_tokens + msg_tokens > target:
                 break
             kept.insert(0, msg)
@@ -655,6 +655,10 @@ class SmartCompactor:
 
         result = [{"role": "assistant", "content": f"[Earlier context summary]\n{summary}"}] + kept
         return result, summary
+
+    def _estimate_message_tokens(self, messages: list[dict[str, Any]]) -> list[int]:
+        """Estimate token count for each message once."""
+        return [estimate_tokens([msg]) for msg in messages]
 
     def _emit_compaction_event(
         self,

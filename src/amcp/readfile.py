@@ -226,20 +226,21 @@ def read_file_with_indentation(
         ]
 
     # Expand from anchor in both directions
-    result: list[LineRecord] = [records[anchor_index]]
+    anchor_record = records[anchor_index]
+    upward: list[LineRecord] = []
+    downward: list[LineRecord] = []
     i = anchor_index - 1  # up
     j = anchor_index + 1  # down
     i_min_count = 0
     j_min_count = 0
 
-    while len(result) < final_limit:
+    while 1 + len(upward) + len(downward) < final_limit:
         progressed = False
 
         # Expand upward
         if i >= 0:
             if effective_indents[i] >= min_indent:
-                result.insert(0, records[i])
-                progressed = True
+                should_add = True
 
                 # Stop at min_indent boundary unless it's a comment header
                 if effective_indents[i] == min_indent and not options.include_siblings:
@@ -247,14 +248,17 @@ def read_file_with_indentation(
                     if i_min_count == 0 or allow_header:
                         i_min_count += 1
                     else:
-                        # Remove this line, shouldn't have been added
-                        result.pop(0)
-                        progressed = False
+                        should_add = False
                         i = -1  # Stop going up
 
-                i -= 1
+                if should_add:
+                    upward.append(records[i])
+                    progressed = True
 
-                if len(result) >= final_limit:
+                if i != -1:
+                    i -= 1
+
+                if 1 + len(upward) + len(downward) >= final_limit:
                     break
             else:
                 i = -1  # Stop going up
@@ -262,23 +266,28 @@ def read_file_with_indentation(
         # Expand downward
         if j < len(records):
             if effective_indents[j] >= min_indent:
-                result.append(records[j])
-                progressed = True
+                should_add = True
 
                 # Stop at min_indent boundary unless including siblings
                 if effective_indents[j] == min_indent and not options.include_siblings:
                     if j_min_count > 0:
-                        result.pop()
-                        progressed = False
+                        should_add = False
                         j = len(records)  # Stop going down
                     j_min_count += 1
 
-                j += 1
+                if should_add:
+                    downward.append(records[j])
+                    progressed = True
+
+                if j < len(records):
+                    j += 1
             else:
                 j = len(records)  # Stop going down
 
         if not progressed:
             break
+
+    result = list(reversed(upward)) + [anchor_record] + downward
 
     # Trim blank lines from edges
     while result and result[0].is_blank:

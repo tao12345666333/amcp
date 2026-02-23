@@ -290,8 +290,7 @@ class TaskManager:
         """
         # Acquire semaphore for concurrency limiting
         async with self._semaphore:
-            task.state = TaskState.RUNNING
-            task.started_at = datetime.now()
+            self._mark_running(task)
 
             await emit_task_event(
                 EventType.TASK_STARTED,
@@ -331,9 +330,7 @@ class TaskManager:
                 )
 
                 # Mark completed
-                task.state = TaskState.COMPLETED
-                task.completed_at = datetime.now()
-                task.result = result
+                self._mark_completed(task, result)
 
                 await emit_task_event(
                     EventType.TASK_COMPLETED,
@@ -347,13 +344,10 @@ class TaskManager:
                 logger.info(f"Completed task {task.id} in {task.duration_ms:.0f}ms")
 
                 # Set future result
-                if task._future and not task._future.done():
-                    task._future.set_result(task)
+                self._set_future_result(task)
 
             except asyncio.CancelledError:
-                task.state = TaskState.CANCELLED
-                task.completed_at = datetime.now()
-                task.error = "Task was cancelled"
+                self._mark_cancelled(task, "Task was cancelled")
 
                 await emit_task_event(
                     EventType.TASK_CANCELLED,
@@ -364,13 +358,10 @@ class TaskManager:
 
                 logger.info(f"Cancelled task {task.id}")
 
-                if task._future and not task._future.done():
-                    task._future.cancel()
+                self._cancel_future(task)
 
             except Exception as e:
-                task.state = TaskState.FAILED
-                task.completed_at = datetime.now()
-                task.error = str(e)
+                self._mark_failed(task, str(e))
 
                 await emit_task_event(
                     EventType.TASK_FAILED,
@@ -382,8 +373,52 @@ class TaskManager:
 
                 logger.error(f"Task {task.id} failed: {e}")
 
-                if task._future and not task._future.done():
-                    task._future.set_exception(e)
+                self._set_future_exception(task, e)
+
+    @staticmethod
+    def _mark_running(task: Task) -> None:
+        """Set task to running state."""
+        task.state = TaskState.RUNNING
+        task.started_at = datetime.now()
+
+    @staticmethod
+    def _mark_completed(task: Task, result: str) -> None:
+        """Set task to completed state."""
+        task.state = TaskState.COMPLETED
+        task.completed_at = datetime.now()
+        task.result = result
+
+    @staticmethod
+    def _mark_cancelled(task: Task, error: str) -> None:
+        """Set task to cancelled state."""
+        task.state = TaskState.CANCELLED
+        task.completed_at = datetime.now()
+        task.error = error
+
+    @staticmethod
+    def _mark_failed(task: Task, error: str) -> None:
+        """Set task to failed state."""
+        task.state = TaskState.FAILED
+        task.completed_at = datetime.now()
+        task.error = error
+
+    @staticmethod
+    def _set_future_result(task: Task) -> None:
+        """Resolve task future with successful completion."""
+        if task._future and not task._future.done():
+            task._future.set_result(task)
+
+    @staticmethod
+    def _cancel_future(task: Task) -> None:
+        """Cancel task future when task is cancelled."""
+        if task._future and not task._future.done():
+            task._future.cancel()
+
+    @staticmethod
+    def _set_future_exception(task: Task, exc: Exception) -> None:
+        """Resolve task future with exception."""
+        if task._future and not task._future.done():
+            task._future.set_exception(exc)
 
     async def cancel_task(self, task_id: str) -> bool:
         """Cancel a running task.

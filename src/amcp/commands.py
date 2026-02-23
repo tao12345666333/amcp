@@ -483,7 +483,7 @@ def _make_skills_command(skill_manager) -> SlashCommand:
         subcommand = sub_args[0].lower() if sub_args else "list"
         skill_arg = sub_args[1] if len(sub_args) > 1 else ""
 
-        if subcommand == "list":
+        def _list_skills() -> CommandResult:
             skills = sm.get_all_skills()
             if not skills:
                 return CommandResult(type="message", content="No skills found.")
@@ -496,7 +496,7 @@ def _make_skills_command(skill_manager) -> SlashCommand:
 
             return CommandResult(type="message", content="\n".join(lines))
 
-        elif subcommand == "activate":
+        def _activate_skill() -> CommandResult:
             if not skill_arg:
                 return CommandResult(
                     type="message", content="Please provide a skill name to activate.", message_type="error"
@@ -508,7 +508,7 @@ def _make_skills_command(skill_manager) -> SlashCommand:
                     type="message", content=f"Skill '{skill_arg}' not found or disabled.", message_type="error"
                 )
 
-        elif subcommand == "deactivate":
+        def _deactivate_skill() -> CommandResult:
             if not skill_arg:
                 return CommandResult(
                     type="message", content="Please provide a skill name to deactivate.", message_type="error"
@@ -516,7 +516,7 @@ def _make_skills_command(skill_manager) -> SlashCommand:
             sm.deactivate_skill(skill_arg)
             return CommandResult(type="message", content=f"Skill '{skill_arg}' deactivated.", message_type="success")
 
-        elif subcommand == "show":
+        def _show_skill() -> CommandResult:
             if not skill_arg:
                 return CommandResult(
                     type="message", content="Please provide a skill name to show.", message_type="error"
@@ -528,12 +528,21 @@ def _make_skills_command(skill_manager) -> SlashCommand:
             else:
                 return CommandResult(type="message", content=f"Skill '{skill_arg}' not found.", message_type="error")
 
-        else:
+        handlers: dict[str, Callable[[], CommandResult]] = {
+            "list": _list_skills,
+            "activate": _activate_skill,
+            "deactivate": _deactivate_skill,
+            "show": _show_skill,
+        }
+
+        if subcommand not in handlers:
             return CommandResult(
                 type="message",
                 content="Usage: /skills [list|activate <name>|deactivate <name>|show <name>]",
                 message_type="info",
             )
+
+        return handlers[subcommand]()
 
     return SlashCommand(
         name="skills",

@@ -44,7 +44,7 @@ async def server_info() -> ServerInfo:
     registry = get_agent_registry()
 
     # Get agent names
-    agent_names = list(registry._agents.keys()) if hasattr(registry, "_agents") else []
+    agent_names = registry.list_agents()
 
     # Get tools count
     try:

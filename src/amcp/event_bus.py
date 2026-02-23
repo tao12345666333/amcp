@@ -347,24 +347,14 @@ class EventBus:
 
     async def _emit_internal(self, event: Event) -> list[Any]:
         """Internal emit implementation."""
-        # Store in history
-        self._history.append(event)
-        if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history :]
+        self._record_history(event)
 
         results = []
-        handlers_to_remove = []
+        handlers_to_remove: list[str] = []
+        matched_handlers, dead_handlers = self._collect_matching_handlers(event)
+        handlers_to_remove.extend(dead_handlers)
 
-        for handler in self._handlers:
-            if not handler.matches(event):
-                continue
-
-            callback = handler.get_callback()
-            if callback is None:
-                # Weak reference was garbage collected
-                handlers_to_remove.append(handler.id)
-                continue
-
+        for handler, callback in matched_handlers:
             try:
                 if handler.is_async:
                     result = await callback(event)
@@ -379,8 +369,7 @@ class EventBus:
                 handlers_to_remove.append(handler.id)
 
         # Remove one-time and dead handlers
-        for handler_id in handlers_to_remove:
-            self.unsubscribe(handler_id)
+        self._remove_handlers(handlers_to_remove)
 
         logger.debug(f"Emitted event {event.type.value} to {len(results)} handlers")
         return results
@@ -394,22 +383,13 @@ class EventBus:
         Args:
             event: The event to emit
         """
-        # Store in history
-        self._history.append(event)
-        if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history :]
+        self._record_history(event)
 
-        handlers_to_remove = []
+        handlers_to_remove: list[str] = []
+        matched_handlers, dead_handlers = self._collect_matching_handlers(event)
+        handlers_to_remove.extend(dead_handlers)
 
-        for handler in self._handlers:
-            if not handler.matches(event):
-                continue
-
-            callback = handler.get_callback()
-            if callback is None:
-                handlers_to_remove.append(handler.id)
-                continue
-
+        for handler, callback in matched_handlers:
             try:
                 if handler.is_async:
                     # Schedule async handler without waiting
@@ -427,7 +407,38 @@ class EventBus:
             if handler.once:
                 handlers_to_remove.append(handler.id)
 
-        for handler_id in handlers_to_remove:
+        self._remove_handlers(handlers_to_remove)
+
+    def _record_history(self, event: Event) -> None:
+        """Store an event in bounded history."""
+        self._history.append(event)
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history :]
+
+    def _collect_matching_handlers(
+        self,
+        event: Event,
+    ) -> tuple[list[tuple[EventHandler, Callable[[Event], Any]]], list[str]]:
+        """Collect handlers matching an event and callbacks that are still alive."""
+        matched: list[tuple[EventHandler, Callable[[Event], Any]]] = []
+        dead_handlers: list[str] = []
+
+        for handler in self._handlers:
+            if not handler.matches(event):
+                continue
+
+            callback = handler.get_callback()
+            if callback is None:
+                dead_handlers.append(handler.id)
+                continue
+
+            matched.append((handler, callback))
+
+        return matched, dead_handlers
+
+    def _remove_handlers(self, handler_ids: list[str]) -> None:
+        """Remove handlers by id."""
+        for handler_id in handler_ids:
             self.unsubscribe(handler_id)
 
     def clear(self) -> None:

@@ -430,6 +430,17 @@ class MemoryManager:
         self.user_store = MemoryStore(MemoryStore.get_user_memory_dir())
         self.project_store = MemoryStore(MemoryStore.get_project_memory_dir(project_root))
 
+    def _store_for_scope(self, scope: str) -> MemoryStore:
+        """Return the memory store for a scope.
+
+        Args:
+            scope: "user" or "project"
+
+        Returns:
+            The selected memory store. Non-project scopes default to user store.
+        """
+        return self.project_store if scope == "project" else self.user_store
+
     def get_memory_context(self) -> str:
         """Get combined memory context from both stores.
 
@@ -459,7 +470,7 @@ class MemoryManager:
         Returns:
             Memory content
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         return store.read_long_term()
 
     def write_long_term(self, content: str, scope: str = "user") -> None:
@@ -469,7 +480,7 @@ class MemoryManager:
             content: Memory content
             scope: "user" or "project"
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         store.write_long_term(content)
 
     def append_history(
@@ -487,7 +498,7 @@ class MemoryManager:
             tags: Optional tags
             scope: "user" or "project"
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         store.append_history(content, session_id, tags)
 
     def search(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
@@ -529,7 +540,7 @@ class MemoryManager:
             confidence: Confidence score (0.0-1.0).
             scope: "user" or "project".
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         store.upsert_fact(key, value, category, source, confidence)
 
     def get_fact(self, key: str, scope: str = "user") -> dict | None:
@@ -542,7 +553,7 @@ class MemoryManager:
         Returns:
             Fact dict or None.
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         return store.get_fact(key)
 
     def search_facts(
@@ -561,7 +572,7 @@ class MemoryManager:
         Returns:
             List of matching fact dicts.
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         return store.search_facts(query, max_results)
 
     def list_facts(
@@ -580,7 +591,7 @@ class MemoryManager:
         Returns:
             List of fact dicts.
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         return store.list_facts(category, limit)
 
     def delete_fact(self, key: str, scope: str = "user") -> bool:
@@ -593,7 +604,7 @@ class MemoryManager:
         Returns:
             True if deleted, False if not found.
         """
-        store = self.project_store if scope == "project" else self.user_store
+        store = self._store_for_scope(scope)
         return store.delete_fact(key)
 
     def get_stats(self) -> dict[str, dict[str, int | bool]]:

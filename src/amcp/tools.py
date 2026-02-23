@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -1027,7 +1028,7 @@ Examples:
         try:
             manager = get_memory_manager()
 
-            if action == "read":
+            def _read() -> ToolResult:
                 memory_content = manager.read_long_term(scope)
                 if not memory_content:
                     return ToolResult(
@@ -1041,7 +1042,7 @@ Examples:
                     metadata={"scope": scope, "size": len(memory_content)},
                 )
 
-            elif action == "write":
+            def _write() -> ToolResult:
                 if not content:
                     return ToolResult(
                         success=False,
@@ -1055,7 +1056,7 @@ Examples:
                     metadata={"scope": scope, "size": len(content)},
                 )
 
-            elif action == "append":
+            def _append() -> ToolResult:
                 if not content:
                     return ToolResult(
                         success=False,
@@ -1069,7 +1070,7 @@ Examples:
                     metadata={"scope": scope, "tags": tags or []},
                 )
 
-            elif action == "search":
+            def _search() -> ToolResult:
                 if not query:
                     return ToolResult(
                         success=False,
@@ -1092,7 +1093,7 @@ Examples:
                     metadata={"query": query, "count": len(results)},
                 )
 
-            elif action == "stats":
+            def _stats() -> ToolResult:
                 stats = manager.get_stats()
                 lines = ["Memory Statistics:"]
                 for scope_name, scope_stats in stats.items():
@@ -1105,7 +1106,7 @@ Examples:
                     metadata=stats,
                 )
 
-            elif action == "upsert_fact":
+            def _upsert_fact() -> ToolResult:
                 if not key:
                     return ToolResult(
                         success=False,
@@ -1130,7 +1131,7 @@ Examples:
                     metadata={"key": key, "scope": scope},
                 )
 
-            elif action == "get_fact":
+            def _get_fact() -> ToolResult:
                 if not key:
                     return ToolResult(
                         success=False,
@@ -1157,7 +1158,7 @@ Examples:
                     metadata=fact,
                 )
 
-            elif action == "list_facts":
+            def _list_facts() -> ToolResult:
                 facts = manager.list_facts(category=category, scope=scope)
                 if not facts:
                     cat_msg = f" in category '{category}'" if category else ""
@@ -1175,7 +1176,7 @@ Examples:
                     metadata={"count": len(facts)},
                 )
 
-            elif action == "delete_fact":
+            def _delete_fact() -> ToolResult:
                 if not key:
                     return ToolResult(
                         success=False,
@@ -1195,13 +1196,27 @@ Examples:
                     metadata={"key": key, "scope": scope},
                 )
 
-            else:
-                valid = "read, write, append, search, stats, upsert_fact, get_fact, list_facts, delete_fact"
+            handlers: dict[str, Callable[[], ToolResult]] = {
+                "read": _read,
+                "write": _write,
+                "append": _append,
+                "search": _search,
+                "stats": _stats,
+                "upsert_fact": _upsert_fact,
+                "get_fact": _get_fact,
+                "list_facts": _list_facts,
+                "delete_fact": _delete_fact,
+            }
+
+            if action not in handlers:
+                valid = ", ".join(handlers.keys())
                 return ToolResult(
                     success=False,
                     content="",
                     error=f"Invalid action '{action}'. Use: {valid}",
                 )
+
+            return handlers[action]()
 
         except Exception as e:
             return ToolResult(

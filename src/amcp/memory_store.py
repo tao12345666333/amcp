@@ -166,32 +166,14 @@ class SQLiteMemoryStore:
         Returns:
             List of matching MemorySearchResult objects.
         """
-        conn = self._get_conn()
-        safe_query = _sanitize_fts_query(query)
-        if not safe_query:
-            return []
-        try:
-            rows = conn.execute(
-                "SELECT e.id, e.content, e.timestamp, e.tags "
-                "FROM events_fts f "
-                "JOIN events e ON e.id = f.rowid "
-                "WHERE events_fts MATCH ? "
-                "ORDER BY rank "
-                "LIMIT ?",
-                (safe_query, max_results),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            logger.debug(f"FTS query failed for events: {safe_query!r}")
-            return []
-
-        return [
-            MemorySearchResult(
-                line_number=row["id"],
-                content=row["content"],
-                source="events",
-            )
-            for row in rows
-        ]
+        rows = self._run_fts_query(
+            table="events",
+            fts_table="events_fts",
+            select_columns="f.id, f.content, f.timestamp, f.tags",
+            query=query,
+            max_results=max_results,
+        )
+        return [self._event_row_to_search_result(row) for row in rows]
 
     def get_recent_events(self, limit: int = 50) -> list[dict]:
         """Get the most recent events.
@@ -268,26 +250,53 @@ class SQLiteMemoryStore:
         Returns:
             List of matching fact dicts.
         """
-        conn = self._get_conn()
+        rows = self._run_fts_query(
+            table="facts",
+            fts_table="facts_fts",
+            select_columns="f.id, f.key, f.value, f.category, f.source, f.confidence, f.created_at, f.updated_at",
+            query=query,
+            max_results=max_results,
+        )
+        return [dict(row) for row in rows]
+
+    def _run_fts_query(
+        self,
+        *,
+        table: str,
+        fts_table: str,
+        select_columns: str,
+        query: str,
+        max_results: int,
+    ) -> list[sqlite3.Row]:
+        """Execute a standard FTS query with shared error handling."""
         safe_query = _sanitize_fts_query(query)
         if not safe_query:
             return []
+
+        conn = self._get_conn()
+        sql = (
+            f"SELECT {select_columns} "
+            f"FROM {fts_table} ft "
+            f"JOIN {table} f ON f.id = ft.rowid "
+            f"WHERE {fts_table} MATCH ? "
+            "ORDER BY rank "
+            "LIMIT ?"
+        )
+
         try:
-            rows = conn.execute(
-                "SELECT f.id, f.key, f.value, f.category, f.source, "
-                "f.confidence, f.created_at, f.updated_at "
-                "FROM facts_fts ft "
-                "JOIN facts f ON f.id = ft.rowid "
-                "WHERE facts_fts MATCH ? "
-                "ORDER BY rank "
-                "LIMIT ?",
-                (safe_query, max_results),
-            ).fetchall()
+            return conn.execute(sql, (safe_query, max_results)).fetchall()
         except sqlite3.OperationalError:
-            logger.debug(f"FTS query failed for facts: {safe_query!r}")
+            logger.debug(f"FTS query failed for {table}: {safe_query!r}")
             return []
 
-        return [dict(row) for row in rows]
+    @staticmethod
+    def _event_row_to_search_result(row: sqlite3.Row) -> MemorySearchResult:
+        """Convert an events table row to MemorySearchResult."""
+        return MemorySearchResult(
+            line_number=row["id"],
+            content=row["content"],
+            source="events",
+        )
 
     def list_facts(self, category: str | None = None, limit: int = 100) -> list[dict]:
         """List facts, optionally filtered by category.

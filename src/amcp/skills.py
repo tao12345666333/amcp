@@ -131,25 +131,16 @@ class SkillManager:
         """
         self.clear_skills()
 
-        # Discover built-in skills first (lowest precedence)
-        builtin_skills_dir = self.get_builtin_skills_dir()
-        builtin_skills = self._discover_skills_from_dir(builtin_skills_dir)
-        self._add_skills_with_precedence(builtin_skills)
+        discovery_order = [
+            self.get_builtin_skills_dir(),
+            self.get_user_skills_dir(),
+            self.get_agents_skills_dir(project_root),
+            self.get_project_skills_dir(project_root),
+        ]
 
-        # Discover user skills (override built-in)
-        user_skills_dir = self.get_user_skills_dir()
-        user_skills = self._discover_skills_from_dir(user_skills_dir)
-        self._add_skills_with_precedence(user_skills)
-
-        # Discover agents skills (override user)
-        agents_skills_dir = self.get_agents_skills_dir(project_root)
-        agents_skills = self._discover_skills_from_dir(agents_skills_dir)
-        self._add_skills_with_precedence(agents_skills)
-
-        # Discover project skills (highest precedence)
-        project_skills_dir = self.get_project_skills_dir(project_root)
-        project_skills = self._discover_skills_from_dir(project_skills_dir)
-        self._add_skills_with_precedence(project_skills)
+        for skills_dir in discovery_order:
+            discovered = self._discover_skills_from_dir(skills_dir)
+            self._add_skills_with_precedence(discovered)
 
     def _add_skills_with_precedence(self, new_skills: list[SkillMetadata]) -> None:
         """Add skills with name-based precedence (later skills override earlier)."""
