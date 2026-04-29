@@ -15,7 +15,7 @@ from rich.status import Status
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .compaction import SmartCompactor, estimate_tokens
-from .config import ContextConfig, load_config
+from .config import AMCPConfig, ContextConfig, load_config
 from .hooks import (
     HookDecision,
     run_post_tool_use_hooks,
@@ -133,7 +133,7 @@ class Agent:
                     self.console.print(
                         f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
                     )
-        except Exception as e:
+        except (OSError, json.JSONDecodeError) as e:
             self.console.print(f"[yellow]Warning: Could not load conversation history: {e}[/yellow]")
             self.conversation_history = []
             self.tool_calls_history = []
@@ -154,7 +154,7 @@ class Agent:
             }
             with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception as e:
+        except OSError as e:
             self.console.print(f"[yellow]Warning: Could not save conversation history: {e}[/yellow]")
 
     def clear_conversation_history(self) -> None:
@@ -168,7 +168,7 @@ class Agent:
         try:
             if self.session_file.exists():
                 self.session_file.unlink()
-        except Exception as e:
+        except OSError as e:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
 
     def get_conversation_summary(self) -> dict[str, Any]:
@@ -229,7 +229,7 @@ class Agent:
         cfg = load_config()
         return cfg.context or ContextConfig()
 
-    def _resolve_model_name(self, cfg=None) -> str:
+    def _resolve_model_name(self, cfg: AMCPConfig | None = None) -> str:
         """Resolve model name used for budget and token decisions."""
         resolved_cfg = cfg or load_config()
         if self.agent_spec.model:
@@ -393,7 +393,7 @@ class Agent:
             return self._project_rules_loader.get_rules_summary()
         return {"has_rules": False, "files_loaded": []}
 
-    async def _get_mcp_tools_info(self, cfg) -> list[dict[str, Any]]:
+    async def _get_mcp_tools_info(self, cfg: AMCPConfig) -> list[dict[str, Any]]:
         """Get information about available MCP tools."""
         tools_info = []
 
@@ -408,7 +408,7 @@ class Agent:
                             "server": server_name,
                         }
                     )
-            except Exception as e:
+            except (OSError, ValueError, KeyError) as e:
                 self.console.print(f"[yellow]Warning: Could not load tools from {server_name}: {e}[/yellow]")
 
         return tools_info
@@ -621,11 +621,13 @@ class Agent:
                         tags=["conversation"],
                         scope="project" if work_dir else "user",
                     )
-                except Exception:
+                except (OSError, ValueError):
                     pass  # Memory logging is best-effort
 
                 return result
 
+        except AgentExecutionError:
+            raise
         except Exception as e:
             # Save error information to conversation history to maintain context
             error_msg = f"Agent execution failed: {e}"
@@ -726,7 +728,7 @@ class Agent:
                     )
                     # Also add to registry
                     registry[oname] = (name, tname)
-            except Exception as e:
+            except (OSError, ValueError, KeyError) as e:
                 self.console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
 
         context_cfg = cfg.context or ContextConfig()

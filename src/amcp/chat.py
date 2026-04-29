@@ -55,7 +55,7 @@ def _resolve_api_key(cli_key: str | None, cfg: ChatConfig | None) -> str | None:
 def _make_client(base_url: str, api_key: str | None):
     try:
         from openai import OpenAI
-    except Exception:  # pragma: no cover
+    except ImportError:  # pragma: no cover
         console.print("[red]openai package not installed. Please install dependencies.[/red]")
         raise
     return OpenAI(base_url=base_url, api_key=api_key or "")
@@ -256,7 +256,7 @@ def _is_within_root(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
         return True
-    except Exception:
+    except ValueError:
         return False
 
 
@@ -291,7 +291,7 @@ def _build_mcp_tools_and_registry(
                     }
                 )
                 reg[oname] = (name, tname)
-        except Exception as e:
+        except (OSError, ValueError, KeyError) as e:
             console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
     return tools, reg
 
@@ -601,7 +601,7 @@ def chat_repl(
                     # If the input was purely a read request, continue to next prompt
                     if _READ_CMD.match(text) or _PATH_RANGE_INLINE.fullmatch(text.strip()):
                         continue
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 console.print(f"[yellow]File intent parse/read warning:[/yellow] {e}")
 
         if text.startswith("/search "):
@@ -609,7 +609,7 @@ def chat_repl(
             try:
                 result = do_exa_search(mcp_server, q)
                 console.print(Panel(Markdown(result), title="exa search", border_style="magenta"))
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 console.print(f"[red]MCP search error:[/red] {e}")
             continue
 

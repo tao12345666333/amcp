@@ -11,6 +11,10 @@ from typing import Any
 
 from .config import ChatConfig
 
+# Type aliases for commonly used complex types
+ToolCall = dict[str, Any]
+Message = dict[str, Any]
+
 
 def _extract_think_tags(content: str) -> tuple[str | None, str]:
     """Extract content from <think> tags and return (thinking, remaining_content)."""
@@ -28,7 +32,7 @@ class LLMResponse:
     """Unified response from LLM."""
 
     content: str | None
-    tool_calls: list[dict[str, Any]] | None = None
+    tool_calls: list[ToolCall] | None = None
     stop_reason: str | None = None
     thinking: str | None = None  # Reasoning/thinking content from LLM
 
@@ -41,8 +45,8 @@ class BaseLLMClient(ABC):
     @abstractmethod
     def chat(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[Message],
+        tools: list[Message] | None = None,
         stream_callback: Any | None = None,  # Callable[[str], None]
         **kwargs,
     ) -> LLMResponse:
@@ -66,7 +70,7 @@ class OpenAIClient(BaseLLMClient):
         stream_callback: Any | None = None,
         **kwargs,
     ) -> LLMResponse:
-        params = {"model": self.model, "messages": messages, "stream": bool(stream_callback), **kwargs}
+        params: dict[str, Any] = {"model": self.model, "messages": messages, "stream": bool(stream_callback), **kwargs}
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
@@ -179,8 +183,8 @@ class OpenAIResponsesClient(BaseLLMClient):
 
     def chat(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[Message],
+        tools: list[Message] | None = None,
         stream_callback: Any | None = None,
         **kwargs,
     ) -> LLMResponse:
@@ -239,8 +243,8 @@ class AnthropicClient(BaseLLMClient):
 
     def chat(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[Message],
+        tools: list[Message] | None = None,
         stream_callback: Any | None = None,
         **kwargs,
     ) -> LLMResponse:
