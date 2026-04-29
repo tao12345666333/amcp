@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -735,8 +736,9 @@ Example for fixing a bug:
 class TodoTool(BaseTool):
     """Tool for managing a todo list to track tasks."""
 
-    # Shared state across all instances
+    # Shared state across all instances — protected by a class-level lock
     _todos: list[dict[str, str]] = []
+    _lock: threading.Lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -759,18 +761,21 @@ class TodoTool(BaseTool):
             return ToolResult(success=False, content="", error=f"Invalid action '{action}'. Use 'read' or 'write'.")
 
     def _read_todos(self) -> ToolResult:
-        if not TodoTool._todos:
+        with TodoTool._lock:
+            todos = list(TodoTool._todos)
+
+        if not todos:
             return ToolResult(success=True, content="No todos.", metadata={"count": 0})
 
         lines = ["## Todo List", ""]
-        for todo in TodoTool._todos:
+        for todo in todos:
             status = todo.get("status", "pending")
             content = todo.get("content", "")
             tid = todo.get("id", "")
             icon = {"pending": "⬜", "in_progress": "🔄", "completed": "✅", "cancelled": "❌"}.get(status, "⬜")
             lines.append(f"{icon} [{tid}] {content} ({status})")
 
-        return ToolResult(success=True, content="\n".join(lines), metadata={"count": len(TodoTool._todos)})
+        return ToolResult(success=True, content="\n".join(lines), metadata={"count": len(todos)})
 
     def _write_todos(self, todos: list[dict[str, str]]) -> ToolResult:
         # Validate todos
@@ -786,7 +791,8 @@ class TodoTool(BaseTool):
         if len(ids) != len(set(ids)):
             return ToolResult(success=False, content="", error="Todo IDs must be unique")
 
-        TodoTool._todos = todos
+        with TodoTool._lock:
+            TodoTool._todos = todos
         return ToolResult(
             success=True,
             content=f"Updated {len(todos)} todos.",
@@ -1317,25 +1323,31 @@ def create_default_tool_registry(
     return registry
 
 
-# Global tool registry instance
+# Global tool registry instance — protected by a lock for thread-safe lazy init
 _default_registry: ToolRegistry | None = None
+_registry_lock: threading.Lock = threading.Lock()
 
 
 def get_tool_registry(enable_write: bool | None = None) -> ToolRegistry:
     """Get the global tool registry instance."""
     global _default_registry
     if _default_registry is None:
-        # Load config to determine defaults
-        from .config import load_config
+        with _registry_lock:
+            # Double-checked locking pattern
+            if _default_registry is None:
+                # Load config to determine defaults
+                from .config import load_config
 
-        cfg = load_config()
-        chat_cfg = cfg.chat
+                cfg = load_config()
+                chat_cfg = cfg.chat
 
-        # Use config values if not explicitly provided
-        if enable_write is None:
-            enable_write = chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
+                # Use config values if not explicitly provided
+                if enable_write is None:
+                    enable_write = (
+                        chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
+                    )
 
-        _default_registry = create_default_tool_registry(enable_write=enable_write)
+                _default_registry = create_default_tool_registry(enable_write=enable_write)
     return _default_registry
 
 
