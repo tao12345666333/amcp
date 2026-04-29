@@ -316,7 +316,6 @@ def _chat_with_tools(
     registry = tool_registry or {}
     read_file_call_count = 0
     for _step in range(max_steps):  # safety loop
-        # print(f"DEBUG: Step {step + 1}/{max_steps}, messages count: {len(messages)}")
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -326,12 +325,9 @@ def _chat_with_tools(
         )
         msg = resp.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None)
-        # print(f"DEBUG: Tool calls: {bool(tool_calls)}, Content: {msg.content[:50] if msg.content else 'None'}")
         if tool_calls:
             used_tools = True
-            # print(f"DEBUG: Processing {len(tool_calls)} tool calls")
             for _, tc in enumerate(tool_calls):
-                # print(f"DEBUG: Tool call {i+1}: {tc.function.name}, args: {tc.function.arguments}")
                 if tc.function.name == "read_file":
                     read_file_call_count += 1
                     if read_file_call_count >= 2:
@@ -383,7 +379,6 @@ def _chat_with_tools(
                         console.print(Panel(preview, title=f"tool: {fn.name}", border_style="blue"))
                     else:
                         tool_result_text, preview = _dispatch_tool_call(fn.name, args, settings=settings)
-                        # print(f"DEBUG: Tool {fn.name} result preview: {preview[:100]}...")
                 except Exception as e:
                     tool_result_text = f"TOOL_ERROR: {fn.name}: {type(e).__name__}: {e}"
                     console.print(f"[red]Tool {fn.name} error:[/red] {e}")
@@ -408,8 +403,6 @@ def _chat_with_tools(
             if stream and not used_tools:
                 # stream only when no tool phases were needed
                 return _stream_chat(client, model, messages, stream=True)
-            # Debug: print what we got
-            # print(f"DEBUG: Final response: {final_text[:100]}...")
             return final_text
     return "[Tool loop limit reached]"
 

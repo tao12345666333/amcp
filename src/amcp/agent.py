@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -111,8 +112,6 @@ class Agent:
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
-        import uuid
-
         return str(uuid.uuid4())[:8]
 
     def _ensure_sessions_dir(self) -> None:

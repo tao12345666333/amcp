@@ -219,7 +219,6 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "sse-starlette", specifier = ">=2.1.0" },
     { name = "telegramify-markdown", marker = "extra == 'telegram'", specifier = ">=0.5.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "typer", specifier = ">=0.12.3" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },

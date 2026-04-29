@@ -26,7 +26,6 @@ dependencies = [
   "rich>=13.7.0",
   "pydantic>=2.7",
   "fastmcp>=2.0.0,<3",
-  "tomli>=2.0.0;python_version<'3.11'",
   "tomli-w>=1.0.0",
   "openai>=1.52.0",
   "pyyaml>=6.0",
@@ -79,7 +78,7 @@ packages = ["src/amcp"]
 include = ["src/amcp"]
 
 [tool.ruff]
-line-length = 120
+line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I"]
