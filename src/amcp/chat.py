@@ -1,3 +1,5 @@
+"""Chat interface for AMCP with tool support and MCP integration."""
+
 from __future__ import annotations
 
 import contextlib

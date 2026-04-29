@@ -1,3 +1,5 @@
+"""Typer CLI commands for AMCP."""
+
 from __future__ import annotations
 
 import asyncio

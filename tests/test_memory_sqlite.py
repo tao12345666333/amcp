@@ -56,9 +56,7 @@ class TestSQLiteMemoryStore:
         assert db_path.exists()
         store.close()
 
-    def test_append_and_search_events(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_append_and_search_events(self, sqlite_store: SQLiteMemoryStore):
         """Can append events and search them via FTS5."""
         sqlite_store.append_event(
             "Fixed authentication bug in login module",
@@ -80,9 +78,7 @@ class TestSQLiteMemoryStore:
         assert len(results) == 2
         assert all(r.source == "events" for r in results)
 
-    def test_search_events_no_results(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_search_events_no_results(self, sqlite_store: SQLiteMemoryStore):
         """Search returns empty list for non-matching query."""
         sqlite_store.append_event("some content")
         results = sqlite_store.search_events("nonexistent_xyz_query")
@@ -108,9 +104,7 @@ class TestSQLiteMemoryStore:
         assert fact["value"] == "3.12"
         assert fact["category"] == "config"
 
-    def test_upsert_updates_existing(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_upsert_updates_existing(self, sqlite_store: SQLiteMemoryStore):
         """Upserting with same key updates the value."""
         sqlite_store.upsert_fact(key="lang", value="Python 3.11")
         sqlite_store.upsert_fact(key="lang", value="Python 3.12")
@@ -138,9 +132,7 @@ class TestSQLiteMemoryStore:
         facts = sqlite_store.list_facts()
         assert len(facts) == 2
 
-    def test_list_facts_by_category(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_list_facts_by_category(self, sqlite_store: SQLiteMemoryStore):
         """list_facts filters by category."""
         sqlite_store.upsert_fact("k1", "v1", "cat1")
         sqlite_store.upsert_fact("k2", "v2", "cat2")
@@ -155,17 +147,13 @@ class TestSQLiteMemoryStore:
         assert sqlite_store.delete_fact("temp") is True
         assert sqlite_store.get_fact("temp") is None
 
-    def test_delete_fact_not_found(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_delete_fact_not_found(self, sqlite_store: SQLiteMemoryStore):
         """Deleting non-existent fact returns False."""
         assert sqlite_store.delete_fact("nonexistent") is False
 
     def test_combined_search(self, sqlite_store: SQLiteMemoryStore):
         """Combined search returns facts first, then events."""
-        sqlite_store.upsert_fact(
-            "framework", "FastAPI web framework", "config"
-        )
+        sqlite_store.upsert_fact("framework", "FastAPI web framework", "config")
         sqlite_store.append_event("Deployed FastAPI service")
 
         results = sqlite_store.search("FastAPI")
@@ -188,18 +176,14 @@ class TestSQLiteMemoryStore:
         assert stats["fact_count"] == 1
         assert stats["db_size_bytes"] > 0
 
-    def test_empty_query_returns_empty(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_empty_query_returns_empty(self, sqlite_store: SQLiteMemoryStore):
         """Empty search query returns empty results."""
         sqlite_store.append_event("some content")
         assert sqlite_store.search_events("") == []
         assert sqlite_store.search_facts("") == []
         assert sqlite_store.search("") == []
 
-    def test_special_characters_in_query(
-        self, sqlite_store: SQLiteMemoryStore
-    ):
+    def test_special_characters_in_query(self, sqlite_store: SQLiteMemoryStore):
         """Special FTS5 characters are safely handled."""
         sqlite_store.append_event("error in module: auth.py")
         # These should not crash
@@ -214,9 +198,7 @@ class TestSQLiteMemoryStore:
 class TestMemoryStoreIntegration:
     def test_append_history_writes_to_sqlite(self, store: MemoryStore):
         """append_history writes to both markdown and SQLite."""
-        store.append_history(
-            "Test entry", session_id="s1", tags=["test"]
-        )
+        store.append_history("Test entry", session_id="s1", tags=["test"])
         # Check markdown file
         content = store.read_history()
         assert "Test entry" in content
@@ -294,17 +276,13 @@ class TestMemoryToolFacts:
 
     def test_upsert_fact_requires_key(self):
         """upsert_fact requires key parameter."""
-        result = self.tool.execute(
-            action="upsert_fact", content="value"
-        )
+        result = self.tool.execute(action="upsert_fact", content="value")
         assert not result.success
         assert "Key is required" in result.error
 
     def test_upsert_fact_requires_content(self):
         """upsert_fact requires content parameter."""
-        result = self.tool.execute(
-            action="upsert_fact", key="mykey"
-        )
+        result = self.tool.execute(action="upsert_fact", key="mykey")
         assert not result.success
         assert "Content is required" in result.error
 
@@ -347,9 +325,7 @@ class TestMemoryToolFacts:
             content="v2",
             category="cat1",
         )
-        result = self.tool.execute(
-            action="list_facts", category="cat1"
-        )
+        result = self.tool.execute(action="list_facts", category="cat1")
         assert result.success
         assert "2 facts" in result.content
 
@@ -361,9 +337,7 @@ class TestMemoryToolFacts:
 
     def test_delete_fact(self):
         """delete_fact removes a fact."""
-        self.tool.execute(
-            action="upsert_fact", key="temp", content="data"
-        )
+        self.tool.execute(action="upsert_fact", key="temp", content="data")
         result = self.tool.execute(action="delete_fact", key="temp")
         assert result.success
         assert "deleted" in result.content
@@ -373,9 +347,7 @@ class TestMemoryToolFacts:
 
     def test_delete_fact_not_found(self):
         """delete_fact returns message for missing key."""
-        result = self.tool.execute(
-            action="delete_fact", key="missing"
-        )
+        result = self.tool.execute(action="delete_fact", key="missing")
         assert result.success
         assert "No fact found" in result.content
 
@@ -401,13 +373,9 @@ class TestMemoryToolFacts:
             scope="project",
         )
         # Should not be in user scope
-        result = self.tool.execute(
-            action="get_fact", key="proj_key", scope="user"
-        )
+        result = self.tool.execute(action="get_fact", key="proj_key", scope="user")
         assert "No fact found" in result.content
 
         # Should be in project scope
-        result = self.tool.execute(
-            action="get_fact", key="proj_key", scope="project"
-        )
+        result = self.tool.execute(action="get_fact", key="proj_key", scope="project")
         assert "proj_val" in result.content

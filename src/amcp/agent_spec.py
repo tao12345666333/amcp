@@ -1,3 +1,5 @@
+"""Agent specification and resolution for AMCP."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -114,9 +114,7 @@ async def test_trigger_due():
     """Trigger should fire when last_run is far enough in the past."""
     factory = _make_agent_factory()
     notification = AsyncMock()
-    scheduler = _make_scheduler(
-        agent_factory=factory, send_notification=notification
-    )
+    scheduler = _make_scheduler(agent_factory=factory, send_notification=notification)
     await scheduler.start()
     # Push last_run back 31 minutes so */30 cron is due
     key = "heartbeat:0"
@@ -135,13 +133,9 @@ async def test_trigger_notify_false():
     factory = _make_agent_factory()
     notification = AsyncMock()
     skill = _make_skill(notify=False)
-    scheduler = _make_scheduler(
-        skills=[skill], agent_factory=factory, send_notification=notification
-    )
+    scheduler = _make_scheduler(skills=[skill], agent_factory=factory, send_notification=notification)
     await scheduler.start()
-    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     factory.assert_called_once()
     notification.assert_not_awaited()
@@ -159,13 +153,9 @@ async def test_trigger_timeout():
     factory.return_value.run = AsyncMock(side_effect=slow_run)
     notification = AsyncMock()
     skill = _make_skill(timeout=1)
-    scheduler = _make_scheduler(
-        skills=[skill], agent_factory=factory, send_notification=notification
-    )
+    scheduler = _make_scheduler(skills=[skill], agent_factory=factory, send_notification=notification)
     await scheduler.start()
-    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     notification.assert_awaited_once()
     assert "timed out" in notification.call_args[0][0]
@@ -178,13 +168,9 @@ async def test_trigger_execution_error():
     factory = _make_agent_factory()
     factory.return_value.run = AsyncMock(side_effect=RuntimeError("boom"))
     notification = AsyncMock()
-    scheduler = _make_scheduler(
-        agent_factory=factory, send_notification=notification
-    )
+    scheduler = _make_scheduler(agent_factory=factory, send_notification=notification)
     await scheduler.start()
-    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     notification.assert_awaited_once()
     assert "failed" in notification.call_args[0][0]
@@ -200,9 +186,7 @@ async def test_invalid_cron_expression():
     factory = _make_agent_factory()
     scheduler = _make_scheduler(skills=[skill], agent_factory=factory)
     await scheduler.start()
-    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["heartbeat:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     factory.assert_not_called()
     assert scheduler.running
@@ -236,9 +220,7 @@ async def test_hot_reload_picks_up_new_skills():
     factory.assert_not_called()
 
     # Push back last_run and tick again — should fire
-    scheduler._last_run["new-skill:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["new-skill:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     factory.assert_called_once_with("scheduler-new-skill")
     await scheduler.stop()
@@ -302,9 +284,7 @@ async def test_work_dir_from_trigger():
     )
     scheduler = _make_scheduler(skills=[skill], agent_factory=factory)
     await scheduler.start()
-    scheduler._last_run["custom-dir:0"] = datetime.now(UTC) - timedelta(
-        minutes=31
-    )
+    scheduler._last_run["custom-dir:0"] = datetime.now(UTC) - timedelta(minutes=31)
     await scheduler._tick()
     call_kwargs = factory.return_value.run.call_args[1]
     from pathlib import Path

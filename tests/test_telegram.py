@@ -274,10 +274,12 @@ def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int 
     mock_app.bot.send_chat_action = AsyncMock()
     mock_app.bot.send_message = AsyncMock()
 
-    with patch("amcp.telegram.bot.ApplicationBuilder") as builder_cls, \
-         patch("amcp.telegram.bot.CommandHandler", MagicMock()), \
-         patch("amcp.telegram.bot.MessageHandler", MagicMock()), \
-         patch("amcp.telegram.bot.filters", MagicMock()):
+    with (
+        patch("amcp.telegram.bot.ApplicationBuilder") as builder_cls,
+        patch("amcp.telegram.bot.CommandHandler", MagicMock()),
+        patch("amcp.telegram.bot.MessageHandler", MagicMock()),
+        patch("amcp.telegram.bot.filters", MagicMock()),
+    ):
         builder_cls.return_value.token.return_value.build.return_value = mock_app
 
         from amcp.telegram.bot import TelegramBot
@@ -378,8 +380,10 @@ def test_process_message_starts_and_stops_typing():
         )
         msg = TelegramQueuedMessage(chat_id=600, user_id=1, text="hi")
 
-        with patch.object(bot, "_start_typing", new_callable=AsyncMock) as start, \
-             patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop:
+        with (
+            patch.object(bot, "_start_typing", new_callable=AsyncMock) as start,
+            patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop,
+        ):
             await bot._process_message(session, msg)
 
         start.assert_called_once_with(600)
@@ -407,8 +411,10 @@ def test_process_message_stops_typing_on_error():
         )
         msg = TelegramQueuedMessage(chat_id=700, user_id=1, text="hi")
 
-        with patch.object(bot, "_start_typing", new_callable=AsyncMock) as start, \
-             patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop:
+        with (
+            patch.object(bot, "_start_typing", new_callable=AsyncMock) as start,
+            patch.object(bot, "_stop_typing", new_callable=AsyncMock) as stop,
+        ):
             await bot._process_message(session, msg)
 
         start.assert_called_once_with(700)

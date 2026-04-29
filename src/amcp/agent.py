@@ -1,3 +1,5 @@
+"""Agent execution engine with tool support, hooks, and MCP integration."""
+
 from __future__ import annotations
 
 import contextlib

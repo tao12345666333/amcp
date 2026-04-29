@@ -1,3 +1,5 @@
+"""Tool definitions and registry for AMCP."""
+
 from __future__ import annotations
 
 import threading
