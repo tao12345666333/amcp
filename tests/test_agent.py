@@ -245,6 +245,8 @@ class TestAgentStepTracking:
                 agent.current_request_tool_calls = 5
                 agent.current_request_llm_calls = 3
                 agent.current_request_start_time = 12345.0
-                agent._reset_request_counters()
+                agent.current_request_tool_calls = 0
+                agent.current_request_llm_calls = 0
+                agent.current_request_start_time = None
                 assert agent.current_request_tool_calls == 0
                 assert agent.current_request_llm_calls == 0

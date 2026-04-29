@@ -191,7 +191,8 @@ class TestAttachFileContext:
 
 class TestMakeClient:
     def test_creates_client(self):
-        with patch("amcp.chat.OpenAI") as mock_openai:
+        with patch("builtins.__import__") as mock_import:
+            mock_openai = MagicMock()
+            mock_import.return_value = MagicMock(OpenAI=mock_openai)
             _make_client("https://api.example.com/v1", "test-key")
             mock_openai.assert_called_once_with(base_url="https://api.example.com/v1", api_key="test-key")
-
