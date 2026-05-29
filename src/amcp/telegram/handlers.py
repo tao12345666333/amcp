@@ -690,7 +690,7 @@ class TelegramHandlers:
             param_pattern = re.compile(r'(\w+)=([^\s"\']+|"[^"]*"|\'[^\']*\')')
             for match in param_pattern.finditer(params_str):
                 key = match.group(1)
-                value = match.group(2).strip('"\'')
+                value = match.group(2).strip("\"'")
                 params[key] = value
 
         # Validate required parameters
