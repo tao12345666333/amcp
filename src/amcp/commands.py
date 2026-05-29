@@ -263,6 +263,22 @@ class CommandManager:
             if input_as_namespaced == name or name.startswith(input_as_namespaced + ":"):
                 return cmd, args
 
+        # Handle wildcard skill commands: /skill:* matches /skill:deploy, /skill:heartbeat, etc.
+        for name, cmd in self._commands.items():
+            if name.endswith(":*"):
+                prefix = name[:-1]  # Remove '*' but keep colon, e.g., "skill:"
+                if command_str.startswith(prefix):
+                    # Return the wildcard command with the actual command name
+                    # The action handler will extract the skill name from command_name
+                    actual_cmd = SlashCommand(
+                        name=command_str,
+                        description=cmd.description,
+                        kind=cmd.kind,
+                        action=cmd.action,
+                        auto_execute=cmd.auto_execute,
+                    )
+                    return actual_cmd, args
+
         return None, user_input
 
     def execute_command(
@@ -492,8 +508,15 @@ def _make_skills_command(skill_manager) -> SlashCommand:
             for skill in skills:
                 status = "🔴 (disabled)" if skill.disabled else "🟢"
                 active = " ⭐" if sm.is_skill_active(skill.name) else ""
-                lines.append(f"- {status} **{skill.name}**{active}: {skill.description}")
+                auto_trigger = " 🤖" if skill.auto_trigger else " 🚫"
+                lines.append(f"- {status} **{skill.name}**{active}{auto_trigger}: {skill.description}")
+                if skill.parameters:
+                    for param in skill.parameters:
+                        req = " (required)" if param.required else ""
+                        default = f" [default: {param.default}]" if param.default else ""
+                        lines.append(f"    - param `{param.name}`{req}{default}: {param.description}")
 
+            lines.append("\nLegend: ⭐ = active, 🤖 = auto-trigger, 🚫 = explicit-only")
             return CommandResult(type="message", content="\n".join(lines))
 
         def _activate_skill() -> CommandResult:
@@ -552,6 +575,103 @@ def _make_skills_command(skill_manager) -> SlashCommand:
     )
 
 
+def _make_skill_command(skill_manager) -> SlashCommand:
+    """Create the /skill:name command for explicit skill invocation.
+
+    This command allows users to explicitly invoke a skill by name,
+    optionally passing parameters. The skill's body is submitted as
+    a prompt to the agent.
+
+    Usage:
+        /skill:<name> [param1=value1 param2=value2 ...]
+        /skill:deploy env=production
+        /skill:heartbeat
+    """
+
+    def skill_action(context: CommandContext, args: str) -> CommandResult:
+        from .skills import get_skill_manager
+
+        sm = skill_manager or get_skill_manager()
+        if context.work_dir:
+            sm.discover_skills(context.work_dir)
+
+        # Extract skill name from command (e.g., "/skill:deploy" -> "deploy")
+        command_name = context.command_name
+        if command_name.startswith("skill:"):
+            skill_name = command_name[6:]  # Remove "skill:" prefix
+        else:
+            return CommandResult(
+                type="message",
+                content=f"Invalid skill command: {command_name}",
+                message_type="error",
+            )
+
+        skill = sm.get_skill(skill_name)
+        if not skill:
+            return CommandResult(
+                type="message",
+                content=f"Skill '{skill_name}' not found. Use /skills list to see available skills.",
+                message_type="error",
+            )
+
+        if skill.disabled:
+            return CommandResult(
+                type="message",
+                content=f"Skill '{skill_name}' is disabled. Enable it with /skills activate {skill_name}",
+                message_type="error",
+            )
+
+        # Parse parameters from args (key=value format)
+        params: dict[str, str] = {}
+        remaining_args = args.strip()
+        if remaining_args:
+            # Parse key=value pairs
+            param_pattern = re.compile(r'(\w+)=([^\s"\']+|"[^"]*"|\'[^\']*\')')
+            for match in param_pattern.finditer(remaining_args):
+                key = match.group(1)
+                value = match.group(2).strip('"\'')
+                params[key] = value
+
+        # Build the prompt from skill body + parameters
+        prompt_parts: list[str] = []
+        prompt_parts.append(f"# Skill: {skill.name}")
+        prompt_parts.append(f"*{skill.description}*")
+        prompt_parts.append("")
+        prompt_parts.append(skill.body)
+
+        # Add parameter context if provided
+        if params:
+            prompt_parts.append("")
+            prompt_parts.append("## Parameters")
+            for key, value in params.items():
+                prompt_parts.append(f"- {key}: {value}")
+
+        # Validate required parameters
+        if skill.parameters:
+            missing = []
+            for param in skill.parameters:
+                if param.required and param.name not in params and param.default is None:
+                    missing.append(param.name)
+            if missing:
+                return CommandResult(
+                    type="message",
+                    content=f"Missing required parameters for skill '{skill_name}': {', '.join(missing)}",
+                    message_type="error",
+                )
+
+        # Auto-activate the skill when explicitly invoked
+        sm.activate_skill(skill_name)
+
+        return CommandResult(type="submit_prompt", content="\n".join(prompt_parts))
+
+    return SlashCommand(
+        name="skill:*",
+        description="Invoke a skill by name: /skill:<name> [key=value ...]",
+        kind=CommandKind.BUILT_IN,
+        action=skill_action,
+    )
+
+
 # Global command manager instance
 _command_manager: CommandManager | None = None
 
@@ -572,6 +692,7 @@ def _init_builtin_commands(manager: CommandManager) -> None:
     manager.register_builtin(_make_exit_command())
     manager.register_builtin(_make_info_command())
     manager.register_builtin(_make_skills_command(None))
+    manager.register_builtin(_make_skill_command(None))
 
 
 def reset_command_manager() -> None:

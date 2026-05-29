@@ -72,6 +72,9 @@ class ProgressiveSkillView:
         for skill in skills:
             if skill.name in active_skills:
                 continue
+            # Skip explicit-only skills from auto-triggering unless explicitly activated
+            if not skill.auto_trigger:
+                continue
             score = self.scorer.score_skill(
                 skill_name=skill.name,
                 skill_description=skill.description,
@@ -153,4 +156,5 @@ class ProgressiveSkillView:
 
     @staticmethod
     def _render_summary(skill: SkillMetadata) -> str:
-        return f"- {skill.name}: {skill.description}"
+        explicit_marker = " [explicit-only]" if not skill.auto_trigger else ""
+        return f"- {skill.name}{explicit_marker}: {skill.description}"

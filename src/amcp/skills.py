@@ -62,6 +62,17 @@ class SkillTrigger:
 
 
 @dataclass
+class SkillParameter:
+    """A parameter that can be passed to a skill when invoked."""
+
+    name: str
+    description: str = ""
+    required: bool = False
+    default: str | None = None
+    enum: list[str] | None = None
+
+
+@dataclass
 class SkillMetadata:
     """Metadata for a discovered skill."""
 
@@ -71,6 +82,8 @@ class SkillMetadata:
     body: str
     disabled: bool = False
     triggers: list[SkillTrigger] = field(default_factory=list)
+    auto_trigger: bool = True  # Whether the skill can be auto-triggered by the agent
+    parameters: list[SkillParameter] = field(default_factory=list)  # Parameters for explicit invocation
 
 
 @dataclass
@@ -220,6 +233,14 @@ class SkillManager:
             # Parse triggers
             triggers = self._parse_triggers(frontmatter.get("triggers"))
 
+            # Parse auto_trigger (default True)
+            auto_trigger = frontmatter.get("auto_trigger", True)
+            if not isinstance(auto_trigger, bool):
+                auto_trigger = str(auto_trigger).lower() not in ("false", "0", "no", "")
+
+            # Parse parameters
+            parameters = self._parse_parameters(frontmatter.get("parameters"))
+
             return SkillMetadata(
                 name=name,
                 description=description if isinstance(description, str) else "",
@@ -227,6 +248,8 @@ class SkillManager:
                 body=body,
                 disabled=name in self._disabled_skill_names,
                 triggers=triggers,
+                auto_trigger=auto_trigger,
+                parameters=parameters,
             )
         except Exception:
             return None
@@ -254,6 +277,29 @@ class SkillManager:
                 )
             )
         return triggers
+
+    @staticmethod
+    def _parse_parameters(raw: Any) -> list[SkillParameter]:
+        """Parse parameters from frontmatter."""
+        if not raw or not isinstance(raw, list):
+            return []
+        parameters: list[SkillParameter] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            param_name = item.get("name")
+            if not param_name or not isinstance(param_name, str):
+                continue
+            parameters.append(
+                SkillParameter(
+                    name=param_name,
+                    description=str(item.get("description", "")),
+                    required=bool(item.get("required", False)),
+                    default=str(item["default"]) if item.get("default") is not None else None,
+                    enum=list(item["enum"]) if item.get("enum") and isinstance(item["enum"], (list, tuple)) else None,
+                )
+            )
+        return parameters
 
     def _parse_simple_yaml(self, yaml_text: str) -> dict:
         """Simple YAML parser for name/description when PyYAML not available."""
@@ -379,11 +425,17 @@ class SkillManager:
             "Once you have read the instructions, follow them exactly as documented."
         )
         lines.append("")
+        lines.append(
+            "Some skills are **explicit-only** (marked with 🚫) and can only be invoked via `/skill:<name>`. "
+            "Other skills are **auto-triggered** (marked with 🤖) and may be used automatically when relevant."
+        )
+        lines.append("")
 
         # List skills with their status and location
         for skill in skills:
             active_marker = " ⭐" if self.is_skill_active(skill.name) else ""
-            lines.append(f"- **{skill.name}**{active_marker}: {skill.description}")
+            trigger_marker = " 🚫" if not skill.auto_trigger else ""
+            lines.append(f"- **{skill.name}**{active_marker}{trigger_marker}: {skill.description}")
             lines.append(f"  Location: `{skill.location}`")
 
         lines.append("</skills>")

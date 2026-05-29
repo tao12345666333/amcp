@@ -120,6 +120,30 @@ def validate_skill(skill_dir: Path) -> list[str]:
             f"SKILL.md body too long ({len(body_lines)} lines, max {MAX_SKILL_LINES}). Consider splitting into reference files."
         )
 
+    # Validate auto_trigger if present
+    if "auto_trigger" in metadata:
+        at = metadata["auto_trigger"]
+        if isinstance(at, str):
+            if at.lower() not in ("true", "false"):
+                errors.append(f"Invalid auto_trigger value '{at}'. Must be true or false.")
+        elif not isinstance(at, bool):
+            errors.append("Invalid auto_trigger type. Must be boolean.")
+
+    # Validate parameters if present
+    if "parameters" in metadata:
+        params = metadata["parameters"]
+        if not isinstance(params, list):
+            errors.append("parameters must be a list")
+        else:
+            for i, param in enumerate(params):
+                if not isinstance(param, dict):
+                    errors.append(f"Parameter {i} must be an object")
+                    continue
+                if "name" not in param or not param["name"]:
+                    errors.append(f"Parameter {i} missing required field: name")
+                if "description" not in param or not param["description"]:
+                    errors.append(f"Parameter '{param.get('name', i)}' missing description")
+
     # Check for extraneous files
     forbidden_files = {"README.md", "CHANGELOG.md", "INSTALLATION_GUIDE.md", "QUICK_REFERENCE.md"}
     for item in skill_dir.iterdir():

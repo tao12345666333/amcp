@@ -45,7 +45,7 @@ class TestFindAgentsFile:
     def test_finds_agents_md(self):
         """Test finding AGENTS.md file."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
+            tmppath = Path(tmpdir).resolve()
             agents_file = tmppath / "AGENTS.md"
             agents_file.write_text("# Project Rules")
 
@@ -55,7 +55,7 @@ class TestFindAgentsFile:
     def test_priority_order(self):
         """Test that AGENTS.md has priority over other names."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
+            tmppath = Path(tmpdir).resolve()
             # Create multiple files
             (tmppath / "agents.md").write_text("lowercase")
             (tmppath / "AGENTS.md").write_text("uppercase")
@@ -76,7 +76,7 @@ class TestDiscoverProjectAgentsFiles:
     def test_discovers_single_file(self):
         """Test discovering a single AGENTS.md file."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
+            tmppath = Path(tmpdir).resolve()
             agents_file = tmppath / "AGENTS.md"
             agents_file.write_text("# Rules")
 
@@ -87,7 +87,7 @@ class TestDiscoverProjectAgentsFiles:
     def test_discovers_nested_files(self):
         """Test discovering files from nested directories."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
+            tmppath = Path(tmpdir).resolve()
 
             # Create a fake git root so boundary is set correctly
             (tmppath / ".git").mkdir()
@@ -260,7 +260,7 @@ class TestGlobalAgentsFile:
     def test_global_file_included_in_discovery(self):
         """Test global file is included when discovering."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
+            tmppath = Path(tmpdir).resolve()
 
             # Create global config dir with AGENTS.md
             global_dir = tmppath / "global"

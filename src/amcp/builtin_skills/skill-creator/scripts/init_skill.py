@@ -22,6 +22,7 @@ MAX_NAME_LENGTH = 64
 SKILL_MD_TEMPLATE = """---
 name: {name}
 description: TODO - Describe what this skill does and when to use it. Be specific about triggers and use cases.
+auto_trigger: true
 ---
 
 # {title}

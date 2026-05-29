@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -517,6 +518,7 @@ class TelegramHandlers:
             "/ask <prompt> - Send a prompt",
             "/skills - List skills",
             "/activate <skill> - Activate a skill",
+            "/skill:<name> [param=value ...] - Invoke a skill explicitly",
             "/memory search <query> - Search memory",
             "/config show|set <key> <value> - View/update config (admin)",
             "/users list|add|remove <id> - Manage users (admin)",
@@ -609,13 +611,17 @@ class TelegramHandlers:
             return
         skill_manager = get_skill_manager()
         skill_manager.discover_skills(self._work_dir)
-        skills = skill_manager.get_skills()
+        skills = skill_manager.get_all_skills()
         if not skills:
             await self._bot.send_text(update.effective_chat.id, "No skills found.")
             return
         lines = ["Available skills:"]
         for skill in skills:
-            lines.append(f"- {skill.name}: {skill.description}")
+            status = "🔴" if skill.disabled else "🟢"
+            active = " ⭐" if skill_manager.is_skill_active(skill.name) else ""
+            trigger = " 🚫" if not skill.auto_trigger else ""
+            lines.append(f"{status} **{skill.name}**{active}{trigger}: {skill.description}")
+        lines.append("\nLegend: ⭐ = active, 🚫 = explicit-only")
         await self._bot.send_text(update.effective_chat.id, "\n".join(lines))
 
     async def handle_activate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -634,6 +640,89 @@ class TelegramHandlers:
                 update.effective_chat.id,
                 f"Unknown or disabled skill: {name}",
             )
+
+    async def handle_skill(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /skill:<name> [param=value ...] commands for explicit skill invocation."""
+        if not await self._ensure_authorized(update):
+            return
+        message = update.message
+        if not message or not message.text:
+            return
+
+        # Parse /skill:<name> [args...]
+        text = message.text.strip()
+        if not text.startswith("/skill:"):
+            await self._bot.send_text(update.effective_chat.id, "Usage: /skill:<name> [param=value ...]")
+            return
+
+        # Extract skill name and parameters
+        # Format: /skill:deploy env=production version=1.2
+        without_prefix = text[7:]  # Remove "/skill:"
+        parts = without_prefix.split(maxsplit=1)
+        skill_name = parts[0] if parts else ""
+        params_str = parts[1] if len(parts) > 1 else ""
+
+        if not skill_name:
+            await self._bot.send_text(update.effective_chat.id, "Usage: /skill:<name> [param=value ...]")
+            return
+
+        skill_manager = get_skill_manager()
+        skill_manager.discover_skills(self._work_dir)
+        skill = skill_manager.get_skill(skill_name)
+
+        if not skill:
+            await self._bot.send_text(
+                update.effective_chat.id,
+                f"Skill '{skill_name}' not found. Use /skills to see available skills.",
+            )
+            return
+
+        if skill.disabled:
+            await self._bot.send_text(
+                update.effective_chat.id,
+                f"Skill '{skill_name}' is disabled. Enable it with /activate {skill_name}",
+            )
+            return
+
+        # Parse parameters
+        params: dict[str, str] = {}
+        if params_str:
+            param_pattern = re.compile(r'(\w+)=([^\s"\']+|"[^"]*"|\'[^\']*\')')
+            for match in param_pattern.finditer(params_str):
+                key = match.group(1)
+                value = match.group(2).strip('"\'')
+                params[key] = value
+
+        # Validate required parameters
+        if skill.parameters:
+            missing = []
+            for param in skill.parameters:
+                if param.required and param.name not in params and param.default is None:
+                    missing.append(param.name)
+            if missing:
+                await self._bot.send_text(
+                    update.effective_chat.id,
+                    f"Missing required parameters: {', '.join(missing)}",
+                )
+                return
+
+        # Build prompt from skill
+        prompt_parts: list[str] = []
+        prompt_parts.append(f"# Skill: {skill.name}")
+        prompt_parts.append(f"*{skill.description}*")
+        prompt_parts.append("")
+        prompt_parts.append(skill.body)
+
+        if params:
+            prompt_parts.append("")
+            prompt_parts.append("## Parameters")
+            for key, value in params.items():
+                prompt_parts.append(f"- {key}: {value}")
+
+        # Activate skill and submit prompt
+        skill_manager.activate_skill(skill_name)
+        full_prompt = "\n".join(prompt_parts)
+        await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, full_prompt)
 
     async def handle_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):

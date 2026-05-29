@@ -428,6 +428,13 @@ class TelegramBot:
         application.add_handler(CommandHandler("pair", self._handlers.handle_pair))
         application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
+        # Handle /skill:<name> commands (not supported by CommandHandler due to colon)
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & filters.Regex(r"^/skill:[a-zA-Z0-9_-]+"),
+                self._handlers.handle_skill,
+            )
+        )
         application.add_handler(
             MessageHandler(
                 (

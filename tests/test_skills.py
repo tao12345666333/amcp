@@ -155,6 +155,98 @@ class TestSkillManager:
         assert all_skills[0].disabled is True
 
 
+class TestSkillParameters:
+    """Tests for skill parameters and auto_trigger."""
+
+    def test_parse_skill_with_parameters(self, skill_manager: SkillManager, temp_skills_dir: Path):
+        """Test parsing a skill file with parameters."""
+        skill_dir = temp_skills_dir / "param-skill"
+        skill_dir.mkdir()
+
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("""---
+name: param-skill
+description: A skill with parameters
+auto_trigger: false
+parameters:
+  - name: env
+    description: Target environment
+    required: true
+    enum: [staging, production]
+  - name: version
+    description: Version to deploy
+    required: false
+    default: latest
+---
+
+# Param Skill
+
+Test body.
+""")
+
+        skill = skill_manager._parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.name == "param-skill"
+        assert skill.auto_trigger is False
+        assert len(skill.parameters) == 2
+
+        # Check first parameter
+        param1 = skill.parameters[0]
+        assert param1.name == "env"
+        assert param1.description == "Target environment"
+        assert param1.required is True
+        assert param1.enum == ["staging", "production"]
+        assert param1.default is None
+
+        # Check second parameter
+        param2 = skill.parameters[1]
+        assert param2.name == "version"
+        assert param2.required is False
+        assert param2.default == "latest"
+        assert param2.enum is None
+
+    def test_parse_skill_auto_trigger_true_by_default(self, skill_manager: SkillManager, temp_skills_dir: Path):
+        """Test that auto_trigger defaults to True."""
+        skill_dir = temp_skills_dir / "auto-skill"
+        skill_dir.mkdir()
+
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("""---
+name: auto-skill
+description: A test skill
+---
+
+# Auto Skill
+
+Test body.
+""")
+
+        skill = skill_manager._parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.auto_trigger is True
+
+    def test_parse_skill_auto_trigger_false_string(self, skill_manager: SkillManager, temp_skills_dir: Path):
+        """Test parsing auto_trigger from string values."""
+        skill_dir = temp_skills_dir / "explicit-skill"
+        skill_dir.mkdir()
+
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("""---
+name: explicit-skill
+description: An explicit-only skill
+auto_trigger: "false"
+---
+
+# Explicit Skill
+
+Test body.
+""")
+
+        skill = skill_manager._parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.auto_trigger is False
+
+
 class TestGlobalSkillManager:
     """Tests for global skill manager functions."""
 

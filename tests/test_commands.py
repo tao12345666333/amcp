@@ -291,3 +291,32 @@ class TestBuiltinCommands:
         result = manager.execute_command(cmd, "")
         assert result.type == "handled"
         assert result.content == "info"
+
+    def test_skills_command_list(self, manager: CommandManager):
+        """Test the /skills list command."""
+        cmd, _ = manager.parse_input("/skills")
+        assert cmd is not None
+
+        result = manager.execute_command(cmd, "")
+        assert result.type == "message"
+        # When no skills are discovered, it shows "No skills found."
+        assert "No skills found" in result.content or "Available Skills" in result.content
+
+    def test_skill_wildcard_command(self, manager: CommandManager):
+        """Test the /skill:name wildcard command matching."""
+        # Test that /skill:xxx matches the skill:* wildcard
+        cmd, args = manager.parse_input("/skill:test-skill")
+        assert cmd is not None
+        assert cmd.name == "skill:test-skill"
+
+        # Test with parameters
+        cmd, args = manager.parse_input("/skill:deploy env=production")
+        assert cmd is not None
+        assert cmd.name == "skill:deploy"
+        assert args == "env=production"
+
+    def test_skill_wildcard_non_skill_prefix(self, manager: CommandManager):
+        """Test that non-skill: prefixes don't match wildcard."""
+        cmd, args = manager.parse_input("/something:else")
+        assert cmd is None
+        assert args == "/something:else"
