@@ -87,13 +87,10 @@ class TestAMCPAgent:
     @pytest.mark.asyncio
     async def test_initialize_with_client_capabilities(self):
         """Test initialize stores client capabilities."""
-        from acp.schema import ClientCapabilities, FileSystemCapability
+        from acp.schema import ClientCapabilities
 
         agent = AMCPAgent()
-        client_caps = ClientCapabilities(
-            fs=FileSystemCapability(read_text_file=True, write_text_file=True),
-            terminal=True,
-        )
+        client_caps = ClientCapabilities()
         await agent.initialize(protocol_version=1, client_capabilities=client_caps)
         assert agent._client_capabilities == client_caps
 

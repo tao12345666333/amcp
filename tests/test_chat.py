@@ -50,7 +50,15 @@ class TestResolveApiKey:
         assert _resolve_api_key(None, cfg) == "cfg-key"
 
     def test_none_when_missing(self):
-        assert _resolve_api_key(None, None) is None
+        import os
+        old_val = os.environ.get("OPENAI_API_KEY")
+        if "OPENAI_API_KEY" in os.environ:
+            del os.environ["OPENAI_API_KEY"]
+        try:
+            assert _resolve_api_key(None, None) is None
+        finally:
+            if old_val is not None:
+                os.environ["OPENAI_API_KEY"] = old_val
 
 
 class TestParseReadIntent:

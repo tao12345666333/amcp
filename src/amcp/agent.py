@@ -93,6 +93,9 @@ class Agent:
 
         # Session-level cumulative tracking
         self.total_llm_calls: int = 0  # Total LLM calls across entire session
+        self.total_input_tokens: int = 0  # Total LLM input tokens (used for DP compaction logic)
+        self.total_compacts: int = 0  # Number of compactions performed
+        self.turn_count: int = 0  # Number of user input turns processed
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -550,6 +553,8 @@ class Agent:
         This is the core message processing logic, extracted from run()
         to support queue-based processing.
         """
+        self.turn_count += 1
+
         # Run UserPromptSubmit hooks
         prompt_hook_output = await run_user_prompt_hooks(
             session_id=self.session_id,
@@ -587,10 +592,19 @@ class Agent:
                 api_key = _resolve_api_key(None, cfg.chat)
                 client = _make_client(base_url, api_key)
                 model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
-                compactor = SmartCompactor(client, model)
+
+                # Gather stats for DP compaction economics
+                stats = {
+                    "current_turn": self.turn_count,
+                    "total_requests": self.total_llm_calls,
+                    "total_compacts": self.total_compacts,
+                    "total_input_tokens": self.total_input_tokens,
+                }
+                compactor = SmartCompactor(client, model, stats=stats)
 
                 if compactor.should_compact(history_to_add):
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
+                    self.total_compacts += 1
                     history_to_add, _ = compactor.compact(history_to_add)
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
@@ -867,6 +881,10 @@ class Agent:
                     self._emit_event("message.chunk", {"content": chunk})
 
                 stream_callback = _stream_callback
+
+            # Track input tokens for the DP economics model
+            from .compaction import estimate_tokens
+            self.total_input_tokens += estimate_tokens(messages)
 
             resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
 

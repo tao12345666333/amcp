@@ -90,6 +90,20 @@ class CompactionConfig:
         max_tool_results: Maximum number of tool results to preserve
         min_tokens_to_compact: Minimum tokens before considering compaction
         safety_margin: Extra margin to leave for response generation
+
+        # DP Economics Model Parameters
+        dp_p_input: float  # Price per 1M input tokens (uncached)
+        dp_p_cache: float  # Price per 1M input tokens (cached)
+        dp_p_out: float    # Price per 1M output tokens
+        dp_v: int          # Fixed prefix length
+        dp_s: int          # Expected summary length
+        dp_baseline_e: int # Expected remaining turns baseline
+        dp_default_l: int  # Default LLM calls per turn
+        dp_default_avg: int # Default average tokens per LLM request
+        dp_min_keep_ratio: float # Minimum fraction of messages to retain
+        dp_r: float        # Single-step retention rate
+        dp_beta: float     # Info loss penalty coefficient
+        dp_quality_penalty: float # Context degradation penalty factor
     """
 
     strategy: CompactionStrategy = CompactionStrategy.SUMMARY
@@ -100,6 +114,20 @@ class CompactionConfig:
     max_tool_results: int = 10
     min_tokens_to_compact: int = 5000  # Don't compact tiny contexts
     safety_margin: float = 0.1  # 10% margin for response
+
+    # DP Economics defaults (based on standard models like Sonnet/GPT-4o)
+    dp_p_input: float = 3.0
+    dp_p_cache: float = 0.30
+    dp_p_out: float = 15.0
+    dp_v: int = 5000
+    dp_s: int = 500
+    dp_baseline_e: int = 8
+    dp_default_l: int = 5
+    dp_default_avg: int = 4000
+    dp_min_keep_ratio: float = 0.12
+    dp_r: float = 0.8
+    dp_beta: float = 0.03
+    dp_quality_penalty: float = 0.2
 
 
 @dataclass
@@ -334,6 +362,7 @@ class SmartCompactor:
         client: OpenAI,
         model: str,
         config: CompactionConfig | None = None,
+        stats: dict[str, Any] | None = None,
     ):
         """Initialize the smart compactor.
 
@@ -341,10 +370,12 @@ class SmartCompactor:
             client: OpenAI client for generating summaries
             model: Model name for context window detection
             config: Optional compaction configuration
+            stats: Optional agent statistics for DP economics
         """
         self.client = client
         self.model = model
         self.config = config or CompactionConfig()
+        self.stats = stats or {}
 
         # Calculate dynamic thresholds
         self.context_window = get_model_context_window(model)
@@ -355,6 +386,99 @@ class SmartCompactor:
             f"context={self.context_window}, threshold={self.threshold_tokens}, "
             f"target={self.target_tokens}"
         )
+
+    def _calculate_dp_split(self, messages: list[dict[str, Any]], current_tokens: int) -> int:
+        """Calculate the optimal number of messages to retain using a DP economics model.
+
+        This aligns compaction decisions with LLM provider caching economics,
+        considering cost of prefix changes versus information loss.
+
+        Args:
+            messages: Current message history
+            current_tokens: Current token count for the messages
+
+        Returns:
+            Number of messages to preserve, or 0 if compaction is not economically beneficial.
+        """
+        num_messages = len(messages)
+        if num_messages == 0:
+            return 0
+
+        # Extract stats or use defaults
+        current_turn = self.stats.get("current_turn", 1)
+        total_requests = self.stats.get("total_requests", 0)
+        total_compacts = self.stats.get("total_compacts", 0)
+        total_input = self.stats.get("total_input_tokens", 0)
+
+        cfg = self.config
+
+        # Estimate remaining turns (E)
+        e = max(2, cfg.dp_baseline_e - current_turn)
+        if cfg.dp_baseline_e > 1 and e < cfg.dp_baseline_e // 2:
+            e = cfg.dp_baseline_e // 2
+
+        # Average LLM calls per turn (L)
+        l_calls = total_requests / current_turn if current_turn > 0 else cfg.dp_default_l
+        l_calls = max(1, l_calls)
+
+        # Average tokens per request
+        avg_tokens = total_input / total_requests if total_requests > 0 else cfg.dp_default_avg
+
+        # Remaining calls
+        r_calls = e * l_calls
+        l_instr = 70  # Summary instruction token length
+
+        # Info loss penalty
+        r_t = max(0.37, cfg.dp_r ** (total_compacts + 1))
+        n_remain = r_calls * avg_tokens
+        info_loss = cfg.dp_beta * (1.0 - r_t) * n_remain * cfg.dp_p_input / 1_000_000
+
+        # Determine minimum messages to keep
+        min_keep = max(3, int(num_messages * cfg.dp_min_keep_ratio + 0.5))
+        min_keep = min(num_messages, min_keep)
+
+        best_k = 0
+        best_benefit = -1e18
+
+        # Need token estimates per message
+        # we can just use the module level estimate_tokens
+        token_sizes = [estimate_tokens([msg]) for msg in messages]
+
+        # Evaluate each possible split point
+        for k in range(min_keep, num_messages + 1):
+            k_tokens = sum(token_sizes[-k:])
+            h_tokens = current_tokens - k_tokens
+
+            if h_tokens <= 0:
+                continue
+
+            # Economics calculations
+            savings = (r_calls - 1) * cfg.dp_p_cache * h_tokens / 1_000_000
+            cache_miss = (cfg.dp_s + k_tokens) * (cfg.dp_p_input - cfg.dp_p_cache) / 1_000_000
+            compact_cost = (cfg.dp_p_cache * (cfg.dp_v + h_tokens) + cfg.dp_p_input * l_instr + cfg.dp_p_out * cfg.dp_s) / 1_000_000
+
+            quality_savings = 0
+            # Only consider quality improvements if context is reasonably long
+            if current_tokens > self.context_window * 0.30:
+                quality_savings = cfg.dp_quality_penalty * cfg.dp_p_input * \
+                    ((cfg.dp_v + current_tokens)**2 - (cfg.dp_v + k_tokens)**2) / (self.context_window * 1_000_000)
+
+            benefit = savings - cache_miss - compact_cost - info_loss + quality_savings
+
+            if benefit > best_benefit:
+                best_benefit = benefit
+                best_k = k
+
+        if best_benefit > 0:
+            # Align cut point to a user message boundary
+            adj = best_k
+            cut = num_messages - adj
+            while cut > 0 and messages[cut].get("role") != "user":
+                cut -= 1
+                adj = num_messages - cut
+            return max(1, adj)
+
+        return 0
 
     def _update_thresholds(self) -> None:
         """Update threshold values based on context window and config."""
@@ -371,7 +495,7 @@ class SmartCompactor:
         self.target_tokens = max(self.target_tokens, self.config.min_tokens_to_compact)
 
     def should_compact(self, messages: list[dict[str, Any]]) -> bool:
-        """Check if compaction is needed.
+        """Check if compaction is needed based on economics or hard limits.
 
         Args:
             messages: Current message history
@@ -385,7 +509,19 @@ class SmartCompactor:
         if current_tokens < self.config.min_tokens_to_compact:
             return False
 
-        return current_tokens > self.threshold_tokens
+        # Fallback hard limit (e.g., 90% of max window)
+        hard_limit = int(self.context_window * 0.9)
+        if current_tokens > hard_limit:
+            self._dp_optimal_k = None  # Fall back to heuristic
+            return True
+
+        # Use DP economics calculation
+        optimal_k = self._calculate_dp_split(messages, current_tokens)
+        if optimal_k > 0:
+            self._dp_optimal_k = optimal_k
+            return True
+
+        return False
 
     def get_token_usage(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Get detailed token usage information.
@@ -487,7 +623,14 @@ class SmartCompactor:
         Returns:
             Tuple of (split_index, to_compact, to_preserve)
         """
-        # Find split point - preserve last N user/assistant messages
+        # Use DP-calculated split if available
+        if hasattr(self, "_dp_optimal_k") and self._dp_optimal_k is not None:
+            preserve_idx = len(messages) - self._dp_optimal_k
+            to_compact = messages[:preserve_idx]
+            to_preserve = messages[preserve_idx:]
+            return preserve_idx, to_compact, to_preserve
+
+        # Find split point - preserve last N user/assistant messages (Heuristic Fallback)
         preserve_idx = len(messages)
         user_assistant_count = 0
 

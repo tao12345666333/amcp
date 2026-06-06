@@ -47,6 +47,8 @@ class TestCreateLLMClient:
             pytest.skip("anthropic package not installed")
 
     def test_none_config_uses_defaults(self):
+        import os
+        os.environ["OPENAI_API_KEY"] = "dummy"
         client = create_llm_client(None)
         assert isinstance(client, OpenAIClient)
 
