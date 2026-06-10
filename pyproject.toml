@@ -57,6 +57,7 @@ dev = [
   "mypy>=1.8.0",
   "types-PyYAML>=6.0.0",
   "anthropic>=0.40.0",
+  "croniter>=1.3.0",
 ]
 
 [project.scripts]
