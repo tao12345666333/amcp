@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 from ..agent import Agent, BusyError, create_agent_by_name
 from ..agent_spec import get_default_agent_spec
-from ..config import load_config, save_config
+from ..config import CONFIG_FILE, load_config, save_config
 from ..event_bus import EventType, get_event_bus
+from ..mcp_client import list_mcp_tools
 from ..memory import get_memory_manager
 from ..multi_agent import get_agent_registry
 from .auth import AuthMiddleware
@@ -124,6 +125,54 @@ class TelegramBot:
         allowed = ", ".join(str(u) for u in sorted(self._auth.allowed_users)) or "none"
         admins = ", ".join(str(u) for u in sorted(self._auth.admin_users)) or "none"
         return f"allowed_users: {allowed}\nadmin_users: {admins}"
+
+    async def refresh_mcp_servers(self) -> str:
+        """Reload MCP configuration and probe server availability."""
+        cfg = load_config()
+        chat_cfg = cfg.chat
+
+        if chat_cfg and chat_cfg.mcp_tools_enabled is False:
+            return "MCP reload skipped: mcp_tools_enabled=false."
+
+        missing: list[str] = []
+        if chat_cfg and chat_cfg.mcp_servers:
+            selected = [name for name in chat_cfg.mcp_servers if name in cfg.servers]
+            missing = [name for name in chat_cfg.mcp_servers if name not in cfg.servers]
+        else:
+            selected = list(cfg.servers.keys())
+
+        if not selected:
+            if missing:
+                return f"MCP reload: no valid servers (missing config: {', '.join(missing)})."
+            return (
+                f"MCP reload: no configured servers in {CONFIG_FILE}. "
+                "Check whether Telegram process is using the expected config path."
+            )
+
+        async def _probe(server_name: str) -> tuple[str, int, str | None]:
+            try:
+                tools = await list_mcp_tools(cfg.servers[server_name])
+                return server_name, len(tools), None
+            except Exception as exc:
+                error = str(exc).replace("\n", " ").strip()
+                return server_name, 0, error
+
+        results = await asyncio.gather(*(_probe(name) for name in selected))
+
+        ready = [result for result in results if result[2] is None]
+        failed = [result for result in results if result[2] is not None]
+        total_tools = sum(tool_count for _, tool_count, _ in ready)
+
+        summary = f"MCP reloaded: {len(ready)}/{len(selected)} servers ready, {total_tools} tools discovered."
+        details: list[str] = []
+        if missing:
+            details.append(f"missing config: {', '.join(missing)}")
+        if failed:
+            failures = ", ".join(f"{name} ({(err or 'unknown error')[:120]})" for name, _, err in failed)
+            details.append(f"failed: {failures}")
+        if details:
+            summary += "\n" + "\n".join(details)
+        return summary
 
     def add_allowed_user(self, user_id: int) -> None:
         self._auth.allowed_users.add(user_id)

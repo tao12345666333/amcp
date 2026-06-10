@@ -55,8 +55,10 @@ class ProgressiveToolView:
         relevant_tools = self._find_explicit_tool_mentions(user_input, set(tool_map.keys()))
 
         always: list[dict[str, Any]] = []
+        always_names: set[str] = set()
         candidates: list[tuple[dict[str, Any], float]] = []
         excluded: list[str] = []
+        score_by_name: dict[str, float] = {}
 
         for spec in tools:
             name = self._tool_name(spec)
@@ -70,6 +72,7 @@ class ProgressiveToolView:
 
             if tier == ToolTier.ALWAYS:
                 always.append(spec)
+                always_names.add(name)
                 continue
 
             score = self.scorer.score_tool(
@@ -87,6 +90,7 @@ class ProgressiveToolView:
                 score = min(score + 0.10, 1.0)
 
             candidates.append((spec, score))
+            score_by_name[name] = score
 
         selected = list(always)
         remaining_budget = max(budget_tokens - self._estimate_specs_tokens(always), 0)
@@ -104,12 +108,50 @@ class ProgressiveToolView:
             else:
                 excluded.append(self._tool_name(spec))
 
+        self._ensure_mcp_visibility(
+            selected=selected,
+            candidates=candidates,
+            always_names=always_names,
+            score_by_name=score_by_name,
+        )
+
         hidden_count = max(len(tools) - len(selected), 0)
         return ToolSelectionResult(
             selected_tools=selected,
             hidden_count=hidden_count,
             excluded_tools=sorted({name for name in excluded if name}),
         )
+
+    def _ensure_mcp_visibility(
+        self,
+        *,
+        selected: list[dict[str, Any]],
+        candidates: list[tuple[dict[str, Any], float]],
+        always_names: set[str],
+        score_by_name: dict[str, float],
+    ) -> None:
+        has_selected_mcp = any(self._tool_name(spec).startswith("mcp.") for spec in selected)
+        if has_selected_mcp:
+            return
+
+        mcp_candidates = [item for item in candidates if self._tool_name(item[0]).startswith("mcp.")]
+        if not mcp_candidates:
+            return
+
+        mcp_candidates.sort(key=lambda item: item[1], reverse=True)
+        mcp_spec = mcp_candidates[0][0]
+
+        removable = [
+            spec
+            for spec in selected
+            if self._tool_name(spec) not in always_names and not self._tool_name(spec).startswith("mcp.")
+        ]
+        if removable:
+            removable.sort(key=lambda spec: score_by_name.get(self._tool_name(spec), 0.0))
+            selected.remove(removable[0])
+
+        if all(self._tool_name(spec) != self._tool_name(mcp_spec) for spec in selected):
+            selected.append(mcp_spec)
 
     def _resolve_tier(self, tool_name: str, overrides: dict[str, str]) -> ToolTier:
         raw_override = overrides.get(tool_name) or (overrides.get("mcp.*") if tool_name.startswith("mcp.") else None)

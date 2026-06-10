@@ -66,6 +66,33 @@ def test_progressive_tool_view_keeps_always_tools_and_respects_budget():
     assert len(result.selected_tools) <= len(tools)
 
 
+def test_progressive_tool_view_keeps_at_least_one_mcp_tool_visible():
+    scorer = RelevanceScorer()
+    view = ProgressiveToolView(scorer)
+    tools = [
+        _tool_spec("read_file", "Read files from workspace"),
+        _tool_spec("grep", "Search text patterns"),
+        _tool_spec("think", "Internal planning"),
+        _tool_spec("apply_patch", "Edit files with patch diffs"),
+        _tool_spec("mcp.tavily.tavily_search", "Search the web for current information"),
+        _tool_spec("mcp.tavily.tavily_extract", "Extract web page content from URLs"),
+    ]
+
+    result = view.select_tools(
+        tools=tools,
+        user_input="帮我看看这个问题",
+        conversation=[],
+        usage=ToolUsageTracker.from_history([]),
+        budget_tokens=120,
+        relevance_threshold=0.95,
+        tier_overrides={},
+    )
+
+    names = {t["function"]["name"] for t in result.selected_tools}
+    assert {"read_file", "grep", "think"}.issubset(names)
+    assert any(name.startswith("mcp.") for name in names)
+
+
 def test_progressive_skill_view_falls_back_when_budget_is_small():
     scorer = RelevanceScorer()
     view = ProgressiveSkillView(scorer)

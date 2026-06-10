@@ -68,6 +68,44 @@ def test_session_manager_creates_sessions():
     assert manager.get_current_session_id(123) == session2.session_id
 
 
+def test_handle_session_new_refreshes_mcp():
+    async def _run():
+        class _SessionBot(_FakeBot):
+            def __init__(self, config: TelegramConfig) -> None:
+                super().__init__(config)
+                self.sent: list[tuple[int, str]] = []
+
+            async def send_text(self, chat_id: int, text: str) -> None:
+                self.sent.append((chat_id, text))
+
+            async def refresh_mcp_servers(self) -> str:
+                return "MCP reloaded: ok"
+
+        fake_bot = _SessionBot(TelegramConfig())
+        manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
+        handlers = TelegramHandlers(
+            bot=fake_bot,
+            session_manager=manager,
+            auth=AuthMiddleware(allowed_users={42}, admin_users=set()),
+            rate_limiter=RateLimiter(limit=100),
+        )
+        update = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=123, type="private"),
+            effective_user=SimpleNamespace(id=42),
+            message=None,
+        )
+        context = SimpleNamespace(args=["new"])
+
+        await handlers.handle_session(update, context)
+
+        assert fake_bot.sent
+        _, text = fake_bot.sent[0]
+        assert "Created session:" in text
+        assert "MCP reloaded: ok" in text
+
+    asyncio.run(_run())
+
+
 # --- Metadata injection tests ---
 
 
@@ -291,6 +329,61 @@ def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int 
             config=config,
         )
     return bot
+
+
+def test_refresh_mcp_servers_reports_results():
+    async def _run():
+        bot = _make_bot_for_typing()
+        server_a = object()
+        server_b = object()
+        cfg = SimpleNamespace(
+            chat=SimpleNamespace(mcp_tools_enabled=True, mcp_servers=["a", "b", "missing"]),
+            servers={"a": server_a, "b": server_b},
+        )
+
+        async def _fake_list_tools(server):
+            if server is server_a:
+                return [{"name": "tool_a"}, {"name": "tool_b"}]
+            raise RuntimeError("offline")
+
+        with (
+            patch("amcp.telegram.bot.load_config", return_value=cfg),
+            patch("amcp.telegram.bot.list_mcp_tools", new=_fake_list_tools),
+        ):
+            summary = await bot.refresh_mcp_servers()
+
+        assert "MCP reloaded: 1/2 servers ready, 2 tools discovered." in summary
+        assert "missing config: missing" in summary
+        assert "failed: b (offline)" in summary
+
+    asyncio.run(_run())
+
+
+def test_refresh_mcp_servers_skips_when_disabled():
+    async def _run():
+        bot = _make_bot_for_typing()
+        cfg = SimpleNamespace(chat=SimpleNamespace(mcp_tools_enabled=False), servers={})
+
+        with patch("amcp.telegram.bot.load_config", return_value=cfg):
+            summary = await bot.refresh_mcp_servers()
+
+        assert summary == "MCP reload skipped: mcp_tools_enabled=false."
+
+    asyncio.run(_run())
+
+
+def test_refresh_mcp_servers_reports_config_path_when_empty():
+    async def _run():
+        bot = _make_bot_for_typing()
+        cfg = SimpleNamespace(chat=SimpleNamespace(mcp_tools_enabled=True, mcp_servers=None), servers={})
+
+        with patch("amcp.telegram.bot.load_config", return_value=cfg):
+            summary = await bot.refresh_mcp_servers()
+
+        assert "MCP reload: no configured servers in" in summary
+        assert "config.toml" in summary
+
+    asyncio.run(_run())
 
 
 def test_typing_start_creates_task():

@@ -571,7 +571,15 @@ class TelegramHandlers:
             return
         if args[0] == "new":
             session = self._session_manager.create_session(chat_id)
-            await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
+            message = f"Created session: {session.session_id}"
+            refresh_mcp = getattr(self._bot, "refresh_mcp_servers", None)
+            if callable(refresh_mcp):
+                try:
+                    mcp_summary = await refresh_mcp()
+                    message += f"\n{mcp_summary}"
+                except Exception as exc:
+                    message += f"\nMCP reload failed: {exc}"
+            await self._bot.send_text(chat_id, message)
             return
         if args[0] == "switch" and len(args) > 1:
             if self._session_manager.switch_session(chat_id, args[1]):
