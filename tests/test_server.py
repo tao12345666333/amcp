@@ -1,5 +1,7 @@
 """Tests for AMCP Server module."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -125,6 +127,40 @@ class TestSessionEndpoints:
         # Verify it's deleted
         get_resp = client.get(f"/api/v1/sessions/{session_id}")
         assert get_resp.status_code == 404
+
+    def test_prompt_stream_new_session_command(self, client):
+        """Test /new through the server prompt stream creates a session."""
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+
+        with client.stream(
+            "POST",
+            f"/api/v1/sessions/{session_id}/prompt/stream",
+            json={"content": "/new", "stream": True},
+        ) as response:
+            assert response.status_code == 200
+            events = [json.loads(line) for line in response.iter_lines() if line]
+
+        created = next(event for event in events if event["type"] == "session_created")
+        assert created["previous_session_id"] == session_id
+        assert created["session_id"] != session_id
+        assert any(event["type"] == "complete" for event in events)
+
+    def test_prompt_new_session_command_non_stream(self, client):
+        """Test /new through the non-stream endpoint returns new session metadata."""
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+
+        response = client.post(
+            f"/api/v1/sessions/{session_id}/prompt",
+            json={"content": "/new", "stream": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "handled"
+        assert data["new_session_id"]
+        assert data["new_session_id"] != session_id
 
 
 class TestToolEndpoints:

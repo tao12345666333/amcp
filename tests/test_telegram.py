@@ -26,10 +26,21 @@ class _FakeBot:
     def __init__(self, config: TelegramConfig) -> None:
         self.config = config
         self.pairing_requests: list[tuple[int, int, str | None]] = []
+        self.sent_texts: list[tuple[int, str]] = []
+        self.prompts: list[tuple[int, int, str]] = []
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
         self.pairing_requests.append((user_id, chat_id, username))
         return "PAIRCODE", True
+
+    async def send_text(self, chat_id: int, text: str) -> None:
+        self.sent_texts.append((chat_id, text))
+
+    async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
+        self.prompts.append((chat_id, user_id, text))
+
+    def cancel_session(self, chat_id: int):
+        return False, False
 
 
 def test_auth_middleware():
@@ -66,6 +77,42 @@ def test_session_manager_creates_sessions():
     session2 = manager.create_session(123)
     assert manager.switch_session(123, session2.session_id)
     assert manager.get_current_session_id(123) == session2.session_id
+
+
+def test_handle_new_uses_shared_session_command():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/new", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_new(update, SimpleNamespace(args=[]))
+
+        assert fake_bot.sent_texts
+        assert fake_bot.sent_texts[-1][1].startswith("Created session: telegram-123-")
+
+    asyncio.run(_run())
+
+
+def test_handle_session_switch_uses_shared_session_command():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/session", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+        session = handlers._session_manager.create_session(123)
+
+        await handlers.handle_session(update, SimpleNamespace(args=["switch", session.session_id]))
+
+        assert fake_bot.sent_texts[-1] == (123, f"Switched to session: {session.session_id}")
+
+    asyncio.run(_run())
 
 
 # --- Metadata injection tests ---

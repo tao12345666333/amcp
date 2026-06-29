@@ -666,11 +666,42 @@ def _attach_sync(
             if user_input.lower() == "/help":
                 console.print("[bold]Commands:[/bold]")
                 console.print("  /exit, /quit  - Exit the client")
+                console.print("  /new          - Create and switch to a new session")
                 console.print("  /sessions     - List all sessions")
+                console.print("  /session switch <id> - Switch to a session")
                 console.print("  /info         - Show session info")
                 console.print("  /tools        - List available tools")
                 console.print("  /agents       - List available agents")
                 console.print("  /cancel       - Cancel current operation in session")
+                console.print()
+                continue
+
+            if user_input.lower() in {"/new", "/session new"}:
+                try:
+                    with httpx.Client(timeout=30.0) as http:
+                        sess_resp = http.post(
+                            f"{base_url}/api/v1/sessions",
+                            json={"cwd": str(work_dir) if work_dir else None},
+                        )
+                        sess_resp.raise_for_status()
+                        session_data = sess_resp.json()
+                        session_id = session_data["id"]
+                        console.print(f"[green]Created session: {session_id}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to create session: {e}[/red]")
+                console.print()
+                continue
+
+            if user_input.lower().startswith("/session switch "):
+                target_session_id = user_input.split(maxsplit=2)[2].strip()
+                try:
+                    with httpx.Client(timeout=10.0) as http:
+                        resp = http.get(f"{base_url}/api/v1/sessions/{target_session_id}")
+                        resp.raise_for_status()
+                        session_id = target_session_id
+                        console.print(f"[green]Switched to session: {session_id}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to switch session: {e}[/red]")
                 console.print()
                 continue
 
@@ -756,6 +787,10 @@ def _attach_sync(
                                     continue
                                 try:
                                     data = json.loads(line)
+                                    if data.get("type") in {"session_created", "session_switched"}:
+                                        session_id = data.get("session_id", session_id)
+                                        full_response = data.get("content", "")
+                                        live.update(Panel(Markdown(full_response), border_style="green"))
                                     if data.get("type") == "chunk":
                                         chunk = data.get("content", "")
                                         full_response += chunk
@@ -1097,6 +1132,19 @@ def main(
                                     active_skills = skill_manager.get_active_skills()
                                     if active_skills:
                                         console.print(f"Active skills: {', '.join(s.name for s in active_skills)}")
+                                elif result.content == "new_session":
+                                    agent = Agent(agent.agent_spec)
+                                    console.print(f"[green]New session started: {agent.session_id}[/green]")
+                                elif result.content == "session:list":
+                                    session_info = agent.get_conversation_summary()
+                                    console.print("[bold]Sessions:[/bold]")
+                                    console.print(f"* {session_info['session_id']} (current)")
+                                elif result.content.startswith("session:switch "):
+                                    target_session_id = result.content.removeprefix("session:switch ").strip()
+                                    agent = Agent(agent.agent_spec, session_id=target_session_id)
+                                    console.print(f"[green]Switched to session: {agent.session_id}[/green]")
+                                elif result.content == "cancel":
+                                    console.print("[yellow]No active request to cancel.[/yellow]")
                                 console.print()
                                 continue
 

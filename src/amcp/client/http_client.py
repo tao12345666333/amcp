@@ -209,7 +209,7 @@ class HTTPClient(BaseClient):
         Args:
             cwd: Working directory for the session.
             agent_name: Agent to use for this session.
-            session_id: Optional specific session ID (ignored, server generates).
+            session_id: Optional requested session ID.
 
         Returns:
             Session data dictionary.
@@ -219,6 +219,8 @@ class HTTPClient(BaseClient):
             json_data["cwd"] = cwd
         if agent_name:
             json_data["agent_name"] = agent_name
+        if session_id:
+            json_data["session_id"] = session_id
 
         return await self._request("POST", "/sessions", json_data=json_data)
 

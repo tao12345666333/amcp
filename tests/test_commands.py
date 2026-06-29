@@ -234,7 +234,11 @@ class TestGlobalCommandManager:
         assert "help" in command_names
         assert "clear" in command_names
         assert "exit" in command_names
+        assert "new" in command_names
+        assert "session" in command_names
+        assert "cancel" in command_names
         assert "skills" in command_names
+        assert "activate" in command_names
 
         # Same instance
         cm2 = get_command_manager()
@@ -291,6 +295,34 @@ class TestBuiltinCommands:
         result = manager.execute_command(cmd, "")
         assert result.type == "handled"
         assert result.content == "info"
+
+    def test_new_command(self, manager: CommandManager):
+        """Test the /new command."""
+        cmd, _ = manager.parse_input("/new")
+        assert cmd is not None
+
+        result = manager.execute_command(cmd, "")
+        assert result.type == "handled"
+        assert result.content == "new_session"
+
+    def test_session_command(self, manager: CommandManager):
+        """Test the /session command."""
+        cmd, args = manager.parse_input("/session switch session-123")
+        assert cmd is not None
+        assert args == "switch session-123"
+
+        result = manager.execute_command(cmd, args)
+        assert result.type == "handled"
+        assert result.content == "session:switch session-123"
+
+    def test_cancel_command(self, manager: CommandManager):
+        """Test the /cancel command."""
+        cmd, _ = manager.parse_input("/cancel")
+        assert cmd is not None
+
+        result = manager.execute_command(cmd, "")
+        assert result.type == "handled"
+        assert result.content == "cancel"
 
     def test_skills_command_list(self, manager: CommandManager):
         """Test the /skills list command."""

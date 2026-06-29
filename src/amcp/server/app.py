@@ -43,8 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Enable skill hot reload for server runtime.
     from ..skills import SkillWatcher, get_skill_manager
 
-    skill_watcher = SkillWatcher(get_skill_manager())
-    await skill_watcher.start()
+    skill_manager = get_skill_manager()
+    skill_manager.discover_skills(config.work_dir)
+    skill_watcher = SkillWatcher(skill_manager)
+    await skill_watcher.start(project_root=config.work_dir)
     print("   Skill hot reload: enabled")
 
     yield
@@ -72,6 +74,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         set_server_config(config)
 
     cfg = get_server_config()
+    set_session_manager(SessionManager(cfg))
 
     # Create FastAPI app
     app = FastAPI(

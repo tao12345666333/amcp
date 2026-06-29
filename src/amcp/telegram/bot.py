@@ -418,6 +418,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("help", self._handlers.handle_help))
         application.add_handler(CommandHandler("status", self._handlers.handle_status))
         application.add_handler(CommandHandler("session", self._handlers.handle_session))
+        application.add_handler(CommandHandler("new", self._handlers.handle_new))
         application.add_handler(CommandHandler("cancel", self._handlers.handle_cancel))
         application.add_handler(CommandHandler("ask", self._handlers.handle_ask))
         application.add_handler(CommandHandler("skills", self._handlers.handle_skills))

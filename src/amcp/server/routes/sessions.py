@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ..interaction import apply_interaction_result, route_server_interaction
 from ..models import (
     CancelRequest,
     ConflictStrategy,
@@ -45,10 +46,11 @@ async def create_session(request: CreateSessionRequest | None = None) -> Session
     session_manager = get_session_manager()
 
     try:
-        req = request or CreateSessionRequest(cwd=None, agent_name=None)
+        req = request or CreateSessionRequest(cwd=None, agent_name=None, session_id=None)
         managed_session = await session_manager.create_session(
             cwd=req.cwd,
             agent_name=req.agent_name,
+            session_id=req.session_id,
         )
         return managed_session.to_session()
     except MaxSessionsReachedError as e:
@@ -112,6 +114,24 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
     try:
         session = await session_manager.get_session(session_id)
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
+        routed, _ = await route_server_interaction(session_manager, session_id, request.content)
+
+        if routed.action != "prompt":
+            response = PromptResponse(
+                session_id=session_id,
+                message_id=message_id,
+                status="handled",
+            )
+            async for event in apply_interaction_result(session_manager, session_id, routed):
+                if event["type"] in {"session_created", "session_switched"}:
+                    response.session_id = event["session_id"]
+                    if event["type"] == "session_created":
+                        response.new_session_id = event["session_id"]
+                    response.response = event.get("content")
+                    response.command = event["type"]
+                elif event["type"] == "chunk":
+                    response.response = event.get("content")
+            return response
 
         # Get event bridge for collaboration events
         from ..event_bridge import get_event_bridge
@@ -204,6 +224,7 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
 
     try:
         session = await session_manager.get_session(session_id)
+        routed, _ = await route_server_interaction(session_manager, session_id, request.content)
 
         # Get event bridge for collaboration events
         from ..event_bridge import get_event_bridge
@@ -219,27 +240,28 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
             )
         )
 
-        # Check for conflict and handle based on strategy
-        is_busy = session.status == SessionStatus.BUSY or session.agent.is_busy()
-        if is_busy and request.conflict_strategy == ConflictStrategy.REJECT:
-            # Notify about rejection
-            await _safe_emit(
-                bridge.emit_prompt_rejected(
-                    session_id=session_id,
-                    reason="Session is busy",
-                    conflict_strategy="reject",
+        if routed.action == "prompt":
+            # Check for conflict and handle based on strategy
+            is_busy = session.status == SessionStatus.BUSY or session.agent.is_busy()
+            if is_busy and request.conflict_strategy == ConflictStrategy.REJECT:
+                # Notify about rejection
+                await _safe_emit(
+                    bridge.emit_prompt_rejected(
+                        session_id=session_id,
+                        reason="Session is busy",
+                        conflict_strategy="reject",
+                    )
                 )
-            )
 
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "Session is busy, prompt rejected",
-                    "code": "SESSION_BUSY",
-                    "session_id": session_id,
-                },
-            )
-        # For QUEUE strategy, continue - the agent will queue internally
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "Session is busy, prompt rejected",
+                        "code": "SESSION_BUSY",
+                        "session_id": session_id,
+                    },
+                )
+            # For QUEUE strategy, continue - the agent will queue internally
 
     except SessionNotFoundError:
         raise HTTPException(
@@ -265,32 +287,36 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
         )
 
         try:
-            async for chunk in session_manager.prompt_session(
-                session_id=session_id,
-                content=request.content,
-                stream=True,
-                priority=request.priority.value,
-            ):
-                if isinstance(chunk, str):
-                    yield (
-                        json.dumps(
-                            {
-                                "type": "chunk",
-                                "content": chunk,
-                            }
+            if routed.action == "prompt":
+                async for chunk in session_manager.prompt_session(
+                    session_id=session_id,
+                    content=routed.content,
+                    stream=True,
+                    priority=request.priority.value,
+                ):
+                    if isinstance(chunk, str):
+                        yield (
+                            json.dumps(
+                                {
+                                    "type": "chunk",
+                                    "content": chunk,
+                                }
+                            )
+                            + "\n"
                         )
-                        + "\n"
-                    )
-                elif hasattr(chunk, "content"):
-                    yield (
-                        json.dumps(
-                            {
-                                "type": "chunk",
-                                "content": chunk.content,
-                            }
+                    elif hasattr(chunk, "content"):
+                        yield (
+                            json.dumps(
+                                {
+                                    "type": "chunk",
+                                    "content": chunk.content,
+                                }
+                            )
+                            + "\n"
                         )
-                        + "\n"
-                    )
+            else:
+                async for event in apply_interaction_result(session_manager, session_id, routed):
+                    yield json.dumps(event) + "\n"
 
             # Send complete event
             yield (

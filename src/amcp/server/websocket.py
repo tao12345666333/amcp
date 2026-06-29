@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from .interaction import apply_interaction_result, route_server_interaction
 from .models import EventType
 from .session_manager import SessionNotFoundError, get_session_manager
 
@@ -268,6 +269,8 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
     session_manager = get_session_manager()
 
     try:
+        routed, _ = await route_server_interaction(session_manager, session_id, content)
+
         # Send start event
         await websocket.send_json(
             {
@@ -280,34 +283,44 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
             }
         )
 
-        # Stream response
-        async for chunk in session_manager.prompt_session(
-            session_id=session_id,
-            content=content,
-            stream=True,
-        ):
-            if isinstance(chunk, str):
+        # Stream response or command side effects
+        if routed.action == "prompt":
+            async for chunk in session_manager.prompt_session(
+                session_id=session_id,
+                content=routed.content,
+                stream=True,
+            ):
+                if isinstance(chunk, str):
+                    await websocket.send_json(
+                        {
+                            "type": "response",
+                            "id": msg_id,
+                            "payload": {
+                                "kind": "chunk",
+                                "content": chunk,
+                                "done": False,
+                            },
+                        }
+                    )
+                elif hasattr(chunk, "content"):
+                    await websocket.send_json(
+                        {
+                            "type": "response",
+                            "id": msg_id,
+                            "payload": {
+                                "kind": "chunk",
+                                "content": chunk.content,
+                                "done": False,
+                            },
+                        }
+                    )
+        else:
+            async for event in apply_interaction_result(session_manager, session_id, routed):
                 await websocket.send_json(
                     {
                         "type": "response",
                         "id": msg_id,
-                        "payload": {
-                            "kind": "chunk",
-                            "content": chunk,
-                            "done": False,
-                        },
-                    }
-                )
-            elif hasattr(chunk, "content"):
-                await websocket.send_json(
-                    {
-                        "type": "response",
-                        "id": msg_id,
-                        "payload": {
-                            "kind": "chunk",
-                            "content": chunk.content,
-                            "done": False,
-                        },
+                        "payload": event,
                     }
                 )
 

@@ -83,12 +83,15 @@ class CreateSessionRequest(BaseModel):
 
     cwd: str | None = Field(None, description="Working directory for the session")
     agent_name: str | None = Field(None, description="Agent to use for this session")
+    session_id: str | None = Field(None, description="Optional requested session ID")
 
 
 class PromptRequest(BaseModel):
     """Request to send a prompt."""
 
     content: str = Field(..., description="The prompt content")
+    channel: str | None = Field(None, description="Origin channel, for example cli or telegram")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Optional channel metadata")
     priority: MessagePriority = Field(default=MessagePriority.NORMAL, description="Message priority")
     stream: bool = Field(default=True, description="Whether to stream the response")
     conflict_strategy: ConflictStrategy = Field(
@@ -144,6 +147,9 @@ class PromptResponse(BaseModel):
     message_id: str
     status: str  # "streaming" | "queued" | "complete" | "error"
     position: int | None = None  # Position in queue if queued
+    response: str | None = None
+    command: str | None = None
+    new_session_id: str | None = None
 
 
 class HealthResponse(BaseModel):

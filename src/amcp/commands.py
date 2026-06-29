@@ -484,6 +484,62 @@ def _make_info_command() -> SlashCommand:
     )
 
 
+def _make_new_command() -> SlashCommand:
+    """Create the /new command."""
+
+    def new_action(context: CommandContext, args: str) -> CommandResult:
+        return CommandResult(type="handled", content="new_session")
+
+    return SlashCommand(
+        name="new",
+        description="Start a new conversation session",
+        kind=CommandKind.BUILT_IN,
+        action=new_action,
+    )
+
+
+def _make_session_command() -> SlashCommand:
+    """Create the /session command."""
+
+    def session_action(context: CommandContext, args: str) -> CommandResult:
+        parts = args.strip().split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else "list"
+        value = parts[1].strip() if len(parts) > 1 else ""
+
+        if subcommand == "list":
+            return CommandResult(type="handled", content="session:list")
+        if subcommand == "new":
+            return CommandResult(type="handled", content="new_session")
+        if subcommand == "switch" and value:
+            return CommandResult(type="handled", content=f"session:switch {value}")
+        return CommandResult(
+            type="message",
+            content="Usage: /session new|list|switch <id>",
+            message_type="info",
+        )
+
+    return SlashCommand(
+        name="session",
+        description="Manage sessions: /session new|list|switch <id>",
+        kind=CommandKind.BUILT_IN,
+        action=session_action,
+    )
+
+
+def _make_cancel_command() -> SlashCommand:
+    """Create the /cancel command."""
+
+    def cancel_action(context: CommandContext, args: str) -> CommandResult:
+        return CommandResult(type="handled", content="cancel")
+
+    return SlashCommand(
+        name="cancel",
+        description="Cancel current operation",
+        kind=CommandKind.BUILT_IN,
+        action=cancel_action,
+    )
+
+
 def _make_skills_command(skill_manager) -> SlashCommand:
     """Create the /skills command."""
 
@@ -572,6 +628,31 @@ def _make_skills_command(skill_manager) -> SlashCommand:
         description="Manage agent skills: /skills [list|activate|deactivate|show]",
         kind=CommandKind.BUILT_IN,
         action=skills_action,
+    )
+
+
+def _make_activate_command(skill_manager) -> SlashCommand:
+    """Create the /activate command as a shorthand for /skills activate."""
+
+    def activate_action(context: CommandContext, args: str) -> CommandResult:
+        from .skills import get_skill_manager
+
+        name = args.strip()
+        if not name:
+            return CommandResult(type="message", content="Usage: /activate <skill>", message_type="info")
+
+        sm = skill_manager or get_skill_manager()
+        if context.work_dir:
+            sm.discover_skills(context.work_dir)
+        if sm.activate_skill(name):
+            return CommandResult(type="message", content=f"Skill '{name}' activated.", message_type="success")
+        return CommandResult(type="message", content=f"Skill '{name}' not found or disabled.", message_type="error")
+
+    return SlashCommand(
+        name="activate",
+        description="Activate a skill: /activate <skill>",
+        kind=CommandKind.BUILT_IN,
+        action=activate_action,
     )
 
 
@@ -691,7 +772,11 @@ def _init_builtin_commands(manager: CommandManager) -> None:
     manager.register_builtin(_make_clear_command())
     manager.register_builtin(_make_exit_command())
     manager.register_builtin(_make_info_command())
+    manager.register_builtin(_make_new_command())
+    manager.register_builtin(_make_session_command())
+    manager.register_builtin(_make_cancel_command())
     manager.register_builtin(_make_skills_command(None))
+    manager.register_builtin(_make_activate_command(None))
     manager.register_builtin(_make_skill_command(None))
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -10,8 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..interaction import InteractionResult, route_interaction
 from ..memory import get_memory_manager
-from ..skills import get_skill_manager
 from .auth import AuthMiddleware
 from .config import normalize_dm_policy, normalize_group_policy
 
@@ -525,6 +524,7 @@ class TelegramHandlers:
             "/start - Initialize bot",
             "/help - Show commands",
             "/status - Agent status",
+            "/new - Start a new session",
             "/session new|list|switch <id> - Manage sessions",
             "/cancel - Cancel current operation",
             "/ask <prompt> - Send a prompt",
@@ -568,30 +568,13 @@ class TelegramHandlers:
         )
 
     async def handle_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._ensure_authorized(update):
-            return
-        chat_id = update.effective_chat.id
-        args = context.args or []
-        if not args or args[0] == "list":
-            sessions = self._session_manager.list_sessions(chat_id)
-            lines = ["Sessions:"]
-            current_id = self._session_manager.get_current_session_id(chat_id)
-            for session in sessions:
-                marker = "*" if session.session_id == current_id else "-"
-                lines.append(f"{marker} {session.session_id}")
-            await self._bot.send_text(chat_id, "\n".join(lines))
-            return
-        if args[0] == "new":
-            session = self._session_manager.create_session(chat_id)
-            await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
-            return
-        if args[0] == "switch" and len(args) > 1:
-            if self._session_manager.switch_session(chat_id, args[1]):
-                await self._bot.send_text(chat_id, f"Switched to session: {args[1]}")
-            else:
-                await self._bot.send_text(chat_id, f"Unknown session: {args[1]}")
-            return
-        await self._bot.send_text(chat_id, "Usage: /session new|list|switch <id>")
+        text = "/session"
+        if context.args:
+            text = f"{text} {' '.join(context.args)}"
+        await self._handle_shared_command(update, text)
+
+    async def handle_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._handle_shared_command(update, "/new")
 
     async def handle_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -619,127 +602,106 @@ class TelegramHandlers:
         await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, prompt)
 
     async def handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._ensure_authorized(update):
-            return
-        skill_manager = get_skill_manager()
-        skill_manager.discover_skills(self._work_dir)
-        skills = skill_manager.get_all_skills()
-        if not skills:
-            await self._bot.send_text(update.effective_chat.id, "No skills found.")
-            return
-        lines = ["Available skills:"]
-        for skill in skills:
-            status = "🔴" if skill.disabled else "🟢"
-            active = " ⭐" if skill_manager.is_skill_active(skill.name) else ""
-            trigger = " 🚫" if not skill.auto_trigger else ""
-            lines.append(f"{status} **{skill.name}**{active}{trigger}: {skill.description}")
-        lines.append("\nLegend: ⭐ = active, 🚫 = explicit-only")
-        await self._bot.send_text(update.effective_chat.id, "\n".join(lines))
+        text = "/skills"
+        if context.args:
+            text = f"{text} {' '.join(context.args)}"
+        await self._handle_shared_command(update, text)
 
     async def handle_activate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._ensure_authorized(update):
-            return
-        name = " ".join(context.args or [])
-        if not name:
-            await self._bot.send_text(update.effective_chat.id, "Usage: /activate <skill>")
-            return
-        skill_manager = get_skill_manager()
-        skill_manager.discover_skills(self._work_dir)
-        if skill_manager.activate_skill(name):
-            await self._bot.send_text(update.effective_chat.id, f"Activated skill: {name}")
-        else:
-            await self._bot.send_text(
-                update.effective_chat.id,
-                f"Unknown or disabled skill: {name}",
-            )
+        text = "/activate"
+        if context.args:
+            text = f"{text} {' '.join(context.args)}"
+        await self._handle_shared_command(update, text)
 
     async def handle_skill(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /skill:<name> [param=value ...] commands for explicit skill invocation."""
-        if not await self._ensure_authorized(update):
-            return
         message = update.message
         if not message or not message.text:
             return
+        await self._handle_shared_command(update, message.text.strip())
 
-        # Parse /skill:<name> [args...]
-        text = message.text.strip()
-        if not text.startswith("/skill:"):
-            await self._bot.send_text(update.effective_chat.id, "Usage: /skill:<name> [param=value ...]")
+    async def _handle_shared_command(self, update: Update, text: str) -> None:
+        """Route a Telegram slash command through the shared interaction layer."""
+        if not await self._ensure_authorized(update):
             return
-
-        # Extract skill name and parameters
-        # Format: /skill:deploy env=production version=1.2
-        without_prefix = text[7:]  # Remove "/skill:"
-        parts = without_prefix.split(maxsplit=1)
-        skill_name = parts[0] if parts else ""
-        params_str = parts[1] if len(parts) > 1 else ""
-
-        if not skill_name:
-            await self._bot.send_text(update.effective_chat.id, "Usage: /skill:<name> [param=value ...]")
-            return
-
-        skill_manager = get_skill_manager()
-        skill_manager.discover_skills(self._work_dir)
-        skill = skill_manager.get_skill(skill_name)
-
-        if not skill:
-            await self._bot.send_text(
-                update.effective_chat.id,
-                f"Skill '{skill_name}' not found. Use /skills to see available skills.",
-            )
-            return
-
-        if skill.disabled:
-            await self._bot.send_text(
-                update.effective_chat.id,
-                f"Skill '{skill_name}' is disabled. Enable it with /activate {skill_name}",
-            )
-            return
-
-        # Parse parameters
-        params: dict[str, str] = {}
-        if params_str:
-            param_pattern = re.compile(r'(\w+)=([^\s"\']+|"[^"]*"|\'[^\']*\')')
-            for match in param_pattern.finditer(params_str):
-                key = match.group(1)
-                value = match.group(2).strip("\"'")
-                params[key] = value
-
-        # Validate required parameters
-        if skill.parameters:
-            missing = []
-            for param in skill.parameters:
-                if param.required and param.name not in params and param.default is None:
-                    missing.append(param.name)
-            if missing:
-                await self._bot.send_text(
-                    update.effective_chat.id,
-                    f"Missing required parameters: {', '.join(missing)}",
-                )
-                return
-
-        # Build prompt from skill
-        prompt_parts: list[str] = []
-        prompt_parts.append(f"# Skill: {skill.name}")
-        prompt_parts.append(f"*{skill.description}*")
-        prompt_parts.append("")
-        prompt_parts.append(skill.body)
-
-        if params:
-            prompt_parts.append("")
-            prompt_parts.append("## Parameters")
-            for key, value in params.items():
-                prompt_parts.append(f"- {key}: {value}")
-
-        # Activate skill and submit prompt
-        skill_manager.activate_skill(skill_name)
-        full_prompt = "\n".join(prompt_parts)
-        full_prompt = _build_enriched_prompt(
-            full_prompt,
-            message,
-            assistant_mode=self._bot.config.assistant_mode,
+        result = route_interaction(
+            text,
+            work_dir=self._work_dir,
+            project_root=self._work_dir,
         )
-        await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, full_prompt)
+        await self._apply_interaction_result(update, result)
+
+    async def _apply_interaction_result(self, update: Update, result: InteractionResult) -> None:
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or not user:
+            return
+        chat_id = chat.id
+
+        if result.action == "prompt":
+            prompt = result.content
+            if update.message:
+                prompt = _build_enriched_prompt(
+                    prompt,
+                    update.message,
+                    assistant_mode=self._bot.config.assistant_mode,
+                )
+            await self._bot.handle_prompt(chat_id, user.id, prompt)
+            return
+
+        if result.action == "message":
+            await self._bot.send_text(chat_id, result.content)
+            return
+
+        if result.action == "new_session":
+            session = self._session_manager.create_session(chat_id)
+            await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
+            return
+
+        if result.action == "session_list":
+            sessions = self._session_manager.list_sessions(chat_id)
+            current_id = self._session_manager.get_current_session_id(chat_id)
+            lines = ["Sessions:"]
+            if not sessions:
+                lines.append("(none)")
+            for session in sessions:
+                marker = "*" if session.session_id == current_id else "-"
+                lines.append(f"{marker} {session.session_id}")
+            await self._bot.send_text(chat_id, "\n".join(lines))
+            return
+
+        if result.action == "session_switch":
+            target_id = result.session_id or ""
+            if self._session_manager.switch_session(chat_id, target_id):
+                await self._bot.send_text(chat_id, f"Switched to session: {target_id}")
+            else:
+                await self._bot.send_text(chat_id, f"Unknown session: {target_id}")
+            return
+
+        if result.action == "clear":
+            session = self._session_manager.get_or_create_session(chat_id)
+            clear = getattr(session.agent, "clear_conversation_history", None)
+            if callable(clear):
+                clear()
+            await self._bot.send_text(chat_id, f"Conversation history cleared for session: {session.session_id}")
+            return
+
+        if result.action == "info":
+            await self.handle_status(update, None)  # type: ignore[arg-type]
+            return
+
+        if result.action == "cancel":
+            cancelled, queued = self._bot.cancel_session(chat_id)
+            await self._bot.send_text(
+                chat_id,
+                f"Cancelled current task: {cancelled}. Cleared queued: {queued}."
+                if cancelled or queued
+                else "Nothing to cancel.",
+            )
+            return
+
+        if result.action == "exit":
+            await self._bot.send_text(chat_id, "Exit is only available in local clients.")
 
     async def handle_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
