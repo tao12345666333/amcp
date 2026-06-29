@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("croniter")
+
 from amcp.skills import SkillManager, SkillMetadata, SkillTrigger
 from amcp.telegram.scheduler import AssistantScheduler
 
