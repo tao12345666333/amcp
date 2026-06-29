@@ -22,6 +22,8 @@ DEFAULT_TOOL_TIERS: dict[str, ToolTier] = {
     "read_file": ToolTier.ALWAYS,
     "grep": ToolTier.ALWAYS,
     "think": ToolTier.ALWAYS,
+    "web_search": ToolTier.ALWAYS,
+    "web_fetch": ToolTier.ALWAYS,
     "write_file": ToolTier.ALWAYS,
     "apply_patch": ToolTier.FREQUENT,
     "bash": ToolTier.ALWAYS,

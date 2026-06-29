@@ -1,4 +1,6 @@
-from amcp.tools import BashTool, ReadFileTool, ThinkTool, TodoTool, get_tool_registry
+from unittest.mock import patch
+
+from amcp.tools import BashTool, ReadFileTool, ThinkTool, TodoTool, WebFetchTool, WebSearchTool, get_tool_registry
 
 
 def test_read_file_tool(tmp_path):
@@ -23,6 +25,51 @@ def test_think_tool():
     result = tool.execute(thought="test reasoning")
     assert result.success
     assert "test reasoning" in result.content
+
+
+def test_web_search_tool_firecrawl_backend():
+    tool = WebSearchTool()
+    response = {
+        "data": {
+            "web": [
+                {
+                    "title": "Firecrawl Docs",
+                    "url": "https://docs.firecrawl.dev",
+                    "description": "Developer documentation",
+                    "markdown": "Firecrawl can search and scrape the web.",
+                }
+            ]
+        }
+    }
+
+    with patch("amcp.tools._call_firecrawl", return_value=response):
+        result = tool.execute(query="firecrawl docs", backend="firecrawl", fetch_content=True)
+
+    assert result.success
+    assert "Firecrawl Docs" in result.content
+    assert "https://docs.firecrawl.dev" in result.content
+
+
+def test_web_fetch_tool_auto_prefers_exa():
+    tool = WebFetchTool()
+    exa_response = {
+        "content": [
+            {
+                "type": "text",
+                "text": "Example Domain\nhttps://example.com\nThis domain is for use in examples.",
+            }
+        ]
+    }
+
+    with (
+        patch("amcp.tools._call_exa_tool", return_value=exa_response),
+        patch("amcp.tools._call_firecrawl") as firecrawl_call,
+    ):
+        result = tool.execute(url="https://example.com", backend="auto")
+
+    assert result.success
+    assert "Example Domain" in result.content
+    firecrawl_call.assert_not_called()
 
 
 class TestTodoTool:
@@ -86,3 +133,5 @@ class TestTodoTool:
         """Test todo tool is in default registry."""
         registry = get_tool_registry()
         assert "todo" in registry.list_tools()
+        assert "web_search" in registry.list_tools()
+        assert "web_fetch" in registry.list_tools()

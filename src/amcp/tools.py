@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
+import httpx
 from rich.console import Console
 
 
@@ -157,6 +160,371 @@ class ToolRegistry:
 
         except Exception as e:
             return ToolResult(success=False, content="", error=f"Tool execution failed: {type(e).__name__}: {e}")
+
+
+def _run_coroutine_in_thread(coro: Any) -> Any:
+    """Run a coroutine from synchronous tool code, even under an active event loop."""
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            error["value"] = exc
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join()
+
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(value) <= max_chars:
+        return value
+    return value[: max_chars - 16].rstrip() + "\n...[truncated]"
+
+
+def _firecrawl_api_base() -> str:
+    return (
+        os.environ.get("AMCP_FIRECRAWL_API_URL") or os.environ.get("FIRECRAWL_API_URL") or "https://api.firecrawl.dev"
+    ).rstrip("/")
+
+
+def _firecrawl_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    token = (
+        os.environ.get("AMCP_FIRECRAWL_API_KEY")
+        or os.environ.get("FIRECRAWL_API_KEY")
+        or os.environ.get("FIRECRAWL_OAUTH_TOKEN")
+    )
+    if token:
+        bearer = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        headers["Authorization"] = bearer
+    return headers
+
+
+def _call_firecrawl(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    url = f"{_firecrawl_api_base()}{path}"
+    response = httpx.post(url, json=payload, headers=_firecrawl_headers(), timeout=60.0)
+    response.raise_for_status()
+    return cast(dict[str, Any], response.json())
+
+
+def _get_exa_server_config():
+    from .config import load_config
+
+    cfg = load_config()
+    return cfg.servers.get("exa")
+
+
+def _call_exa_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    from .mcp_client import call_mcp_tool
+
+    server = _get_exa_server_config()
+    if server is None:
+        raise ToolExecutionError("Exa MCP server is not configured")
+    return cast(dict[str, Any], _run_coroutine_in_thread(call_mcp_tool(server, tool_name, arguments)))
+
+
+def _render_mcp_text_response(prefix: str, response: dict[str, Any]) -> str:
+    parts: list[str] = [prefix]
+    for item in response.get("content", []) or []:
+        if item.get("type") == "text":
+            text = str(item.get("text", "")).strip()
+            if text:
+                parts.append(text)
+    if len(parts) == 1:
+        parts.append(str(response))
+    return "\n\n".join(parts)
+
+
+class WebSearchTool(BaseTool):
+    """Search the live web using Exa or Firecrawl."""
+
+    @property
+    def name(self) -> str:
+        return "web_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search the public internet for live documentation, libraries, APIs, current events, "
+            "and web pages. Uses Exa when available and otherwise falls back to Firecrawl search. "
+            "Use this when you need current information from the web."
+        )
+
+    def execute(  # type: ignore[override]
+        self,
+        query: str,
+        limit: int = 5,
+        backend: str = "auto",
+        fetch_content: bool = False,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> ToolResult:
+        self.validate_parameters(
+            query=query,
+            limit=limit,
+            backend=backend,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+
+        domain_filtered = bool(include_domains or exclude_domains)
+        errors: list[str] = []
+
+        if backend in {"auto", "exa"} and not domain_filtered:
+            try:
+                exa_response = _call_exa_tool(
+                    "web_search_exa",
+                    {
+                        "query": query,
+                        "numResults": limit,
+                        "type": "fast",
+                    },
+                )
+                return ToolResult(
+                    success=True,
+                    content=_render_mcp_text_response(f"Exa web search results for: {query}", exa_response),
+                    metadata={"backend": "exa", "response": exa_response},
+                )
+            except Exception as exc:
+                if backend == "exa":
+                    return ToolResult(success=False, content="", error=str(exc))
+                errors.append(f"Exa failed: {exc}")
+
+        try:
+            payload: dict[str, Any] = {
+                "query": query,
+                "limit": limit,
+            }
+            if include_domains:
+                payload["includeDomains"] = include_domains
+            if exclude_domains:
+                payload["excludeDomains"] = exclude_domains
+            if fetch_content:
+                payload["scrapeOptions"] = {
+                    "formats": ["markdown"],
+                    "onlyMainContent": True,
+                }
+            response = _call_firecrawl("/v2/search", payload)
+            items = response.get("data", {}).get("web", []) or []
+
+            lines = [f"Firecrawl web search results for: {query}"]
+            for idx, item in enumerate(items, start=1):
+                title = str(item.get("title") or item.get("metadata", {}).get("title") or "Untitled")
+                url = str(item.get("url") or item.get("metadata", {}).get("url") or "")
+                description = str(item.get("description") or item.get("snippet") or "").strip()
+                markdown = str(item.get("markdown") or "").strip()
+
+                lines.append(f"{idx}. {title}")
+                if url:
+                    lines.append(f"   URL: {url}")
+                if description:
+                    lines.append(f"   Summary: {description}")
+                if markdown:
+                    excerpt = _truncate_text(markdown, 2200)
+                    lines.append("   Content:")
+                    lines.append("   " + excerpt.replace("\n", "\n   "))
+
+            if not items:
+                lines.append("No results returned.")
+            if errors:
+                lines.append("")
+                lines.extend(f"Fallback note: {error}" for error in errors)
+
+            return ToolResult(
+                success=True,
+                content="\n".join(lines),
+                metadata={"backend": "firecrawl", "response": response},
+            )
+        except Exception as exc:
+            errors.append(f"Firecrawl failed: {exc}")
+            return ToolResult(success=False, content="", error="; ".join(errors))
+
+    def validate_parameters(  # type: ignore[override]
+        self,
+        query: str,
+        limit: int = 5,
+        backend: str = "auto",
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if not query.strip():
+            raise ToolValidationError("query must not be empty")
+        if backend not in {"auto", "exa", "firecrawl"}:
+            raise ToolValidationError("backend must be one of: auto, exa, firecrawl")
+        if not 1 <= int(limit) <= 10:
+            raise ToolValidationError("limit must be between 1 and 10")
+        if include_domains and exclude_domains:
+            raise ToolValidationError("include_domains and exclude_domains cannot be used together")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query to run against the public web.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Maximum number of results to return.",
+                    "default": 5,
+                },
+                "backend": {
+                    "type": "string",
+                    "enum": ["auto", "exa", "firecrawl"],
+                    "description": "Preferred backend. 'auto' tries Exa first, then Firecrawl.",
+                    "default": "auto",
+                },
+                "fetch_content": {
+                    "type": "boolean",
+                    "description": "Whether to include fetched page content for the results.",
+                    "default": False,
+                },
+                "include_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional domain allowlist, for example ['docs.python.org'].",
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional domain blocklist, for example ['wikipedia.org'].",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        }
+
+
+class WebFetchTool(BaseTool):
+    """Fetch live webpage content using Exa or Firecrawl."""
+
+    @property
+    def name(self) -> str:
+        return "web_fetch"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Fetch and read a public web page as cleaned text or markdown. Uses Exa when available "
+            "and otherwise falls back to Firecrawl scrape. Use this after a search result or when "
+            "the user gives you a URL to read."
+        )
+
+    def execute(  # type: ignore[override]
+        self,
+        url: str,
+        backend: str = "auto",
+        max_chars: int = 12000,
+        only_main_content: bool = True,
+    ) -> ToolResult:
+        self.validate_parameters(url=url, backend=backend, max_chars=max_chars)
+        errors: list[str] = []
+
+        if backend in {"auto", "exa"}:
+            exa_error: Exception | None = None
+            for exa_args in ({"urls": [url]}, {"url": url}):
+                try:
+                    exa_response = _call_exa_tool("web_fetch_exa", exa_args)
+                    text = _render_mcp_text_response(f"Exa fetched page: {url}", exa_response)
+                    return ToolResult(
+                        success=True,
+                        content=_truncate_text(text, max_chars),
+                        metadata={"backend": "exa", "response": exa_response},
+                    )
+                except Exception as exc:
+                    exa_error = exc
+            if backend == "exa":
+                return ToolResult(success=False, content="", error=str(exa_error))
+            errors.append(f"Exa failed: {exa_error}")
+
+        try:
+            response = _call_firecrawl(
+                "/v2/scrape",
+                {
+                    "url": url,
+                    "formats": ["markdown"],
+                    "onlyMainContent": only_main_content,
+                },
+            )
+            data = response.get("data", {}) or {}
+            title = str(data.get("metadata", {}).get("title") or "Untitled")
+            markdown = str(data.get("markdown") or "").strip()
+
+            lines = [
+                f"Firecrawl fetched page: {url}",
+                f"Title: {title}",
+                "",
+                _truncate_text(markdown, max_chars),
+            ]
+            if errors:
+                lines.append("")
+                lines.extend(f"Fallback note: {error}" for error in errors)
+
+            return ToolResult(
+                success=True,
+                content="\n".join(lines).strip(),
+                metadata={"backend": "firecrawl", "response": response},
+            )
+        except Exception as exc:
+            errors.append(f"Firecrawl failed: {exc}")
+            return ToolResult(success=False, content="", error="; ".join(errors))
+
+    def validate_parameters(  # type: ignore[override]
+        self,
+        url: str,
+        backend: str = "auto",
+        max_chars: int = 12000,
+        **kwargs: Any,
+    ) -> None:
+        if not url.startswith(("http://", "https://")):
+            raise ToolValidationError("url must start with http:// or https://")
+        if backend not in {"auto", "exa", "firecrawl"}:
+            raise ToolValidationError("backend must be one of: auto, exa, firecrawl")
+        if not 1000 <= int(max_chars) <= 50000:
+            raise ToolValidationError("max_chars must be between 1000 and 50000")
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Public web URL to fetch and read.",
+                },
+                "backend": {
+                    "type": "string",
+                    "enum": ["auto", "exa", "firecrawl"],
+                    "description": "Preferred backend. 'auto' tries Exa first, then Firecrawl.",
+                    "default": "auto",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 50000,
+                    "description": "Maximum number of characters to return from the fetched page.",
+                    "default": 12000,
+                },
+                "only_main_content": {
+                    "type": "boolean",
+                    "description": "Whether to strip navigation and other page chrome when supported.",
+                    "default": True,
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        }
 
 
 # Built-in tools
@@ -908,7 +1276,7 @@ Examples:
                 # We're in an async context, create a task and wait
                 # Use nest_asyncio if available, otherwise use a different approach
                 try:
-                    import nest_asyncio
+                    import nest_asyncio  # type: ignore[import-not-found]
 
                     nest_asyncio.apply()
                     result = asyncio.run(run_task())
@@ -1312,6 +1680,8 @@ def create_default_tool_registry(
     registry.register(GrepTool())
     registry.register(ThinkTool())
     registry.register(BashTool())
+    registry.register(WebSearchTool())
+    registry.register(WebFetchTool())
     registry.register(TodoTool())
     registry.register(MemoryTool())
 

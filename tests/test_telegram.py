@@ -140,6 +140,19 @@ def test_build_enriched_prompt_includes_separator():
     assert data["chat_type"] == "private"
 
 
+def test_build_enriched_prompt_assistant_mode_adds_web_guidance():
+    msg = _make_message(text="latest FastAPI changes")
+    result = _build_enriched_prompt("latest FastAPI changes", msg, assistant_mode=True)
+    content, meta_json = result.split("\n\u2014\u2014\u2014\u2014\u2014\u2014\u2014\n", 1)
+    data = json.loads(meta_json)
+
+    assert "[Telegram assistant mode]" in content
+    assert "web_search" in content
+    assert "web_fetch" in content
+    assert data["assistant_mode"] is True
+    assert data["network_tools"] == ["web_search", "web_fetch"]
+
+
 def test_build_enriched_prompt_with_media_metadata():
     msg = _make_message(text="[Photo]")
     media_meta = {"file_id": "abc123", "width": 800, "height": 600}

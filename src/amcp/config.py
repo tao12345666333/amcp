@@ -201,6 +201,8 @@ _DEFAULT = {
             "read_file": "always",
             "grep": "always",
             "think": "always",
+            "web_search": "always",
+            "web_fetch": "always",
             "apply_patch": "frequent",
             "write_file": "frequent",
             "bash": "always",

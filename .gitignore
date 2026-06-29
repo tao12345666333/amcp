@@ -148,3 +148,5 @@ Thumbs.db
 *.seed
 *.pid.lock
 .amcp/memory/
+e2b/
+e2b.toml

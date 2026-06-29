@@ -246,6 +246,7 @@ def _build_enriched_prompt(
     *,
     was_mentioned: bool | None = None,
     delegated_by: str | None = None,
+    assistant_mode: bool = False,
 ) -> str:
     """Build an enriched prompt with channel metadata appended as JSON.
 
@@ -270,7 +271,18 @@ def _build_enriched_prompt(
         "message_thread_id": getattr(message, "message_thread_id", None),
         "was_mentioned": was_mentioned,
         "delegated_by": delegated_by,
+        "assistant_mode": assistant_mode,
     }
+    if assistant_mode:
+        meta["network_tools"] = ["web_search", "web_fetch"]
+        content = (
+            "[Telegram assistant mode]\n"
+            "You are operating as a cloud assistant. Live web access is available via `web_search` "
+            "and `web_fetch`. For current events, unfamiliar tools or APIs, post-training changes, "
+            "or any request needing fresh knowledge, prefer live web lookup over stale memory. "
+            "If the user provides a URL, fetch it.\n\n"
+            f"{content}"
+        )
     if media_metadata:
         meta["media"] = media_metadata
     reply_meta = _extract_reply_metadata(message)
@@ -603,7 +615,7 @@ class TelegramHandlers:
             return
         message = update.message
         if message:
-            prompt = _build_enriched_prompt(prompt, message)
+            prompt = _build_enriched_prompt(prompt, message, assistant_mode=self._bot.config.assistant_mode)
         await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, prompt)
 
     async def handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -722,6 +734,11 @@ class TelegramHandlers:
         # Activate skill and submit prompt
         skill_manager.activate_skill(skill_name)
         full_prompt = "\n".join(prompt_parts)
+        full_prompt = _build_enriched_prompt(
+            full_prompt,
+            message,
+            assistant_mode=self._bot.config.assistant_mode,
+        )
         await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, full_prompt)
 
     async def handle_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -878,7 +895,13 @@ class TelegramHandlers:
             return
         if msg_type == "text":
             raw_text = message.text or ""
-            enriched = _build_enriched_prompt(raw_text, message, msg_type, was_mentioned=decision.was_mentioned)
+            enriched = _build_enriched_prompt(
+                raw_text,
+                message,
+                msg_type,
+                was_mentioned=decision.was_mentioned,
+                assistant_mode=self._bot.config.assistant_mode,
+            )
             await self._bot.handle_prompt(
                 chat.id,
                 user.id,
@@ -893,6 +916,7 @@ class TelegramHandlers:
             msg_type,
             media_metadata,
             was_mentioned=decision.was_mentioned,
+            assistant_mode=self._bot.config.assistant_mode,
         )
         await self._bot.handle_media(
             chat.id,

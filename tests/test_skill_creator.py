@@ -61,6 +61,14 @@ class TestBuiltinSkillsDiscovery:
         assert skill_creator_dir.is_dir()
         assert (skill_creator_dir / "SKILL.md").is_file()
 
+    def test_networked_research_bundled(self):
+        """networked-research is bundled as a built-in skill."""
+        sm = SkillManager()
+        builtin_dir = sm.get_builtin_skills_dir()
+        skill_dir = builtin_dir / "networked-research"
+        assert skill_dir.is_dir()
+        assert (skill_dir / "SKILL.md").is_file()
+
     def test_discover_finds_builtin_skills(self, tmp_path: Path):
         """discover_skills finds built-in skills even with empty user/project dirs."""
         sm = SkillManager()

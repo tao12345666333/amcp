@@ -36,6 +36,8 @@ TOOL_KEYWORDS: dict[str, set[str]] = {
     "read_file": {"read", "open", "content", "file", "source"},
     "grep": {"search", "grep", "find", "pattern", "regex"},
     "think": {"plan", "reason", "analyze", "think"},
+    "web_search": {"web", "internet", "search", "docs", "documentation", "online", "current"},
+    "web_fetch": {"web", "internet", "fetch", "url", "page", "website", "docs", "content"},
     "bash": {"run", "command", "shell", "execute", "build", "test"},
     "write_file": {"write", "create", "save", "generate", "overwrite"},
     "apply_patch": {"edit", "patch", "modify", "change", "update", "fix"},
@@ -48,8 +50,8 @@ TOOL_KEYWORDS: dict[str, set[str]] = {
 TASK_TOOL_AFFINITY: dict[str, set[str]] = {
     "implementation": {"read_file", "apply_patch", "write_file", "grep"},
     "debugging": {"read_file", "grep", "bash", "apply_patch"},
-    "exploration": {"read_file", "grep"},
-    "review": {"read_file", "grep", "think"},
+    "exploration": {"read_file", "grep", "web_search", "web_fetch"},
+    "review": {"read_file", "grep", "think", "web_search", "web_fetch"},
     "automation": {"bash", "task", "todo", "memory"},
 }
 
