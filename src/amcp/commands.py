@@ -753,6 +753,66 @@ def _make_skill_command(skill_manager) -> SlashCommand:
     )
 
 
+def _make_profile_command(command_name: str, label: str, file_name: str) -> SlashCommand:
+    """Create a built-in command for soul or identity management."""
+
+    def profile_action(ctx: CommandContext, args: str) -> CommandResult:
+        from .memory import get_memory_manager
+
+        raw_args = args.strip()
+        scope = "user"
+        if raw_args == "project" or raw_args.startswith("project "):
+            scope = "project"
+            raw_args = raw_args[len("project") :].strip()
+
+        action, _, content = raw_args.partition(" ")
+        action = action or "show"
+        content = content.strip()
+        manager = get_memory_manager(ctx.project_root or ctx.work_dir)
+
+        if action in {"show", "read"}:
+            if command_name == "soul":
+                value = manager.read_soul(scope, include_default=True)
+            else:
+                value = manager.read_identity(scope)
+            if not value:
+                return CommandResult(
+                    type="message",
+                    content=f"No {label.lower()} configured for {scope} scope.",
+                )
+            return CommandResult(type="message", content=value)
+
+        if action in {"set", "write"}:
+            if not content:
+                return CommandResult(
+                    type="message",
+                    content=f"Usage: /{command_name} [project] set <{label.lower()} text>",
+                    message_type="error",
+                )
+            if command_name == "soul":
+                manager.write_soul(content, scope)
+            else:
+                manager.write_identity(content, scope)
+            return CommandResult(
+                type="message",
+                content=f"{label} saved to {scope} scope ({file_name}).",
+                message_type="success",
+            )
+
+        return CommandResult(
+            type="message",
+            content=f"Usage: /{command_name} [show|set <text>] or /{command_name} project set <text>",
+            message_type="error",
+        )
+
+    return SlashCommand(
+        name=command_name,
+        description=f"Show or set durable {label.lower()} ({file_name})",
+        kind=CommandKind.BUILT_IN,
+        action=profile_action,
+    )
+
+
 # Global command manager instance
 _command_manager: CommandManager | None = None
 
@@ -778,6 +838,8 @@ def _init_builtin_commands(manager: CommandManager) -> None:
     manager.register_builtin(_make_skills_command(None))
     manager.register_builtin(_make_activate_command(None))
     manager.register_builtin(_make_skill_command(None))
+    manager.register_builtin(_make_profile_command("soul", "Soul", "SOUL.md"))
+    manager.register_builtin(_make_profile_command("identity", "Identity", "IDENTITY.md"))
 
 
 def reset_command_manager() -> None:

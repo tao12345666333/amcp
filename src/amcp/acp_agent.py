@@ -59,6 +59,8 @@ from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .config import load_config
 from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
+from .memory import get_memory_manager
+from .memory_review import MEMORY_GUIDANCE
 from .tools import ToolResult, get_tool_registry
 
 # Session modes - single full permission mode
@@ -593,7 +595,18 @@ class AMCPAgent(Agent):
         except KeyError:
             custom_prompt = self.agent_spec.system_prompt
 
-        return f"{base_prompt}\n\n{custom_prompt}"
+        memory_manager = get_memory_manager(Path(session.cwd))
+        persona_context = memory_manager.get_persona_context()
+        memory_context = memory_manager.get_memory_context()
+
+        parts = [base_prompt]
+        if persona_context:
+            parts.append(persona_context)
+        parts.append(custom_prompt)
+        parts.append(MEMORY_GUIDANCE)
+        if memory_context:
+            parts.append(memory_context)
+        return "\n\n".join(parts)
 
     async def _build_tools(self, session: ACPSession) -> list[dict[str, Any]]:
         """Build list of available tools (full access - no restrictions)."""

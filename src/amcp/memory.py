@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 # Default config directory
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
 
+DEFAULT_SOUL = """You are AMCP, a long-running autonomous coding agent.
+
+Act with continuity across sessions. Preserve important user preferences, project facts,
+and decisions in memory when they are likely to matter later. Use your identity and soul
+as stable guidance, but follow the user's explicit instructions first."""
+
 
 @dataclass
 class MemoryEntry:
@@ -78,6 +84,8 @@ class MemoryStore:
         self.memory_dir = memory_dir
         self.memory_file = memory_dir / "MEMORY.md"
         self.history_file = memory_dir / "HISTORY.md"
+        self.soul_file = memory_dir.parent / "SOUL.md"
+        self.identity_file = memory_dir.parent / "IDENTITY.md"
         self._init_sqlite()
 
     def _init_sqlite(self) -> None:
@@ -130,6 +138,69 @@ class MemoryStore:
             logger.info(f"Updated long-term memory ({len(content)} chars)")
         except Exception as e:
             logger.error(f"Could not write long-term memory: {e}")
+
+    # --- Soul and Identity ---
+
+    def read_soul(self, include_default: bool = False) -> str:
+        """Read the persistent soul/persona text.
+
+        Args:
+            include_default: Return the built-in default when no SOUL.md exists.
+
+        Returns:
+            SOUL.md content, default soul, or an empty string.
+        """
+        if self.soul_file.exists():
+            try:
+                return self.soul_file.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Could not read soul: {e}")
+        return DEFAULT_SOUL if include_default else ""
+
+    def write_soul(self, content: str) -> None:
+        """Write the persistent soul/persona text."""
+        self._ensure_dir()
+        try:
+            self.soul_file.parent.mkdir(parents=True, exist_ok=True)
+            self.soul_file.write_text(content, encoding="utf-8")
+            logger.info(f"Updated soul ({len(content)} chars)")
+        except Exception as e:
+            logger.error(f"Could not write soul: {e}")
+
+    def read_identity(self) -> str:
+        """Read the persistent identity profile."""
+        if self.identity_file.exists():
+            try:
+                return self.identity_file.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Could not read identity: {e}")
+        return ""
+
+    def write_identity(self, content: str) -> None:
+        """Write the persistent identity profile."""
+        self._ensure_dir()
+        try:
+            self.identity_file.parent.mkdir(parents=True, exist_ok=True)
+            self.identity_file.write_text(content, encoding="utf-8")
+            logger.info(f"Updated identity ({len(content)} chars)")
+        except Exception as e:
+            logger.error(f"Could not write identity: {e}")
+
+    def get_persona_context(self, label: str, include_default_soul: bool = False) -> str:
+        """Generate persona context for system prompt injection."""
+        parts: list[str] = []
+        soul = self.read_soul(include_default=include_default_soul).strip()
+        identity = self.read_identity().strip()
+
+        if soul:
+            parts.append(f"## {label} Soul\n{soul}")
+        if identity:
+            parts.append(f"## {label} Identity\n{identity}")
+
+        if not parts:
+            return ""
+
+        return "<persona>\n" + "\n\n".join(parts) + "\n</persona>"
 
     # --- History Log (HISTORY.md) ---
 
@@ -288,24 +359,61 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         """Generate memory context for injection into agent prompts.
 
-        Returns the long-term memory formatted for the system prompt.
-        History is NOT included (too large); agent should use search tools.
+        Returns long-term memory, durable facts, and recent episodic memory
+        formatted for the system prompt.
 
         Returns:
             Formatted memory context string, or empty string
         """
-        long_term = self.read_long_term()
-        if not long_term:
+        long_term = self.read_long_term().strip()
+        facts: list[dict] = []
+        recent = ""
+        db_file = self.memory_dir / "memory.db"
+        if db_file.exists():
+            facts = self.list_facts(limit=20)
+            recent = self._get_recent_events_context(limit=8)
+        elif self.history_file.exists():
+            recent = self.read_history(max_lines=80).strip()
+
+        if not long_term and not facts and not recent:
             return ""
 
-        return (
-            "<memory>\n"
-            "## Long-term Memory\n"
-            "The following is your persistent memory from previous sessions. "
-            "Use this context to provide continuity.\n\n"
-            f"{long_term}\n"
-            "</memory>"
-        )
+        parts = [
+            "The following is persistent memory from previous sessions. "
+            "Use it for continuity and update it when the user asks you to remember something."
+        ]
+        if long_term:
+            parts.append(f"## Long-term Memory\n{long_term}")
+        if facts:
+            fact_lines = [f"- [{f['category']}] {f['key']}: {f['value']}" for f in facts[:20]]
+            parts.append("## Durable Facts\n" + "\n".join(fact_lines))
+        if recent:
+            parts.append("## Recent Episodic Memory\n" + recent)
+
+        return "<memory>\n" + "\n\n".join(parts) + "\n</memory>"
+
+    def _get_recent_events_context(self, limit: int = 8) -> str:
+        """Return recent episodic memory as compact prompt text."""
+        try:
+            events = self._sqlite.get_recent_events(limit=limit)
+        except Exception as e:
+            logger.debug(f"Could not read recent SQLite events: {e}")
+            events = []
+
+        lines: list[str] = []
+        for event in reversed(events):
+            content = str(event.get("content", "")).strip()
+            if not content:
+                continue
+            timestamp = event.get("timestamp", "")
+            session_id = event.get("session_id", "unknown")
+            lines.append(f"- [{timestamp} session:{session_id}] {content}")
+
+        if lines:
+            return "\n".join(lines)
+
+        history = self.read_history(max_lines=80).strip()
+        return history
 
     # --- Facts (delegated to SQLite) ---
 
@@ -385,8 +493,12 @@ class MemoryStore:
         stats: dict[str, int | bool] = {
             "has_long_term": self.memory_file.exists(),
             "has_history": self.history_file.exists(),
+            "has_soul": self.soul_file.exists(),
+            "has_identity": self.identity_file.exists(),
             "long_term_size": 0,
             "history_size": 0,
+            "soul_size": 0,
+            "identity_size": 0,
             "history_entries": 0,
         }
 
@@ -401,6 +513,11 @@ class MemoryStore:
                 stats["history_entries"] = content.count("### [")
             except Exception:
                 pass
+
+        if self.soul_file.exists():
+            stats["soul_size"] = self.soul_file.stat().st_size
+        if self.identity_file.exists():
+            stats["identity_size"] = self.identity_file.stat().st_size
 
         # SQLite stats
         try:
@@ -460,6 +577,40 @@ class MemoryManager:
             parts.append(project_ctx)
 
         return "\n\n".join(parts)
+
+    def get_persona_context(self) -> str:
+        """Get combined soul and identity context from both stores."""
+        parts = []
+
+        user_ctx = self.user_store.get_persona_context("User-level", include_default_soul=True)
+        if user_ctx:
+            parts.append(user_ctx)
+
+        project_ctx = self.project_store.get_persona_context("Project-level")
+        if project_ctx:
+            parts.append(project_ctx)
+
+        return "\n\n".join(parts)
+
+    def read_soul(self, scope: str = "user", include_default: bool = False) -> str:
+        """Read soul from the specified scope."""
+        store = self._store_for_scope(scope)
+        return store.read_soul(include_default=include_default)
+
+    def write_soul(self, content: str, scope: str = "user") -> None:
+        """Write soul to the specified scope."""
+        store = self._store_for_scope(scope)
+        store.write_soul(content)
+
+    def read_identity(self, scope: str = "user") -> str:
+        """Read identity from the specified scope."""
+        store = self._store_for_scope(scope)
+        return store.read_identity()
+
+    def write_identity(self, content: str, scope: str = "user") -> None:
+        """Write identity to the specified scope."""
+        store = self._store_for_scope(scope)
+        store.write_identity(content)
 
     def read_long_term(self, scope: str = "user") -> str:
         """Read long-term memory from the specified scope.
@@ -622,6 +773,7 @@ class MemoryManager:
 # --- Global Memory Manager ---
 
 _memory_manager: MemoryManager | None = None
+_memory_manager_project_root: Path | None = None
 
 
 def get_memory_manager(project_root: Path | None = None) -> MemoryManager:
@@ -633,13 +785,16 @@ def get_memory_manager(project_root: Path | None = None) -> MemoryManager:
     Returns:
         Global MemoryManager instance
     """
-    global _memory_manager
-    if _memory_manager is None:
-        _memory_manager = MemoryManager(project_root)
+    global _memory_manager, _memory_manager_project_root
+    resolved_root = project_root.resolve() if project_root else None
+    if _memory_manager is None or (resolved_root is not None and resolved_root != _memory_manager_project_root):
+        _memory_manager = MemoryManager(resolved_root)
+        _memory_manager_project_root = resolved_root
     return _memory_manager
 
 
 def reset_memory_manager() -> None:
     """Reset the global memory manager (for testing)."""
-    global _memory_manager
+    global _memory_manager, _memory_manager_project_root
     _memory_manager = None
+    _memory_manager_project_root = None

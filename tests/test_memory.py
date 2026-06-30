@@ -153,6 +153,29 @@ class TestMemoryStore:
         assert nested.exists()
         assert store.read_long_term() == "test"
 
+    def test_soul_and_identity_persist(self, store: MemoryStore):
+        """Soul and identity can be written and read back."""
+        store.write_soul("You are a calm agent.")
+        store.write_identity("Name: Memory Tester")
+
+        assert "calm agent" in store.read_soul()
+        assert "Memory Tester" in store.read_identity()
+        assert store.soul_file.exists()
+        assert store.identity_file.exists()
+
+    def test_persona_context_uses_default_soul(self, store: MemoryStore):
+        """Persona context can include the default soul when requested."""
+        ctx = store.get_persona_context("User-level", include_default_soul=True)
+        assert "<persona>" in ctx
+        assert "long-running autonomous coding agent" in ctx
+
+    def test_memory_context_includes_recent_history(self, store: MemoryStore):
+        """Recent episodic history is included in prompt memory."""
+        store.append_history("Remember codename alpine-fox", session_id="s1")
+        ctx = store.get_memory_context()
+        assert "Recent Episodic Memory" in ctx
+        assert "alpine-fox" in ctx
+
 
 # --- Tests: MemoryManager ---
 
@@ -174,6 +197,15 @@ class TestMemoryManager:
         ctx = manager.get_memory_context()
         assert "Global prefs" in ctx
         assert "Project config" in ctx
+
+    def test_persona_context_merges_soul_and_identity(self, manager: MemoryManager):
+        """Persona context merges durable soul and identity scopes."""
+        manager.write_soul("Project soul marker", scope="project")
+        manager.write_identity("Agent callsign: Atlas", scope="user")
+
+        ctx = manager.get_persona_context()
+        assert "Project soul marker" in ctx
+        assert "Agent callsign: Atlas" in ctx
 
     def test_cross_scope_search(self, manager: MemoryManager):
         """Search finds results across both scopes."""
@@ -274,3 +306,17 @@ class TestMemoryTool:
 
         assert "User data" in user_result.content
         assert "Project data" in project_result.content
+
+    def test_soul_and_identity_actions(self):
+        """Memory tool manages durable soul and identity."""
+        soul = self.tool.execute(action="write_soul", content="Be precise and persistent.")
+        identity = self.tool.execute(action="identify", content="Name: AMCP Atlas")
+
+        assert soul.success
+        assert identity.success
+
+        soul_read = self.tool.execute(action="read_soul")
+        identity_read = self.tool.execute(action="read_identity")
+
+        assert "precise and persistent" in soul_read.content
+        assert "AMCP Atlas" in identity_read.content

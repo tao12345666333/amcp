@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -26,6 +27,7 @@ from .hooks import (
 )
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .memory import get_memory_manager
+from .memory_review import MEMORY_GUIDANCE, run_memory_review
 from .message_queue import MessagePriority, get_message_queue_manager
 from .multi_agent import AgentConfig
 from .progressive.context_budget import ContextBudget, ContextBudgetManager, estimate_text_tokens
@@ -37,6 +39,8 @@ from .project_rules import ProjectRulesLoader
 from .skills import get_skill_manager
 from .tools import ToolRegistry
 from .ui import LiveUI
+
+logger = logging.getLogger(__name__)
 
 
 class AgentExecutionError(Exception):
@@ -325,20 +329,26 @@ class Agent:
             skills_summary = skill_manager.build_skills_summary()
             skills_content = skill_manager.get_active_skills_content()
 
-        # Get memory context
+        # Get persona and memory context
         memory_manager = get_memory_manager(resolved_work_dir)
+        persona_context = memory_manager.get_persona_context()
         memory_context = memory_manager.get_memory_context()
 
         # Respect per-component budgets for noisy sections
         if project_rules:
             project_rules = self._trim_to_token_budget(project_rules, budget.rules)
+        if persona_context:
+            persona_context = self._trim_to_token_budget(persona_context, max(500, budget.memory))
         if memory_context:
             memory_context = self._trim_to_token_budget(memory_context, budget.memory)
 
         # Combine all parts
         combined_prompt = base_prompt
+        if persona_context:
+            combined_prompt = persona_context + "\n\n" + combined_prompt
         if project_rules:
             combined_prompt += "\n\n" + project_rules
+        combined_prompt += "\n\n" + MEMORY_GUIDANCE
         if skills_summary:
             combined_prompt += "\n\n" + skills_summary
         if memory_context:
@@ -590,6 +600,17 @@ class Agent:
                 compactor = SmartCompactor(client, model)
 
                 if compactor.should_compact(history_to_add):
+                    # Pre-compaction memory flush: save durable memories before
+                    # context is summarized (inspired by openclaw's memory flush).
+                    status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
+                    await self._run_memory_review(
+                        conversation_snapshot=history_to_add,
+                        system_prompt=system_prompt,
+                        tools=None,  # will be built below
+                        work_dir=work_dir,
+                        status=status,
+                    )
+
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
                     history_to_add, _ = compactor.compact(history_to_add)
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
@@ -640,6 +661,61 @@ class Agent:
 
             self.console.print(f"[red]Agent execution failed:[/red] {e}")
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
+
+    async def _run_memory_review(
+        self,
+        conversation_snapshot: list[dict[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]] | None,
+        work_dir: Path | None,
+        status: Any = None,
+    ) -> None:
+        """Run a pre-compaction memory flush to save durable memories.
+
+        Inspired by openclaw's pre-compaction memory flush: before the
+        conversation context is summarized/compacted, give the agent one
+        chance to save important user preferences, facts, and identity
+        details to persistent memory.  Failures are silently ignored.
+        """
+        try:
+            cfg = load_config()
+            base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
+            api_key = _resolve_api_key(None, cfg.chat)
+            client = _make_client(base_url, api_key)
+            model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+
+            # Build memory-only tool list from the global registry
+            from .tools import get_tool_registry
+
+            registry = get_tool_registry()
+            memory_tool = registry.get_tool("memory")
+            if not memory_tool:
+                return
+            memory_tools = [memory_tool.get_spec()]
+
+            self._emit_event("memory.review_start", {})
+
+            result = await run_memory_review(
+                client=client,
+                model=model,
+                system_prompt=system_prompt,
+                conversation_snapshot=conversation_snapshot,
+                tools=memory_tools,
+                tool_registry=registry,
+            )
+
+            self._emit_event(
+                "memory.review_complete",
+                {"saved": result != "Nothing to save." if result else False},
+            )
+
+            if result and result.strip() != "Nothing to save.":
+                self.console.print("[dim]Memory flush: saved durable memories before compaction[/dim]")
+            else:
+                logger.debug("Memory flush: nothing to save")
+
+        except Exception as e:
+            logger.debug(f"Memory flush failed (non-critical): {e}")
 
     def is_busy(self) -> bool:
         """Check if this agent's session is currently busy."""

@@ -1361,6 +1361,11 @@ Actions:
 - append: Add an entry to the history log (HISTORY.md + SQLite events)
 - search: Search all memory layers (MEMORY.md, facts, events) using FTS5
 - stats: Get memory statistics
+- read_soul: Read the durable soul/persona (SOUL.md)
+- write_soul: Update the durable soul/persona (SOUL.md)
+- read_identity: Read the durable identity profile (IDENTITY.md)
+- write_identity: Update the durable identity profile (IDENTITY.md)
+- identify: Read identity, or update it when content is provided
 - upsert_fact: Save a fact (key-value with category) to declarative memory
 - get_fact: Get a specific fact by key
 - list_facts: List facts, optionally filtered by category
@@ -1381,6 +1386,8 @@ Examples:
   Write: {"action": "write", "content": "# Project Notes\\n- Uses Python 3.12", "scope": "project"}
   Append: {"action": "append", "content": "Discovered auth module needs refactoring", "tags": ["discovery"]}
   Search: {"action": "search", "query": "auth module"}
+  Set soul: {"action": "write_soul", "content": "You are a careful pair programmer."}
+  Identify: {"action": "identify", "content": "Name: AMCP\\nRole: long-running coding agent"}
   Upsert fact: {"action": "upsert_fact", "key": "python_version", "content": "3.12", "category": "config"}
   Get fact: {"action": "get_fact", "key": "python_version"}
   List facts: {"action": "list_facts", "category": "config"}
@@ -1482,6 +1489,62 @@ Examples:
                     metadata=stats,
                 )
 
+            def _read_soul() -> ToolResult:
+                soul = manager.read_soul(scope, include_default=True)
+                source = "custom" if manager.read_soul(scope) else "default"
+                return ToolResult(
+                    success=True,
+                    content=soul,
+                    metadata={"scope": scope, "source": source, "size": len(soul)},
+                )
+
+            def _write_soul() -> ToolResult:
+                if content is None:
+                    return ToolResult(
+                        success=False,
+                        content="",
+                        error="Content is required for write_soul action.",
+                    )
+                manager.write_soul(content, scope)
+                return ToolResult(
+                    success=True,
+                    content=f"Soul updated ({len(content)} chars) in scope '{scope}'.",
+                    metadata={"scope": scope, "size": len(content)},
+                )
+
+            def _read_identity() -> ToolResult:
+                identity = manager.read_identity(scope)
+                if not identity:
+                    return ToolResult(
+                        success=True,
+                        content=f"No identity profile found for scope '{scope}'.",
+                        metadata={"scope": scope, "size": 0},
+                    )
+                return ToolResult(
+                    success=True,
+                    content=identity,
+                    metadata={"scope": scope, "size": len(identity)},
+                )
+
+            def _write_identity() -> ToolResult:
+                if content is None:
+                    return ToolResult(
+                        success=False,
+                        content="",
+                        error="Content is required for write_identity action.",
+                    )
+                manager.write_identity(content, scope)
+                return ToolResult(
+                    success=True,
+                    content=f"Identity updated ({len(content)} chars) in scope '{scope}'.",
+                    metadata={"scope": scope, "size": len(content)},
+                )
+
+            def _identify() -> ToolResult:
+                if content is not None:
+                    return _write_identity()
+                return _read_identity()
+
             def _upsert_fact() -> ToolResult:
                 if not key:
                     return ToolResult(
@@ -1578,6 +1641,11 @@ Examples:
                 "append": _append,
                 "search": _search,
                 "stats": _stats,
+                "read_soul": _read_soul,
+                "write_soul": _write_soul,
+                "read_identity": _read_identity,
+                "write_identity": _write_identity,
+                "identify": _identify,
                 "upsert_fact": _upsert_fact,
                 "get_fact": _get_fact,
                 "list_facts": _list_facts,
@@ -1613,6 +1681,11 @@ Examples:
                         "append",
                         "search",
                         "stats",
+                        "read_soul",
+                        "write_soul",
+                        "read_identity",
+                        "write_identity",
+                        "identify",
                         "upsert_fact",
                         "get_fact",
                         "list_facts",

@@ -8,6 +8,8 @@ import pytest
 
 from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
+from amcp.config import AMCPConfig, ContextConfig
+from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 
 
@@ -216,6 +218,28 @@ class TestAgentContextBudget:
                 text = "short text"
                 assert agent._trim_to_token_budget(text, 1000) == text
 
+    def test_system_prompt_includes_persona_and_memory(self, tmp_path):
+        """System prompt includes durable soul, identity, and memory."""
+        manager = MemoryManager(project_root=tmp_path / "project")
+        manager.user_store = MemoryStore(tmp_path / "user-memory")
+        manager.write_soul("Soul marker: careful continuity", scope="user")
+        manager.write_identity("Identity marker: AMCP Atlas", scope="user")
+        manager.write_long_term("Memory marker: user prefers concise replies", scope="user")
+
+        cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+        with (
+            patch("amcp.agent.Path.home") as mock_home,
+            patch("amcp.agent.load_config", return_value=cfg),
+            patch("amcp.agent.get_memory_manager", return_value=manager),
+        ):
+            mock_home.return_value = tmp_path
+            agent = Agent()
+            prompt = agent._get_system_prompt(tmp_path / "project")
+
+        assert "Soul marker: careful continuity" in prompt
+        assert "Identity marker: AMCP Atlas" in prompt
+        assert "Memory marker: user prefers concise replies" in prompt
+
 
 class TestAgentToolRegistry:
     def test_tool_registry_initialized(self, tmp_path):
@@ -250,3 +274,35 @@ class TestAgentStepTracking:
                 agent.current_request_start_time = None
                 assert agent.current_request_tool_calls == 0
                 assert agent.current_request_llm_calls == 0
+
+
+class TestAgentMemoryReview:
+    """Tests for pre-compaction memory flush."""
+
+    def test_run_memory_review_exists(self, tmp_path):
+        """Agent has _run_memory_review method."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent()
+            assert hasattr(agent, "_run_memory_review")
+
+    def test_system_prompt_includes_memory_guidance(self, tmp_path):
+        """System prompt includes MEMORY_GUIDANCE text."""
+        manager = MemoryManager(project_root=tmp_path / "project")
+        manager.user_store = MemoryStore(tmp_path / "user-memory")
+
+        cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+        with (
+            patch("amcp.agent.Path.home") as mock_home,
+            patch("amcp.agent.load_config", return_value=cfg),
+            patch("amcp.agent.get_memory_manager", return_value=manager),
+        ):
+            mock_home.return_value = tmp_path
+            agent = Agent()
+            prompt = agent._get_system_prompt(tmp_path / "project")
+
+        assert "memory_guidance" in prompt
+        assert "write_soul" in prompt
+        assert "upsert_fact" in prompt
+        assert "declarative facts" in prompt
