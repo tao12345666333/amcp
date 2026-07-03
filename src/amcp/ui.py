@@ -73,14 +73,20 @@ class ToolBlock:
 
         # Build headline
         if self.finished:
-            icon = "[green]✓[/green]" if self.success else "[red]✗[/red]"
+            icon_style = "green" if self.success else "red"
+            icon = "✓" if self.success else "✗"
             verb = "Used"
         else:
             icon = "⋯"
+            icon_style = ""
             verb = "Using"
 
-        arg_part = f" [dim]({self.key_arg})[/dim]" if self.key_arg else ""
-        headline = Text.from_markup(f"{icon} {verb} [blue]{self.tool_name}[/blue]{arg_part}")
+        headline = Text()
+        headline.append(f"{icon} ", style=icon_style)
+        headline.append(f"{verb} ")
+        headline.append(self.tool_name, style="blue")
+        if self.key_arg:
+            headline.append(f" ({self.key_arg})", style="dim")
 
         if not self.finished:
             return Group(self._spinner, headline)
@@ -89,7 +95,7 @@ class ToolBlock:
         if self.result_preview:
             border_style = "green" if self.success else "red"
             result_panel = Panel(
-                self.result_preview,
+                Text(self.result_preview),
                 border_style=border_style,
                 padding=(0, 1),
             )
@@ -110,7 +116,7 @@ class ToolBlock:
         # Show thought in italic gray style
         return Panel(
             Text(thought, style="italic"),
-            title="[dim]💭 Thinking[/dim]",
+            title=Text("💭 Thinking", style="dim"),
             border_style="dim",
             padding=(0, 1),
         )

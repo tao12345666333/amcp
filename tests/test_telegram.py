@@ -368,6 +368,18 @@ def test_typing_start_creates_task():
     asyncio.run(_run())
 
 
+def test_typing_start_sends_immediate_chat_action():
+    async def _run():
+        bot = _make_bot_for_typing()
+
+        await bot._start_typing(150)
+
+        bot._application.bot.send_chat_action.assert_any_call(chat_id=150, action="typing")
+        await bot._stop_typing(150)
+
+    asyncio.run(_run())
+
+
 def test_typing_stop_cancels_task():
     async def _run():
         bot = _make_bot_for_typing()
@@ -448,6 +460,47 @@ def test_process_message_starts_and_stops_typing():
 
         start.assert_called_once_with(600)
         stop.assert_called_once_with(600)
+
+    asyncio.run(_run())
+
+
+def test_process_message_stops_typing_after_response_delivery():
+    async def _run():
+        bot = _make_bot_for_typing()
+        events: list[str] = []
+
+        class _MockAgent:
+            session_id = "test"
+
+            async def run(self, **kwargs):
+                return "ok"
+
+        session = SimpleNamespace(
+            session_id="test",
+            agent=_MockAgent(),
+            lock=asyncio.Lock(),
+            queue=__import__("collections").deque(),
+            current_task=None,
+        )
+        msg = TelegramQueuedMessage(chat_id=650, user_id=1, text="hi")
+
+        async def _start(chat_id: int) -> None:
+            events.append(f"start:{chat_id}")
+
+        async def _stop(chat_id: int) -> None:
+            events.append(f"stop:{chat_id}")
+
+        async def _send_markdown(chat_id: int, text: str) -> None:
+            events.append(f"send:{chat_id}:{text}")
+
+        with (
+            patch.object(bot, "_start_typing", side_effect=_start),
+            patch.object(bot, "_stop_typing", side_effect=_stop),
+            patch.object(bot, "send_markdown", side_effect=_send_markdown),
+        ):
+            await bot._process_message(session, msg)
+
+        assert events == ["start:650", "send:650:ok", "stop:650"]
 
     asyncio.run(_run())
 

@@ -369,40 +369,39 @@ class TelegramBot:
             await self.send_text(user_id, text)
 
     async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
-        await self._start_typing(message.chat_id)
-        try:
-            session.current_task = asyncio.create_task(
-                session.agent.run(
-                    user_input=message.text,
-                    work_dir=self._work_dir,
-                    stream=False,
-                    show_progress=False,
-                    queue_if_busy=False,
+        async with self._typing_session(message.chat_id):
+            try:
+                session.current_task = asyncio.create_task(
+                    session.agent.run(
+                        user_input=message.text,
+                        work_dir=self._work_dir,
+                        stream=False,
+                        show_progress=False,
+                        queue_if_busy=False,
+                    )
                 )
-            )
-            response = await session.current_task
-        except asyncio.CancelledError:
-            await self.send_text(message.chat_id, "Request cancelled.")
-            return
-        except BusyError:
-            if self._is_queue_full(session):
-                await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
-            else:
-                session.queue.appendleft(message)
-                await self.send_text(message.chat_id, "Session busy. Your message was queued.")
-            return
-        except Exception as exc:
-            logger.exception("Failed to process Telegram message.")
-            await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
-            return
-        finally:
-            session.current_task = None
-            await self._stop_typing(message.chat_id)
+                response = await session.current_task
+            except asyncio.CancelledError:
+                await self.send_text(message.chat_id, "Request cancelled.")
+                return
+            except BusyError:
+                if self._is_queue_full(session):
+                    await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
+                else:
+                    session.queue.appendleft(message)
+                    await self.send_text(message.chat_id, "Session busy. Your message was queued.")
+                return
+            except Exception as exc:
+                logger.exception("Failed to process Telegram message.")
+                await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
+                return
+            finally:
+                session.current_task = None
 
-        response_text = response or ""
-        if response_text:
-            for chunk in self._formatter.format_response(response_text):
-                await self.send_markdown(message.chat_id, chunk)
+            response_text = response or ""
+            if response_text:
+                for chunk in self._formatter.format_response(response_text):
+                    await self.send_markdown(message.chat_id, chunk)
 
         memory_manager = get_memory_manager(self._work_dir)
         memory_manager.append_history(
@@ -595,6 +594,7 @@ class TelegramBot:
         if not self._config.typing_indicator:
             return
         await self._stop_typing(chat_id)
+        await self._send_typing_action(chat_id)
         self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
 
     async def _stop_typing(self, chat_id: int) -> None:
@@ -610,13 +610,27 @@ class TelegramBot:
         for chat_id in chat_ids:
             await self._stop_typing(chat_id)
 
+    @contextlib.asynccontextmanager
+    async def _typing_session(self, chat_id: int):
+        await self._start_typing(chat_id)
+        try:
+            yield
+        finally:
+            await self._stop_typing(chat_id)
+
+    async def _send_typing_action(self, chat_id: int) -> bool:
+        try:
+            await self._application.bot.send_chat_action(chat_id=chat_id, action="typing")
+            return True
+        except Exception as exc:
+            logger.warning("Typing action failed for chat %s: %s", chat_id, exc)
+            return False
+
     async def _typing_loop(self, chat_id: int) -> None:
         interval = max(1, int(self._config.typing_interval_seconds))
         try:
             while True:
-                await self._application.bot.send_chat_action(chat_id=chat_id, action="typing")
                 await asyncio.sleep(interval)
+                await self._send_typing_action(chat_id)
         except asyncio.CancelledError:
             return
-        except Exception as exc:
-            logger.debug("Typing loop stopped for chat %s: %s", chat_id, exc)

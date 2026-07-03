@@ -14,6 +14,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.status import Status
+from rich.text import Text
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
@@ -659,7 +660,7 @@ class Agent:
             # Save conversation history even on failure to preserve context
             self._save_conversation_history()
 
-            self.console.print(f"[red]Agent execution failed:[/red] {e}")
+            self.console.print(Text.assemble(("Agent execution failed: ", "red"), str(e)))
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
 
     async def _run_memory_review(

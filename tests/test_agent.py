@@ -1,7 +1,9 @@
 """Tests for agent module."""
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -306,3 +308,35 @@ class TestAgentMemoryReview:
         assert "write_soul" in prompt
         assert "upsert_fact" in prompt
         assert "declarative facts" in prompt
+
+
+def test_process_message_wraps_markup_like_exceptions(tmp_path):
+    async def _run():
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock(chat=None)
+            agent = Agent(session_id="test-session")
+
+        prompt_hook_output = SimpleNamespace(
+            continue_execution=True,
+            feedback=None,
+            stop_reason=None,
+        )
+        status = SimpleNamespace(update=lambda *args, **kwargs: None)
+        markup_error = "closing tag '[/llms.txt]' at position 48 doesn't match any open tag"
+
+        with (
+            patch("amcp.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
+            patch.object(agent, "_create_progress_context") as mock_progress,
+            patch.object(agent, "_get_system_prompt", return_value="system"),
+            patch.object(agent, "_build_tools_and_registry") as mock_build_tools,
+            patch.object(agent, "_run_with_tools", side_effect=ValueError(markup_error)),
+        ):
+            mock_progress.return_value.__enter__.return_value = status
+            mock_progress.return_value.__exit__.return_value = False
+            mock_build_tools.return_value = ([], {})
+
+            with pytest.raises(AgentExecutionError, match="Agent execution failed"):
+                await agent._process_message("search e2b persistence", tmp_path, stream=False, show_progress=False)
+
+    asyncio.run(_run())
