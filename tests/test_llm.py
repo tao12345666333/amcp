@@ -46,7 +46,10 @@ class TestCreateLLMClient:
         except ImportError:
             pytest.skip("anthropic package not installed")
 
-    def test_none_config_uses_defaults(self):
+    def test_none_config_uses_defaults(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.delenv("AMCP_API_TYPE", raising=False)
+
         client = create_llm_client(None)
         assert isinstance(client, OpenAIClient)
 

@@ -70,7 +70,7 @@ jobs:
           pip install -e ".[dev,telegram]"
 
       - name: Run tests with pytest
-        run: pytest --cov --cov-report=xml -v
+        run: pytest --cov --cov-report=xml -v -m "not llm"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
