@@ -76,7 +76,7 @@ src/amcp/
 - `httpx` for HTTP clients.
 - `fastapi` and `uvicorn` for the server.
 - `openai` for OpenAI-compatible providers.
-- Optional extras provide Anthropic, Telegram, TUI, and development dependencies.
+- Optional extras provide Anthropic, Telegram, and development dependencies.
 
 ## GitHub Safety
 

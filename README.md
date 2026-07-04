@@ -27,7 +27,6 @@ A Lego-style coding agent CLI with built-in tools (grep, read files, bash execut
 - **HTTP/WebSocket Server**: Remote access via FastAPI with session management and live events
 - **Telegram Bot Integration**: Remote interaction with DM/group support, pairing, and notifications
 - **Automation/Cron Jobs**: Scheduled task execution for external orchestrators (systemd, cron, K8s)
-- **Toad TUI**: Terminal UI support via the `tui` command (requires Python 3.14+)
 - **Model Database**: Model metadata from models.dev for context window and output limit resolution
 
 ## Installation
@@ -116,8 +115,6 @@ amcp cron run <job-name>                # run a job immediately
 amcp cron enable <job-name>             # enable a job
 amcp cron disable <job-name>            # disable a job
 
-# Toad TUI (Python 3.14+)
-amcp tui                                # launch terminal UI
 ```
 
 ## Built-in Tools

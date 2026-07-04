@@ -6,13 +6,13 @@
 
 ## Overview
 
-This document describes the Client-Server (C/S) architecture for AMCP, enabling remote control, multiple client types (CLI, TUI, Web, Desktop, Mobile), and better separation of concerns.
+This document describes the Client-Server (C/S) architecture for AMCP, enabling remote control, multiple client types (CLI, Web, Desktop, Mobile), and better separation of concerns.
 
 ## Goals
 
 1. **Decouple UI from Core Logic**: Allow the agent engine to run independently of any specific UI
 2. **Enable Remote Access**: Control AMCP from different machines or devices
-3. **Support Multiple Clients**: CLI, TUI (Toad), Web UI, Desktop App, Mobile App
+3. **Support Multiple Clients**: CLI, Web UI, Desktop App, Mobile App
 4. **Maintain CLI Compatibility**: Existing `amcp` commands continue to work seamlessly
 5. **Leverage Existing Infrastructure**: Build on top of existing ACP support
 
@@ -26,12 +26,12 @@ This document describes the Client-Server (C/S) architecture for AMCP, enabling 
 │   CLIENTS                                                                    │
 │   ─────────────────────────────────────────────────────────────────────     │
 │                                                                              │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│   │  CLI Client  │  │  TUI Client  │  │  Web Client  │  │Desktop Client│    │
-│   │ amcp attach  │  │  amcp tui    │  │  (React/Vue) │  │  (Tauri)     │    │
-│   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
-│          │                 │                 │                 │            │
-│          └─────────────────┴────────┬────────┴─────────────────┘            │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                      │
+│   │  CLI Client  │  │  Web Client  │  │Desktop Client│                      │
+│   │ amcp attach  │  │  (React/Vue) │  │  (Tauri)     │                      │
+│   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                      │
+│          │                 │                 │                              │
+│          └─────────────────┴────────┬────────┘                              │
 │                                     │                                        │
 │   TRANSPORT LAYER                   │                                        │
 │   ─────────────────────────────────────────────────────────────────────     │

@@ -416,23 +416,6 @@ def telegram_setup() -> None:
     console.print(f"[green]Telegram config saved to {path}[/green]")
 
 
-@app.command("tui", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def tui_command(ctx: typer.Context) -> None:
-    """Launch Toad TUI backed by AMCP ACP server.
-
-    Toad is a modern terminal UI for AI coding agents. This command starts
-    Toad and connects it to an AMCP ACP server.
-
-    Extra arguments are passed to the ACP server.
-    For example:
-        amcp tui --work-dir /path/to/project
-        amcp tui --agent /path/to/agent.yaml
-    """
-    from .toad import run_tui
-
-    run_tui(ctx)
-
-
 @app.command("serve", help="Start AMCP server for remote access via HTTP/WebSocket")
 def serve_command(
     host: Annotated[
