@@ -29,6 +29,7 @@ class TelegramSession:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     queue: deque[TelegramQueuedMessage] = field(default_factory=deque)
     current_task: asyncio.Task | None = None
+    generation: int = 0
 
 
 @dataclass
@@ -425,8 +426,28 @@ class SessionManager:
                 return session
         return self.create_session(chat_id)
 
-    def create_session(self, chat_id: int) -> TelegramSession:
+    def abandon_current_session(self, chat_id: int) -> tuple[bool, int]:
+        current_id = self._current_sessions.get(chat_id)
+        if not current_id:
+            return False, 0
+        session = self._sessions.get(chat_id, {}).get(current_id)
+        if not session:
+            return False, 0
+
+        session.generation += 1
+        cancelled = False
+        if session.current_task and not session.current_task.done():
+            session.current_task.cancel()
+            cancelled = True
+        queued = len(session.queue)
+        session.queue.clear()
+        return cancelled, queued
+
+    def create_session(self, chat_id: int, *, abandon_current: bool = False) -> TelegramSession:
         from uuid import uuid4
+
+        if abandon_current:
+            self.abandon_current_session(chat_id)
 
         session_id = f"telegram-{chat_id}-{uuid4().hex[:8]}"
         agent = self._agent_factory(session_id)
@@ -654,7 +675,7 @@ class TelegramHandlers:
             return
 
         if result.action == "new_session":
-            session = self._session_manager.create_session(chat_id)
+            session = self._session_manager.create_session(chat_id, abandon_current=True)
             await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
             return
 

@@ -775,29 +775,52 @@ class ThinkTool(BaseTool):
 class BashTool(BaseTool):
     """Tool for executing bash commands."""
 
+    MAX_OUTPUT_CHARS = 6000
+
     @property
     def name(self) -> str:
         return "bash"
 
     @property
     def description(self) -> str:
-        return "Execute bash commands. Use for file operations, running scripts, or system commands. Returns stdout and stderr."
+        return (
+            "Execute bash commands. Use for file operations, running scripts, or system commands. "
+            "Output is truncated; for large files prefer rg/head/tail/sed ranges instead of cat."
+        )
 
-    def execute(self, command: str, timeout: int = 30) -> ToolResult:  # type: ignore[override]
+    def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> ToolResult:  # type: ignore[override]
         """Execute bash command."""
         import subprocess
 
         try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+            )
 
             output = result.stdout
             if result.stderr:
                 output += f"\n[stderr]\n{result.stderr}"
+            output = output or "(no output)"
+            original_output_length = len(output)
+            truncated = original_output_length > self.MAX_OUTPUT_CHARS
+            if truncated:
+                output = _truncate_text(output, self.MAX_OUTPUT_CHARS)
 
             return ToolResult(
                 success=result.returncode == 0,
-                content=output or "(no output)",
-                metadata={"command": command, "exit_code": result.returncode},
+                content=output,
+                metadata={
+                    "command": command,
+                    "exit_code": result.returncode,
+                    "cwd": cwd,
+                    "truncated": truncated,
+                    "original_output_length": original_output_length,
+                },
                 error=None if result.returncode == 0 else f"Command exited with code {result.returncode}",
             )
 

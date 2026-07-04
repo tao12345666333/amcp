@@ -11,6 +11,7 @@ import pytest
 from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ContextConfig
+from amcp.hooks import HookOutput
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 
@@ -79,6 +80,108 @@ class TestAgentInit:
                 agent = Agent(session_id="test-session")
                 assert agent.conversation_history == []
                 assert agent.total_llm_calls == 0
+
+
+class TestAgentToolLimits:
+    @pytest.mark.asyncio
+    async def test_process_message_resets_per_request_tool_counts(self, tmp_path):
+        """Per-request tool counts should not leak across Telegram messages."""
+
+        async def deny_prompt(**_kwargs):
+            return HookOutput(continue_execution=False, stop_reason="blocked")
+
+        with (
+            patch("amcp.agent.Path.home") as mock_home,
+            patch("amcp.agent.load_config") as mock_load,
+            patch("amcp.agent.run_user_prompt_hooks", side_effect=deny_prompt),
+        ):
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+            agent.current_conversation_tool_calls = [{"tool": "read_file"} for _ in range(100)]
+
+            result = await agent._process_message("hello", tmp_path, stream=False, show_progress=False)
+
+        assert result == "blocked"
+        assert agent.current_conversation_tool_calls == []
+
+    def test_read_file_session_limit_still_applies(self, tmp_path):
+        """Resetting per-request counts must not remove the session-level cap."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        agent.tool_calls_history = [{"tool": "read_file"} for _ in range(600)]
+        agent.current_conversation_tool_calls = []
+
+        assert agent._should_limit_tool_calls("read_file") is True
+
+    def test_bash_per_request_limit_applies(self, tmp_path):
+        """Bash calls are capped per request to avoid oversized tool context."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(12)]
+
+        assert agent._should_limit_tool_calls("bash") is True
+
+    def test_bash_limit_resets_for_new_request(self, tmp_path):
+        """A new user request can use bash again after per-request reset."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        agent.current_conversation_tool_calls = []
+
+        assert agent._should_limit_tool_calls("bash") is False
+
+    @pytest.mark.asyncio
+    async def test_bash_tool_receives_work_dir(self, tmp_path):
+        """Agent should run bash tool calls from the request work_dir."""
+
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "call_1",
+                                "name": "bash",
+                                "arguments": json.dumps({"command": "pwd"}),
+                            }
+                        ],
+                    )
+
+                tool_messages = [m for m in messages if m.get("role") == "tool"]
+                assert tool_messages
+                assert str(tmp_path) in tool_messages[-1]["content"]
+                return SimpleNamespace(content="done", tool_calls=None)
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            agent = Agent(session_id="test-session")
+
+        result = await agent._enhanced_chat_with_tools(
+            llm_client=FakeLLM(),
+            messages=[{"role": "user", "content": "pwd"}],
+            tools=[],
+            tool_registry={},
+            stream=False,
+            status=MagicMock(),
+            work_dir=tmp_path,
+        )
+
+        assert result == "done"
 
 
 class TestAgentHistoryManagement:

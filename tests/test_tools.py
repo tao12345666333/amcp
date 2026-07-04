@@ -20,6 +20,26 @@ def test_bash_tool_simple():
     assert "test" in result.content
 
 
+def test_bash_tool_uses_cwd(tmp_path):
+    tool = BashTool()
+    result = tool.execute(command="pwd", cwd=str(tmp_path))
+
+    assert result.success
+    assert str(tmp_path) in result.content
+    assert result.metadata["cwd"] == str(tmp_path)
+
+
+def test_bash_tool_truncates_large_output():
+    tool = BashTool()
+    result = tool.execute(command="printf '%*s' 7000 '' | tr ' ' x")
+
+    assert result.success
+    assert len(result.content) <= tool.MAX_OUTPUT_CHARS
+    assert "...[truncated]" in result.content
+    assert result.metadata["truncated"] is True
+    assert result.metadata["original_output_length"] > tool.MAX_OUTPUT_CHARS
+
+
 def test_think_tool():
     tool = ThinkTool()
     result = tool.execute(thought="test reasoning")

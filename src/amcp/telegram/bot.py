@@ -307,9 +307,10 @@ class TelegramBot:
             await self.send_text(chat_id, "Session busy. Your message was queued.")
             return
 
+        generation = getattr(session, "generation", 0)
         async with session.lock:
             await self._process_message(session, queued_message)
-            while session.queue:
+            while session.queue and getattr(session, "generation", 0) == generation:
                 next_message = session.queue.popleft()
                 await self._process_message(session, next_message)
 
@@ -330,9 +331,10 @@ class TelegramBot:
             await self.send_text(chat_id, "Session busy. Your message was queued.")
             return
 
+        generation = getattr(session, "generation", 0)
         async with session.lock:
             await self._process_message(session, queued_message)
-            while session.queue:
+            while session.queue and getattr(session, "generation", 0) == generation:
                 next_message = session.queue.popleft()
                 await self._process_message(session, next_message)
 
@@ -369,9 +371,11 @@ class TelegramBot:
             await self.send_text(user_id, text)
 
     async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
+        generation = getattr(session, "generation", 0)
+        task: asyncio.Task | None = None
         async with self._typing_session(message.chat_id):
             try:
-                session.current_task = asyncio.create_task(
+                task = asyncio.create_task(
                     session.agent.run(
                         user_input=message.text,
                         work_dir=self._work_dir,
@@ -380,11 +384,15 @@ class TelegramBot:
                         queue_if_busy=False,
                     )
                 )
-                response = await session.current_task
+                session.current_task = task
+                response = await task
             except asyncio.CancelledError:
-                await self.send_text(message.chat_id, "Request cancelled.")
+                if getattr(session, "generation", 0) == generation:
+                    await self.send_text(message.chat_id, "Request cancelled.")
                 return
             except BusyError:
+                if getattr(session, "generation", 0) != generation:
+                    return
                 if self._is_queue_full(session):
                     await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
                 else:
@@ -393,16 +401,24 @@ class TelegramBot:
                 return
             except Exception as exc:
                 logger.exception("Failed to process Telegram message.")
-                await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
+                if getattr(session, "generation", 0) == generation:
+                    await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
                 return
             finally:
-                session.current_task = None
+                if getattr(session, "current_task", None) is task:
+                    session.current_task = None
 
             response_text = response or ""
+            if getattr(session, "generation", 0) != generation:
+                return
             if response_text:
                 for chunk in self._formatter.format_response(response_text):
+                    if getattr(session, "generation", 0) != generation:
+                        return
                     await self.send_markdown(message.chat_id, chunk)
 
+        if getattr(session, "generation", 0) != generation:
+            return
         memory_manager = get_memory_manager(self._work_dir)
         memory_manager.append_history(
             content=(f"[Telegram] User {message.user_id}: {message.text[:200]}\nAgent: {response_text[:300]}"),

@@ -454,6 +454,15 @@ class Agent:
                 return True
             return False
 
+        # bash can dump large files and quickly balloon tool context during
+        # repo analysis. Keep the per-request loop bounded; session totals are
+        # still tracked in tool_calls_history for diagnostics.
+        if tool_name == "bash":
+            if current_conversation_calls >= 12:
+                self.console.print("[yellow]Per-request bash limit reached (12 calls)[/yellow]")
+                return True
+            return False
+
         # MCP tools: 100 per tool per conversation
         return tool_name.startswith("mcp.") and current_conversation_calls >= 100
 
@@ -570,6 +579,11 @@ class Agent:
         This is the core message processing logic, extracted from run()
         to support queue-based processing.
         """
+        # Per-conversation tool limits are scoped to one user request. Long-running
+        # Telegram sessions should not carry a repo-analysis read_file burst into
+        # the next unrelated message, while session-level totals still persist.
+        self._reset_current_conversation_tool_calls()
+
         # Run UserPromptSubmit hooks
         prompt_hook_output = await run_user_prompt_hooks(
             session_id=self.session_id,
@@ -639,7 +653,12 @@ class Agent:
 
                 # Run chat with tools
                 result = await self._run_with_tools(
-                    messages=messages, tools=tools, tool_registry=tool_registry, stream=stream, status=status
+                    messages=messages,
+                    tools=tools,
+                    tool_registry=tool_registry,
+                    stream=stream,
+                    status=status,
+                    work_dir=work_dir,
                 )
 
                 # Save assistant response
@@ -901,6 +920,7 @@ class Agent:
         tool_registry: dict[str, Any],
         stream: bool,
         status: Status,
+        work_dir: Path | None = None,
     ) -> str:
         """Run chat with tools and enhanced tracking."""
         cfg = load_config()
@@ -922,6 +942,7 @@ class Agent:
             tool_registry=tool_registry,
             stream=stream,
             status=status,
+            work_dir=work_dir,
         )
 
     async def _enhanced_chat_with_tools(
@@ -932,6 +953,7 @@ class Agent:
         tool_registry: dict[str, Any],
         stream: bool,
         status: Status,
+        work_dir: Path | None = None,
         max_steps: int | None = None,
     ) -> str:
         """Enhanced version of _chat_with_tools with better tracking."""
@@ -1033,6 +1055,9 @@ class Agent:
                         # Apply any input updates from hooks
                         if pre_hook_output.updated_input:
                             args = {**args, **pre_hook_output.updated_input}
+
+                        if tool_name == "bash" and work_dir is not None and "cwd" not in args:
+                            args = {**args, "cwd": str(work_dir)}
 
                         # Record tool call
                         tool_call_record = {

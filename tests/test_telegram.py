@@ -79,6 +79,27 @@ def test_session_manager_creates_sessions():
     assert manager.get_current_session_id(123) == session2.session_id
 
 
+def test_session_manager_abandons_current_session_when_creating_replacement():
+    async def _run():
+        manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
+        old_session = manager.create_session(123)
+        old_session.queue.append(TelegramQueuedMessage(chat_id=123, user_id=42, text="queued"))
+
+        task = asyncio.create_task(asyncio.sleep(60))
+        old_session.current_task = task
+
+        new_session = manager.create_session(123, abandon_current=True)
+        await asyncio.sleep(0)
+
+        assert new_session.session_id != old_session.session_id
+        assert manager.get_current_session_id(123) == new_session.session_id
+        assert old_session.generation == 1
+        assert len(old_session.queue) == 0
+        assert task.cancelled()
+
+    asyncio.run(_run())
+
+
 def test_handle_new_uses_shared_session_command():
     async def _run():
         handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
@@ -532,5 +553,41 @@ def test_process_message_stops_typing_on_error():
 
         start.assert_called_once_with(700)
         stop.assert_called_once_with(700)
+
+    asyncio.run(_run())
+
+
+def test_process_message_suppresses_error_after_session_is_abandoned():
+    async def _run():
+        bot = _make_bot_for_typing()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class _ErrorAgent:
+            session_id = "test"
+
+            async def run(self, **kwargs):
+                started.set()
+                await release.wait()
+                raise RuntimeError("boom")
+
+        session = SimpleNamespace(
+            session_id="test",
+            agent=_ErrorAgent(),
+            lock=asyncio.Lock(),
+            queue=__import__("collections").deque(),
+            current_task=None,
+            generation=0,
+        )
+        msg = TelegramQueuedMessage(chat_id=710, user_id=1, text="hi")
+
+        with patch.object(bot, "send_markdown", new_callable=AsyncMock) as send_markdown:
+            task = asyncio.create_task(bot._process_message(session, msg))
+            await started.wait()
+            session.generation += 1
+            release.set()
+            await task
+
+        send_markdown.assert_not_called()
 
     asyncio.run(_run())
