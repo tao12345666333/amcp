@@ -26,8 +26,10 @@ if TYPE_CHECKING:
     from telegram.ext import Application
 
 try:
+    from telegram import BotCommand
     from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 except ImportError:  # pragma: no cover - optional dependency
+    BotCommand = None  # type: ignore[assignment]
     ApplicationBuilder = None  # type: ignore[assignment]
     CommandHandler = None  # type: ignore[assignment]
     MessageHandler = None  # type: ignore[assignment]
@@ -428,7 +430,7 @@ class TelegramBot:
         )
 
     def _build_application(self) -> Application:
-        application = ApplicationBuilder().token(self._token).build()
+        application = ApplicationBuilder().token(self._token).post_init(self._post_init).build()
         application.add_handler(CommandHandler("start", self._handlers.handle_start))
         application.add_handler(CommandHandler("help", self._handlers.handle_help))
         application.add_handler(CommandHandler("status", self._handlers.handle_status))
@@ -469,6 +471,32 @@ class TelegramBot:
         )
         application.add_handler(MessageHandler(filters.COMMAND, self._handlers.handle_unknown))
         return application
+
+    def _get_user_bot_commands(self) -> list[BotCommand]:
+        """Return user-facing commands to register in Telegram's bot menu.
+
+        Admin-only commands (config, users, pair, logs, shutdown) and helper
+        commands better discovered via /help (cancel, ask, activate, memory) are
+        intentionally omitted; /help already lists them.
+        """
+        return [
+            BotCommand("start", "Initialize the bot"),
+            BotCommand("help", "Show available commands"),
+            BotCommand("status", "Show agent and session status"),
+            BotCommand("new", "Start a new conversation session"),
+            BotCommand("session", "Manage sessions (new|list|switch)"),
+            BotCommand("skills", "List and manage skills"),
+        ]
+
+    async def _post_init(self, application: Application) -> None:
+        """Register user-facing commands with Telegram's bot menu after init."""
+        if BotCommand is None:
+            return
+        try:
+            await application.bot.set_my_commands(self._get_user_bot_commands())
+            logger.info("Registered Telegram bot menu commands")
+        except Exception:
+            logger.warning("Failed to register Telegram bot menu commands", exc_info=True)
 
     async def _run_polling_loop(self) -> None:
         updater = getattr(self._application, "updater", None)

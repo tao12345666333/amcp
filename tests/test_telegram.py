@@ -361,7 +361,7 @@ def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int 
         patch("amcp.telegram.bot.MessageHandler", MagicMock()),
         patch("amcp.telegram.bot.filters", MagicMock()),
     ):
-        builder_cls.return_value.token.return_value.build.return_value = mock_app
+        builder_cls.return_value.token.return_value.post_init.return_value.build.return_value = mock_app
 
         from amcp.telegram.bot import TelegramBot
 
@@ -372,6 +372,41 @@ def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int 
             config=config,
         )
     return bot
+
+
+def test_post_init_registers_user_facing_bot_commands():
+    async def _run():
+        bot = _make_bot_for_typing()
+        bot._application.bot.set_my_commands = AsyncMock()
+
+        with patch("amcp.telegram.bot.BotCommand") as mock_bot_command:
+            mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
+            await bot._post_init(bot._application)
+
+        bot._application.bot.set_my_commands.assert_called_once()
+        commands = bot._application.bot.set_my_commands.call_args[0][0]
+        names = [c.command for c in commands]
+
+        # user-facing commands registered in the menu
+        for expected in ["start", "help", "status", "new", "session", "skills"]:
+            assert expected in names
+        # admin and helper commands intentionally omitted
+        for omitted in ["cancel", "ask", "activate", "memory", "config", "users", "pair", "logs", "shutdown"]:
+            assert omitted not in names
+
+    asyncio.run(_run())
+
+
+def test_get_user_bot_commands_descriptions():
+    bot = _make_bot_for_typing()
+
+    with patch("amcp.telegram.bot.BotCommand") as mock_bot_command:
+        mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
+        commands = bot._get_user_bot_commands()
+
+    assert [c.command for c in commands] == ["start", "help", "status", "new", "session", "skills"]
+    for command in commands:
+        assert command.description  # non-empty
 
 
 def test_typing_start_creates_task():
