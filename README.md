@@ -5,29 +5,51 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A Lego-style coding agent CLI with built-in tools (grep, read files, bash execution, web search/fetch) and MCP server integration for extended capabilities.
+**An out-of-the-box coding-agent runtime for your terminal, IDE, server, and Telegram.**
 
-## Features
+AMCP is built for developers who want a useful agent immediately, not a framework they must
+assemble first. It ships with file editing, shell execution, web access, memory, skills,
+subagents, MCP/ACP integration, hooks, remote server mode, Telegram control, and scheduled
+automation as first-class capabilities.
 
-- **Built-in Tools**: read_file, grep, bash, think, todo, apply_patch, write_file, task, web_search, web_fetch, memory
-- **MCP Integration**: Connect to any MCP server (stdio or HTTP/SSE transport) for extended capabilities
-- **Multi-LLM Support**: OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and any OpenAI-compatible endpoint
-- **Multi-Agent System**: Primary/Subagent architecture with built-in agent types (coder, explorer, planner, focused_coder)
-- **Skills System**: Reusable knowledge/behavior definitions with auto-trigger, scheduling, and hot reload
-- **Slash Commands**: Custom command shortcuts with shell injection (`!{...}`) and file injection (`@{...}`)
-- **Conversation History**: Persistent sessions across runs
-- **Flexible Configuration**: YAML-based agent specifications and TOML config
-- **ACP Support**: Full Agent Client Protocol support for IDE integration (Zed, etc.)
-- **AGENTS.md Support**: Auto-load project-specific rules from `AGENTS.md` files
-- **Smart Context Compaction**: Intelligent context management with dynamic thresholds
-- **Progressive Context View**: Dynamic tool and skill loading based on relevance scoring and context budget
-- **Memory System**: Persistent cross-session memory (MEMORY.md + HISTORY.md) at user and project levels
-- **Event Bus**: Publish/subscribe system for agent communication and extensibility
-- **Hooks System**: Extensible hooks for tool validation, logging, and custom behaviors
-- **HTTP/WebSocket Server**: Remote access via FastAPI with session management and live events
-- **Telegram Bot Integration**: Remote interaction with DM/group support, pairing, and notifications
-- **Automation/Cron Jobs**: Scheduled task execution for external orchestrators (systemd, cron, K8s)
-- **Model Database**: Model metadata from models.dev for context window and output limit resolution
+Use it as a local coding assistant, an IDE agent, a long-running remote worker, or the runtime
+behind your own agent workflows.
+
+## Why AMCP
+
+- **Ready on the first run**: read/search/edit files, apply patches, run commands, browse the web,
+  keep todos, and remember project context without installing a pile of plugins.
+- **One runtime, many surfaces**: use the same sessions from the CLI, ACP-compatible IDEs such as
+  Zed, an HTTP/WebSocket server, Telegram, or cron/systemd/Kubernetes jobs.
+- **Autonomous but inspectable**: persistent sessions, request-scoped tool limits, context
+  compaction, progress events, and cancellation support make long-running work easier to trust.
+- **Extensible when you need it**: add MCP servers, skills, slash commands, hooks, and custom agent
+  specs without giving up the built-in experience.
+
+## 30-second start
+
+```bash
+# Configure your model provider interactively
+uvx amcp-agent init
+
+# Start the coding agent in the current project
+uvx amcp-agent
+
+# Or run a single task
+uvx amcp-agent --once "summarize this repository and suggest the next test to run"
+```
+
+## What you get
+
+| Area | Built-in capabilities |
+|------|-----------------------|
+| **Coding loop** | `read_file`, `grep`, `apply_patch`, `write_file`, `bash`, `think`, `todo`, `task` |
+| **Research** | Web search/fetch tools plus MCP server integration over stdio or HTTP/SSE |
+| **Agent orchestration** | Primary/subagent architecture with `coder`, `explorer`, `planner`, and `focused_coder` types |
+| **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive tool/skill loading, MEMORY.md/HISTORY.md |
+| **Interfaces** | CLI, ACP for IDEs, FastAPI HTTP/WebSocket server, Telegram bot, scheduled automation jobs |
+| **Customization** | TOML config, YAML agent specs, slash commands, reusable skills, hooks, event bus |
+| **Model support** | OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and OpenAI-compatible endpoints |
 
 ## Installation
 

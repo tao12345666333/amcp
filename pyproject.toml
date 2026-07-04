@@ -1,14 +1,26 @@
 [project]
 name = "amcp-agent"
 version = "0.10.0"
-description = "AMCP: Lego-style AI coding agent with multi-agent support, MCP integration, skills system, Telegram bot, and HTTP/WebSocket server for long-running autonomous operation."
+description = "AMCP is an out-of-the-box coding-agent runtime for terminal, IDE, server, and Telegram, with built-in tools, subagents, skills, memory, MCP/ACP, hooks, and automation."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
   { name = "tao" }
 ]
 license = { text = "Apache-2.0" }
-keywords = ["mcp", "agent", "cli", "coding", "ai", "llm", "telegram", "skills"]
+keywords = [
+  "agent-client-protocol",
+  "ai",
+  "automation",
+  "cli",
+  "coding-agent",
+  "developer-tools",
+  "llm",
+  "mcp",
+  "multi-agent",
+  "skills",
+  "telegram",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

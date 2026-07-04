@@ -1,4 +1,4 @@
-"""AMCP - Lego-style Coding Agent CLI with Multi-Agent Support."""
+"""AMCP - out-of-the-box coding-agent runtime with multi-agent support."""
 
 __all__ = [
     "__version__",
