@@ -35,7 +35,9 @@ def store(memory_dir: Path) -> MemoryStore:
 
 @pytest.fixture
 def manager(tmp_path: Path) -> MemoryManager:
-    return MemoryManager(project_root=tmp_path)
+    mgr = MemoryManager(project_root=tmp_path)
+    mgr.user_store = MemoryStore(tmp_path / "user-memory")
+    return mgr
 
 
 # --- Tests: MemoryStore ---
@@ -198,14 +200,26 @@ class TestMemoryManager:
         assert "Global prefs" in ctx
         assert "Project config" in ctx
 
-    def test_persona_context_merges_soul_and_identity(self, manager: MemoryManager):
-        """Persona context merges durable soul and identity scopes."""
+    def test_persona_context_uses_global_persona_only(self, manager: MemoryManager):
+        """Persona context uses global identity and ignores project persona."""
         manager.write_soul("Project soul marker", scope="project")
         manager.write_identity("Agent callsign: Atlas", scope="user")
 
         ctx = manager.get_persona_context()
-        assert "Project soul marker" in ctx
         assert "Agent callsign: Atlas" in ctx
+        assert "Project soul marker" not in ctx
+        assert "long-running autonomous coding agent" not in ctx
+
+    def test_persona_context_falls_back_to_default_without_global_persona(
+        self,
+        manager: MemoryManager,
+    ):
+        """Default soul is used only when no global soul or identity exists."""
+        manager.write_identity("Project callsign: Atlas", scope="project")
+
+        ctx = manager.get_persona_context()
+        assert "long-running autonomous coding agent" in ctx
+        assert "Project callsign: Atlas" not in ctx
 
     def test_cross_scope_search(self, manager: MemoryManager):
         """Search finds results across both scopes."""
@@ -320,3 +334,14 @@ class TestMemoryTool:
 
         assert "precise and persistent" in soul_read.content
         assert "AMCP Atlas" in identity_read.content
+
+    def test_persona_actions_reject_project_scope(self):
+        """Persona tool actions are global-only."""
+        result = self.tool.execute(
+            action="identify",
+            content="Name: Project Atlas",
+            scope="project",
+        )
+
+        assert not result.success
+        assert "global-only" in result.error

@@ -1362,9 +1362,9 @@ Actions:
 - search: Search all memory layers (MEMORY.md, facts, events) using FTS5
 - stats: Get memory statistics
 - read_soul: Read the durable soul/persona (SOUL.md)
-- write_soul: Update the durable soul/persona (SOUL.md)
+- write_soul: Update the durable global soul/persona (SOUL.md)
 - read_identity: Read the durable identity profile (IDENTITY.md)
-- write_identity: Update the durable identity profile (IDENTITY.md)
+- write_identity: Update the durable global identity profile (IDENTITY.md)
 - identify: Read identity, or update it when content is provided
 - upsert_fact: Save a fact (key-value with category) to declarative memory
 - get_fact: Get a specific fact by key
@@ -1374,6 +1374,10 @@ Actions:
 Scopes:
 - user: Global memory (~/.config/amcp/memory/)
 - project: Project-specific memory (.amcp/memory/)
+
+Identity and soul are global-only for prompt injection. Use scope="user" for
+identify, write_identity, and write_soul; project scope is for project facts and
+history, not agent persona.
 
 Use this tool to:
 - Remember important patterns, preferences, and project context
@@ -1386,8 +1390,8 @@ Examples:
   Write: {"action": "write", "content": "# Project Notes\\n- Uses Python 3.12", "scope": "project"}
   Append: {"action": "append", "content": "Discovered auth module needs refactoring", "tags": ["discovery"]}
   Search: {"action": "search", "query": "auth module"}
-  Set soul: {"action": "write_soul", "content": "You are a careful pair programmer."}
-  Identify: {"action": "identify", "content": "Name: AMCP\\nRole: long-running coding agent"}
+  Set soul: {"action": "write_soul", "content": "You are a careful pair programmer.", "scope": "user"}
+  Identify: {"action": "identify", "content": "Name: AMCP\\nRole: long-running coding agent", "scope": "user"}
   Upsert fact: {"action": "upsert_fact", "key": "python_version", "content": "3.12", "category": "config"}
   Get fact: {"action": "get_fact", "key": "python_version"}
   List facts: {"action": "list_facts", "category": "config"}
@@ -1660,6 +1664,23 @@ Examples:
                     error=f"Invalid action '{action}'. Use: {valid}",
                 )
 
+            persona_actions = {
+                "read_soul",
+                "write_soul",
+                "read_identity",
+                "write_identity",
+                "identify",
+            }
+            if action in persona_actions and scope != "user":
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=(
+                        "Agent identity and soul are global-only. Use scope='user' for "
+                        f"action '{action}'; project scope is only for project memory."
+                    ),
+                )
+
             return handlers[action]()
 
         except Exception as e:
@@ -1700,7 +1721,11 @@ Examples:
                 "scope": {
                     "type": "string",
                     "enum": ["user", "project"],
-                    "description": "Memory scope (default: user)",
+                    "description": (
+                        "Memory scope (default: user). Identity and soul actions are "
+                        "global-only for prompt injection; use user for identify, "
+                        "write_identity, and write_soul."
+                    ),
                 },
                 "query": {
                     "type": "string",

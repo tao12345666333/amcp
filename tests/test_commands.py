@@ -393,3 +393,25 @@ class TestBuiltinCommands:
         assert cmd is not None
         result = manager.execute_command(cmd, args, project_root=tmp_path / "project")
         assert "AMCP Atlas" in result.content
+
+    def test_profile_commands_reject_project_scope(
+        self,
+        manager: CommandManager,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        """Soul and identity commands are global-only."""
+        from amcp import memory
+        from amcp.memory import MemoryManager, MemoryStore
+
+        mgr = MemoryManager(project_root=tmp_path / "project")
+        mgr.user_store = MemoryStore(tmp_path / "user-memory")
+        monkeypatch.setattr(memory, "_memory_manager", mgr)
+        monkeypatch.setattr(memory, "_memory_manager_project_root", (tmp_path / "project").resolve())
+
+        cmd, args = manager.parse_input("/soul project set Project persona")
+        assert cmd is not None
+        result = manager.execute_command(cmd, args, project_root=tmp_path / "project")
+
+        assert result.message_type == "error"
+        assert "global-only" in result.content

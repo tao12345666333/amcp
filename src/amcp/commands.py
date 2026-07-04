@@ -762,8 +762,14 @@ def _make_profile_command(command_name: str, label: str, file_name: str) -> Slas
         raw_args = args.strip()
         scope = "user"
         if raw_args == "project" or raw_args.startswith("project "):
-            scope = "project"
-            raw_args = raw_args[len("project") :].strip()
+            return CommandResult(
+                type="message",
+                content=(
+                    f"{label} is global-only and is saved to the user scope. "
+                    f"Use /{command_name} set <{label.lower()} text>."
+                ),
+                message_type="error",
+            )
 
         action, _, content = raw_args.partition(" ")
         action = action or "show"
@@ -786,7 +792,7 @@ def _make_profile_command(command_name: str, label: str, file_name: str) -> Slas
             if not content:
                 return CommandResult(
                     type="message",
-                    content=f"Usage: /{command_name} [project] set <{label.lower()} text>",
+                    content=f"Usage: /{command_name} set <{label.lower()} text>",
                     message_type="error",
                 )
             if command_name == "soul":
@@ -801,13 +807,13 @@ def _make_profile_command(command_name: str, label: str, file_name: str) -> Slas
 
         return CommandResult(
             type="message",
-            content=f"Usage: /{command_name} [show|set <text>] or /{command_name} project set <text>",
+            content=f"Usage: /{command_name} [show|set <text>]",
             message_type="error",
         )
 
     return SlashCommand(
         name=command_name,
-        description=f"Show or set durable {label.lower()} ({file_name})",
+        description=f"Show or set durable global {label.lower()} ({file_name})",
         kind=CommandKind.BUILT_IN,
         action=profile_action,
     )

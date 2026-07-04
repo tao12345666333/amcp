@@ -186,6 +186,10 @@ class MemoryStore:
         except Exception as e:
             logger.error(f"Could not write identity: {e}")
 
+    def has_custom_persona(self) -> bool:
+        """Return whether this store has a non-empty custom soul or identity."""
+        return bool(self.read_soul().strip() or self.read_identity().strip())
+
     def get_persona_context(self, label: str, include_default_soul: bool = False) -> str:
         """Generate persona context for system prompt injection."""
         parts: list[str] = []
@@ -579,18 +583,17 @@ class MemoryManager:
         return "\n\n".join(parts)
 
     def get_persona_context(self) -> str:
-        """Get combined soul and identity context from both stores."""
-        parts = []
+        """Get the effective global persona context.
 
-        user_ctx = self.user_store.get_persona_context("User-level", include_default_soul=True)
-        if user_ctx:
-            parts.append(user_ctx)
-
-        project_ctx = self.project_store.get_persona_context("Project-level")
-        if project_ctx:
-            parts.append(project_ctx)
-
-        return "\n\n".join(parts)
+        Persona is intentionally global-only: long-running agents should keep a
+        single durable identity across Telegram, CLI, and project sessions.
+        Project memory is still merged separately, but project SOUL.md and
+        IDENTITY.md are not injected to avoid conflicting identities.
+        """
+        return self.user_store.get_persona_context(
+            "Global",
+            include_default_soul=not self.user_store.has_custom_persona(),
+        )
 
     def read_soul(self, scope: str = "user", include_default: bool = False) -> str:
         """Read soul from the specified scope."""

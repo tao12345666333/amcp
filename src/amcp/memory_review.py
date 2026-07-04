@@ -48,7 +48,10 @@ Use it proactively — do not wait for the user to ask.
   ✓ "Project uses pytest with xdist"  ✗ "Run tests with pytest -n 4"
 
 **Scope:** Use scope="user" for global preferences, scope="project" for \
-project-specific facts. Default is "user".
+project-specific facts. Agent identity and soul are global-only: when the user \
+names you, defines who you are, or changes your long-term persona, use \
+scope="user" with "identify", "write_identity", or "write_soul" unless they \
+explicitly ask you to record a non-persona project fact. Default is "user".
 
 **Searching past context:** When the user references a prior conversation or \
 you need cross-session context, use `memory` action: "search" before asking \
