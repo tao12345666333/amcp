@@ -73,7 +73,25 @@ class TestGetModelContextWindow:
     def test_unknown_model_returns_default(self):
         """Test unknown model returns default window."""
         result = get_model_context_window("some-unknown-model-xyz")
-        assert result == 32_000  # DEFAULT_CONTEXT_WINDOW
+        assert result == 200_000  # DEFAULT_CONTEXT_WINDOW
+
+    def test_model_config_context_window_override(self):
+        """Test that model_config.context_window takes highest priority."""
+        from amcp.config import ModelConfig
+
+        mc = ModelConfig(context_window=1048576)
+        result = get_model_context_window("some-unknown-model-xyz", model_config=mc)
+        assert result == 1048576
+
+    def test_model_config_provider_id_forwarded(self):
+        """Test that model_config.provider_id is forwarded to DB lookup."""
+        from amcp.config import ModelConfig
+
+        mc = ModelConfig(provider_id="test-provider")
+        # Even with provider_id, unknown model should still return default
+        # (this test just verifies provider_id is accepted without error)
+        result = get_model_context_window("some-unknown-model-xyz", model_config=mc)
+        assert result > 0
 
 
 class TestEstimateTokens:

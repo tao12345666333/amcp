@@ -19,7 +19,7 @@ from rich.text import Text
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .compaction import SmartCompactor, estimate_tokens
-from .config import AMCPConfig, ContextConfig, load_config
+from .config import AMCPConfig, ContextConfig, ModelConfig, load_config
 from .hooks import (
     HookDecision,
     run_post_tool_use_hooks,
@@ -245,11 +245,16 @@ class Agent:
             return resolved_cfg.chat.model
         return "DeepSeek-V3.1-Terminus"
 
-    def _calculate_context_budget(self, conversation_tokens: int, model_name: str | None = None) -> ContextBudget:
+    def _calculate_context_budget(
+        self,
+        conversation_tokens: int,
+        model_name: str | None = None,
+        model_config: ModelConfig | None = None,
+    ) -> ContextBudget:
         """Calculate context budget for current request."""
         context_cfg = self._resolve_context_config()
         model = model_name or self._resolve_model_name()
-        manager = ContextBudgetManager(model=model, config=context_cfg)
+        manager = ContextBudgetManager(model=model, config=context_cfg, model_config=model_config)
         return manager.calculate_budget(conversation_tokens)
 
     def _trim_to_token_budget(self, text: str, token_budget: int) -> str:
@@ -285,7 +290,11 @@ class Agent:
         model_name = self._resolve_model_name(cfg)
 
         conversation_tokens = estimate_tokens(self.conversation_history)
-        budget = self._calculate_context_budget(conversation_tokens, model_name=model_name)
+        budget = self._calculate_context_budget(
+            conversation_tokens,
+            model_name=model_name,
+            model_config=cfg.chat.model_config if cfg.chat else None,
+        )
 
         # Note: MCP tools info will be loaded asynchronously during execution
         mcp_tools_info: list[dict[str, Any]] = []
@@ -598,7 +607,11 @@ class Agent:
                 api_key = _resolve_api_key(None, cfg.chat)
                 client = _make_client(base_url, api_key)
                 model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
-                compactor = SmartCompactor(client, model)
+                compactor = SmartCompactor(
+                    client,
+                    model,
+                    model_config=cfg.chat.model_config if cfg.chat else None,
+                )
 
                 if compactor.should_compact(history_to_add):
                     # Pre-compaction memory flush: save durable memories before
@@ -815,7 +828,10 @@ class Agent:
             return tools, registry
 
         conversation_tokens = estimate_tokens(conversation)
-        budget = self._calculate_context_budget(conversation_tokens)
+        budget = self._calculate_context_budget(
+            conversation_tokens,
+            model_config=cfg.chat.model_config if cfg.chat else None,
+        )
         usage_snapshot = ToolUsageTracker.from_history(self.tool_calls_history)
 
         selection = self._progressive_tool_view.select_tools(

@@ -39,9 +39,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openai import OpenAI
+
+if TYPE_CHECKING:
+    from .config import ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +68,7 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 }
 
 # Default context window for unknown models
-DEFAULT_CONTEXT_WINDOW = 32_000
+DEFAULT_CONTEXT_WINDOW = 200_000
 
 
 class CompactionStrategy(Enum):
@@ -157,27 +160,41 @@ COMPACT_PROMPT = """You are tasked with compacting a coding conversation context
 """
 
 
-def get_model_context_window(model: str, provider_id: str | None = None) -> int:
+def get_model_context_window(
+    model: str,
+    provider_id: str | None = None,
+    model_config: ModelConfig | None = None,
+) -> int:
     """Get the context window size for a model.
 
     This function checks multiple sources in order:
-    1. Models database cache (from models.dev)
-    2. Built-in MODEL_CONTEXT_WINDOWS dictionary
-    3. Pattern-based heuristics
-    4. Default fallback (32K)
+    1. User-provided ``model_config.context_window`` override (highest priority)
+    2. Models database cache (from models.dev), using ``model_config.provider_id``
+       when available for more accurate lookup
+    3. Built-in MODEL_CONTEXT_WINDOWS dictionary
+    4. Pattern-based heuristics
+    5. Default fallback
 
     Args:
         model: Model name or identifier
         provider_id: Optional provider ID for more accurate lookup
+        model_config: Optional ModelConfig with explicit user overrides
 
     Returns:
         Context window size in tokens
     """
-    # First, try to get from models database
+    # Highest priority: explicit user override from config
+    if model_config and model_config.context_window:
+        return model_config.context_window
+
+    # Use provider_id from model_config if not explicitly provided
+    effective_provider_id = provider_id or (model_config.provider_id if model_config else None)
+
+    # Try to get from models database
     try:
         from .models_db import get_context_window_from_database
 
-        db_result = get_context_window_from_database(model, provider_id)
+        db_result = get_context_window_from_database(model, effective_provider_id)
         if db_result != DEFAULT_CONTEXT_WINDOW:
             return db_result
     except ImportError:
@@ -334,6 +351,7 @@ class SmartCompactor:
         client: OpenAI,
         model: str,
         config: CompactionConfig | None = None,
+        model_config: ModelConfig | None = None,
     ):
         """Initialize the smart compactor.
 
@@ -341,13 +359,14 @@ class SmartCompactor:
             client: OpenAI client for generating summaries
             model: Model name for context window detection
             config: Optional compaction configuration
+            model_config: Optional ModelConfig with explicit user overrides
         """
         self.client = client
         self.model = model
         self.config = config or CompactionConfig()
 
         # Calculate dynamic thresholds
-        self.context_window = get_model_context_window(model)
+        self.context_window = get_model_context_window(model, model_config=model_config)
         self._update_thresholds()
 
         logger.info(
@@ -699,6 +718,7 @@ def create_compactor(
     strategy: str = "summary",
     threshold_ratio: float = 0.7,
     target_ratio: float = 0.3,
+    model_config: ModelConfig | None = None,
 ) -> SmartCompactor:
     """Create a smart compactor with custom settings.
 
@@ -708,6 +728,7 @@ def create_compactor(
         strategy: Compaction strategy ("summary", "truncate", "sliding_window", "hybrid")
         threshold_ratio: When to trigger compaction (ratio of context window)
         target_ratio: Target size after compaction
+        model_config: Optional ModelConfig with explicit user overrides
 
     Returns:
         Configured SmartCompactor instance
@@ -725,4 +746,4 @@ def create_compactor(
         target_ratio=target_ratio,
     )
 
-    return SmartCompactor(client, model, config)
+    return SmartCompactor(client, model, config, model_config=model_config)

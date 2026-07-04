@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..compaction import get_model_context_window
+
+if TYPE_CHECKING:
+    from ..config import ModelConfig
 
 
 @dataclass
@@ -35,8 +39,13 @@ class ContextBudgetDefaults:
 class ContextBudgetManager:
     """Allocate token budget based on model window and conversation size."""
 
-    def __init__(self, model: str, config: object | None = None):
-        self.model_window = get_model_context_window(model)
+    def __init__(
+        self,
+        model: str,
+        config: object | None = None,
+        model_config: ModelConfig | None = None,
+    ):
+        self.model_window = get_model_context_window(model, model_config=model_config)
         self.config = config or ContextBudgetDefaults()
 
     def calculate_budget(self, conversation_tokens: int) -> ContextBudget:

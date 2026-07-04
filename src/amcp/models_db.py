@@ -22,7 +22,7 @@ MODELS_DEV_API_URL = "https://models.dev/api.json"
 DEFAULT_CACHE_TTL_DAYS = 7
 
 # Default context window for unknown models
-DEFAULT_CONTEXT_WINDOW = 32_000
+DEFAULT_CONTEXT_WINDOW = 200_000
 
 
 @dataclass
