@@ -35,7 +35,7 @@ A Lego-style coding agent CLI with built-in tools (grep, read files, bash execut
 ### Quick Run with uvx (no install needed)
 
 ```bash
-# Initialize config first (API keys, model settings)
+# Initialize config first (model and runtime settings)
 uvx amcp-agent init
 
 # Run the agent
@@ -126,7 +126,7 @@ amcp tui                                # launch terminal UI
 |------|-------------|
 | **read_file** | Read text files with slice mode (line ranges) or indentation mode (anchor-based context) |
 | **grep** | Search for patterns in files using ripgrep |
-| **bash** | Execute bash commands for file operations and system tasks |
+| **bash** | Execute shell commands from the request working directory; large output is truncated |
 | **think** | Internal reasoning and planning |
 | **todo** | Manage a todo list to track tasks during complex operations |
 | **apply_patch** | Apply diff-based patches to files (see [docs/apply-patch.md](docs/apply-patch.md)) |
@@ -230,12 +230,15 @@ amcp attach http://localhost:4096  # connect from another terminal
 **API endpoints** (visit `/docs` for interactive Swagger UI):
 - `GET /api/v1/health` - health check
 - `POST /api/v1/sessions` - create sessions
-- `POST /api/v1/sessions/{id}/messages` - send messages
+- `POST /api/v1/sessions/{id}/prompt` - submit a prompt and return request status
+- `POST /api/v1/sessions/{id}/prompt/stream` - submit a prompt and stream JSON-line events
+- `POST /api/v1/sessions/{id}/cancel` - cancel current session work
+- `DELETE /api/v1/sessions/{id}` - delete a session
 - `GET /api/v1/tools` - list available tools
 - `GET /api/v1/agents` - list agent types
 - `WS /ws` - WebSocket for live events
 
-Supports CORS configuration and optional API key authentication.
+Supports CORS configuration and optional server-side authentication.
 
 ## Telegram Integration
 
@@ -243,11 +246,13 @@ AMCP provides a Telegram Bot interface for remote interaction with agents. Insta
 
 **Features:**
 - DM and group chat support with configurable policies (allowlist, mention, open, disabled)
-- Secure pairing via one-time codes
+- Pairing via one-time codes
 - Topic/thread support in group chats
 - Notification system (CI failures, PR reviews, task completions, error alerts)
 - Webhook and polling modes
-- Rate limiting and session timeout
+- Rate limiting, session timeout, typing indicators, and bounded per-session queues
+- Shared slash commands including `/new`, `/session list`, `/session switch <id>`, `/clear`, and `/cancel`
+- `/new` creates a fresh session and abandons the previous Telegram session's active work and queued messages
 
 Configure via `amcp telegram setup` or in `config.toml` under `[telegram]`.
 
@@ -316,22 +321,22 @@ amcp init
 ```toml
 [chat]
 api_type = "openai"            # "openai" (default), "openai_responses", or "anthropic"
-base_url = "https://api.openai.com/v1"
-model = "gpt-4o"
-api_key = "your-api-key"       # or set OPENAI_API_KEY env var
+base_url = "https://example.com/v1"
+model = "provider/model-name"
 mcp_tools_enabled = true
 write_tool_enabled = true
 edit_tool_enabled = true
 tool_loop_limit = 300
 default_max_lines = 400
+default_agent = "coder"        # optional: coder, explorer, planner, focused_coder
+max_queue_size = 100
 ```
 
 **Anthropic Claude:**
 ```toml
 [chat]
 api_type = "anthropic"
-model = "claude-sonnet-4-20250514"
-api_key = "your-anthropic-api-key"  # or set ANTHROPIC_API_KEY env var
+model = "claude-model-name"
 ```
 
 Install with: `pip install amcp-agent[anthropic]`
@@ -347,7 +352,6 @@ url = "https://mcp.exa.ai/mcp"
 [servers.custom]
 command = "npx"
 args = ["-y", "@some/mcp-server"]
-env.API_KEY = "your-key"
 ```
 
 ### Context Optimization
@@ -365,10 +369,6 @@ response_ratio = 0.30          # reserve 30% of context for response
 [server]
 host = "127.0.0.1"
 port = 4096
-
-[server.auth]
-enabled = false
-api_keys = []
 ```
 
 ### Telegram Configuration
@@ -376,12 +376,20 @@ api_keys = []
 ```toml
 [telegram]
 enabled = false
-bot_token = "your-bot-token"   # or set AMCP_TELEGRAM_BOT_TOKEN env var
-allowed_users = [123456789]    # or set AMCP_TELEGRAM_ALLOWED_USERS env var
-admin_users = [123456789]      # or set AMCP_TELEGRAM_ADMIN_USERS env var
+allowed_users = [123456789]
+admin_users = [123456789]
 dm_policy = "allowlist"        # "allowlist", "pairing", "open", "disabled"
 group_policy = "mention"       # "mention", "open", "allowlist", "disabled"
+max_queue_size = 20
+typing_indicator = true
+
+[telegram.pairing]
+enabled = true
+code_ttl_seconds = 1800
 ```
+
+The Telegram runtime also supports group-specific and topic-specific policy overrides under
+`[telegram.groups."<chat_id>"]` and `[telegram.groups."<chat_id>".topics."<topic_id>"]`.
 
 ### Automation Configuration
 
@@ -429,8 +437,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
 
 - `rg` (ripgrep) must be installed and on PATH for the grep tool.
 - MCP servers must be installed separately and runnable (stdio transport).
-- API keys can be provided via config file or environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
-- Telegram env vars: `AMCP_TELEGRAM_BOT_TOKEN`, `AMCP_TELEGRAM_ALLOWED_USERS`, `AMCP_TELEGRAM_ADMIN_USERS`.
+- The agent does not add an application-level retry around model provider failures; provider client behavior applies.
+- Tool-call guardrails include per-request `bash` limits, output truncation for `bash`, and session-level `read_file` limits.
 
 ## License
 

@@ -2,135 +2,143 @@
 
 ## Project Overview
 
-AMCP (Agent Model Context Protocol) is a Python-based AI coding agent with multi-agent support, MCP integration, and smart context management.
+AMCP is a Python coding-agent runtime with a CLI, HTTP/WebSocket server, ACP support,
+Telegram integration, MCP tools, multi-agent delegation, skills, hooks, memory, and
+progressive context management.
 
 ## Code Style
 
-- Python 3.11+ with modern type hints
-- Follow PEP 8 conventions
-- Maximum line length: 100 characters (enforced by ruff)
-- Use dataclasses for configuration and data structures
+- Python 3.11+ with modern type hints.
+- Follow PEP 8 conventions.
+- Maximum line length is 100 characters, enforced by ruff.
+- Use dataclasses for configuration and lightweight data structures.
+- Keep public functions and classes documented with docstrings.
+- Use the `logging` module for runtime diagnostics, not `print`.
 
 ## Architecture Patterns
 
-- Modular design with clear separation of concerns
-- Tools are implemented as classes inheriting from `BaseTool`
-- Agents are configured via `AgentSpec` and `ResolvedAgentSpec`
-- Configuration uses TOML format stored in `~/.config/amcp/`
+- Tools are classes inheriting from `BaseTool` in `src/amcp/tools.py`.
+- Agents are configured through `AgentSpec` and `ResolvedAgentSpec`.
+- Built-in agent types live in `src/amcp/multi_agent.py`.
+- Configuration is TOML and is loaded through `src/amcp/config.py`.
+- Project rules are loaded from `AGENTS.md` through `src/amcp/project_rules.py`.
+- HTTP/WebSocket server code lives under `src/amcp/server/`.
+- Telegram command handling is split between `src/amcp/telegram/bot.py` and
+  `src/amcp/telegram/handlers.py`.
+- Keep shared slash-command behavior in `src/amcp/interaction.py` when possible so CLI,
+  server, and Telegram stay consistent.
+
+## Agent Behavior
+
+- Conversation history is persisted per session.
+- Per-request tool counters should reset for each user prompt; session-level history may still
+  be used for diagnostics and caps.
+- `read_file` has conversation and session limits.
+- `bash` runs from the request working directory when available, has a per-request cap, and
+  truncates large output.
+- Telegram `/new` should create a fresh session, abandon old active work, and clear old queued
+  messages.
+- Model provider failures currently bubble up through `AgentExecutionError`; do not assume an
+  AMCP application-level retry exists.
 
 ## Testing
 
-- Use pytest for all tests
-- Test files should match source files: `test_<modulename>.py`
-- Prefer unit tests with mocking for external dependencies
-- Maintain reasonable test coverage
+- Use pytest for tests.
+- Prefer focused unit tests with mocks for external integrations.
+- For behavior shared across transports, test the shared interaction layer and at least one
+  transport-specific adapter.
+- For Telegram session behavior, include tests for task cancellation, queue clearing, and stale
+  response suppression.
 
-## File Structure
+## Important Files
 
-```
+```text
 src/amcp/
-├── agent.py         # Main Agent class
-├── agent_spec.py    # Agent configuration specs
-├── tools.py         # Tool definitions and registry
-├── cli.py           # Typer CLI commands
-├── config.py        # TOML configuration handling
-├── compaction.py    # Smart context compaction
-├── models_db.py     # Model database from models.dev
-├── project_rules.py # AGENTS.md loading
-└── ...
+├── agent.py              # Main Agent class and tool loop
+├── agent_spec.py         # Agent configuration specs
+├── tools.py              # Built-in tool definitions and registry
+├── cli.py                # Typer CLI commands
+├── config.py             # TOML configuration handling
+├── compaction.py         # Smart context compaction
+├── interaction.py        # Shared slash-command routing
+├── models_db.py          # Model metadata lookup
+├── project_rules.py      # AGENTS.md loading
+├── server/               # HTTP/WebSocket server
+├── telegram/             # Telegram integration
+└── progressive/          # Progressive context views
 ```
 
 ## Dependencies
 
-- `typer` for CLI
-- `httpx` for HTTP requests
-- `rich` for terminal UI
-- `pydantic` for data validation
+- `typer` for CLI.
+- `rich` for terminal UI.
+- `pydantic` for data validation.
+- `httpx` for HTTP clients.
+- `fastapi` and `uvicorn` for the server.
+- `openai` for OpenAI-compatible providers.
+- Optional extras provide Anthropic, Telegram, TUI, and development dependencies.
 
-## Coding Guidelines
+## GitHub Safety
 
-1. **Error Handling**: Use meaningful exception classes
-2. **Logging**: Use the `logging` module, not print statements
-3. **Configuration**: Support both config files and environment variables
-4. **Documentation**: Docstrings for all public functions and classes
+- Do not use `gh` or another GitHub tool to create or edit PRs, issues, or comments unless the
+  user explicitly confirms that action.
+- Before preparing PR text, check for `.github/PULL_REQUEST_TEMPLATE.md` or files under
+  `.github/PULL_REQUEST_TEMPLATE/` and follow the template when present.
+- When a GitHub comment or PR body is explicitly requested, draft it in a temporary Markdown file
+  and preview the exact body before posting.
 
 ## Pre-Commit Checks
 
-Before committing code, always run the following checks and ensure they pass:
+Before committing code, run the checks that match the change. For normal code changes, prefer:
 
 ```bash
-# Format code
-make format
-
-# Check for lint errors
-ruff check src/
-
-# If lint errors are found, fix them with:
-ruff check src/ --fix
+ruff format src tests
+ruff check src tests
+python -m pytest -q
 ```
+
+For docs-only changes, run at least a targeted grep/lint sanity check and inspect the diff.
 
 ## Release Workflow
 
-When releasing a new version, follow these steps **in order**:
-
-### 1. Update Version Numbers
-
-Version numbers must be updated in **ALL** of the following locations:
+When releasing a new version, update all version references in this order:
 
 | File | Location | Format |
 |------|----------|--------|
-| `pyproject.toml` | Line 3 | `version = "X.Y.Z"` |
-| `src/amcp/_version.py` | Line 7 | `__version__ = "X.Y.Z"` |
-| `src/amcp/acp_agent.py` | In `initialize()` method | `version="X.Y.Z"` |
+| `pyproject.toml` | project metadata | `version = "X.Y.Z"` |
+| `src/amcp/_version.py` | module constant | `__version__ = "X.Y.Z"` |
+| `src/amcp/acp_agent.py` | `initialize()` method | `version="X.Y.Z"` |
 
-**Quick search command to verify all locations are updated:**
+Verify the version update with:
+
 ```bash
 grep -rn "X.Y.Z" pyproject.toml src/amcp/_version.py src/amcp/acp_agent.py
 ```
 
-### 2. Run Quality Checks
+Then run:
 
 ```bash
-# Format code
 ruff format src tests
-
-# Check for lint errors and fix
-ruff check src tests --fix
-
-# Run all tests
-python -m pytest tests/ -q
+ruff check src tests
+python -m pytest -q
 ```
 
-### 3. Commit and Tag
+Commit, create an annotated tag, and push the branch plus tags:
 
 ```bash
-# Add all changes
 git add -A
-
-# Commit with version bump message
 git commit -m "chore: bump version to X.Y.Z
 
 Changes in this release:
-- <list key changes>"
-
-# Create annotated tag
+- <notable changes>"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-
-# Push to remote with tags
 git push origin main --tags
 ```
 
-### 4. Verify Release
+After publishing, verify the installed version reports `X.Y.Z`.
 
-After pushing, verify the version is correct:
-```bash
-uvx amcp-agent -v
-# Should show: amcp version X.Y.Z (git: <hash>)
-```
+### Version Numbering
 
-### Version Numbering Guidelines
-
-- **Patch (X.Y.Z → X.Y.Z+1)**: Bug fixes, documentation updates
-- **Minor (X.Y.Z → X.Y+1.0)**: New features, non-breaking changes
-- **Major (X.Y.Z → X+1.0.0)**: Breaking changes
-
+- Patch: bug fixes and documentation updates.
+- Minor: new features and non-breaking behavior changes.
+- Major: breaking changes.
