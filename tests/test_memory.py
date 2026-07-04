@@ -202,24 +202,26 @@ class TestMemoryManager:
 
     def test_persona_context_uses_global_persona_only(self, manager: MemoryManager):
         """Persona context uses global identity and ignores project persona."""
-        manager.write_soul("Project soul marker", scope="project")
         manager.write_identity("Agent callsign: Atlas", scope="user")
 
         ctx = manager.get_persona_context()
         assert "Agent callsign: Atlas" in ctx
-        assert "Project soul marker" not in ctx
         assert "long-running autonomous coding agent" not in ctx
 
-    def test_persona_context_falls_back_to_default_without_global_persona(
-        self,
-        manager: MemoryManager,
-    ):
+    def test_persona_rejects_project_scope(self, manager: MemoryManager):
+        """Soul and identity are global-only."""
+        with pytest.raises(ValueError, match="global-only"):
+            manager.write_soul("Project soul marker", scope="project")
+        with pytest.raises(ValueError, match="global-only"):
+            manager.write_identity("Project callsign: Atlas", scope="project")
+        with pytest.raises(ValueError, match="global-only"):
+            manager.read_soul(scope="project")
+
+    def test_persona_context_falls_back_to_default_without_global_persona(self, manager: MemoryManager):
         """Default soul is used only when no global soul or identity exists."""
-        manager.write_identity("Project callsign: Atlas", scope="project")
 
         ctx = manager.get_persona_context()
         assert "long-running autonomous coding agent" in ctx
-        assert "Project callsign: Atlas" not in ctx
 
     def test_cross_scope_search(self, manager: MemoryManager):
         """Search finds results across both scopes."""
@@ -320,6 +322,35 @@ class TestMemoryTool:
 
         assert "User data" in user_result.content
         assert "Project data" in project_result.content
+
+    def test_project_root_parameter_directs_project_scope(self, tmp_path: Path, monkeypatch):
+        """Internal project_root parameter directs project memory to the current project."""
+        from amcp import memory
+
+        reset_memory_manager()
+        monkeypatch.setattr(memory, "CONFIG_DIR", tmp_path / "config")
+        project_a = tmp_path / "project-a"
+        project_b = tmp_path / "project-b"
+
+        self.tool.execute(
+            action="write",
+            content="Project A data",
+            scope="project",
+            project_root=str(project_a),
+        )
+        self.tool.execute(
+            action="write",
+            content="Project B data",
+            scope="project",
+            project_root=str(project_b),
+        )
+
+        a_result = self.tool.execute(action="read", scope="project", project_root=str(project_a))
+        b_result = self.tool.execute(action="read", scope="project", project_root=str(project_b))
+
+        assert "Project A data" in a_result.content
+        assert "Project B data" in b_result.content
+        assert "Project B data" not in a_result.content
 
     def test_soul_and_identity_actions(self):
         """Memory tool manages durable soul and identity."""

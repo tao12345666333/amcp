@@ -4,20 +4,13 @@ This module implements automatic loading of project-specific rules and instructi
 from AGENTS.md files, similar to OpenCode's approach. These files provide context
 and instructions to guide the AI coding agent within a project.
 
-File Locations and Precedence (highest to lowest):
-1. Work directory AGENTS.md (or nested subdirectories)
-2. Parent directories up to repository root
-3. Global user rules: ~/.config/amcp/AGENTS.md
+File Locations and Precedence (lowest to highest):
+1. Home rules: ~/AGENTS.md or ~/agents.md
+2. Project rules from repository root to current working directory
 
 Supported file names:
 - AGENTS.md (primary)
-- AGENT.md
-- .agents.md
 - agents.md
-
-Special features:
-- External file references: @rules/general.md (loaded lazily)
-- Override files: AGENTS.override.md (temporary overrides)
 """
 
 from __future__ import annotations
@@ -32,19 +25,11 @@ logger = logging.getLogger(__name__)
 # Supported file names in priority order
 AGENTS_FILE_NAMES = [
     "AGENTS.md",
-    "AGENT.md",
-    ".agents.md",
     "agents.md",
 ]
 
 # Override file names
-OVERRIDE_FILE_NAMES = [
-    "AGENTS.override.md",
-    "AGENT.override.md",
-]
-
-# Global config directory
-GLOBAL_CONFIG_DIR = Path.home() / ".config" / "amcp"
+OVERRIDE_FILE_NAMES: list[str] = []
 
 
 def find_git_root(start_path: Path) -> Path | None:
@@ -83,7 +68,10 @@ def find_agents_file(directory: Path) -> Path | None:
 
 
 def find_override_file(directory: Path) -> Path | None:
-    """Find an AGENTS.override.md file in the given directory.
+    """Find an override file in the given directory.
+
+    Override files are no longer part of the supported discovery contract. This
+    helper remains for compatibility with older imports.
 
     Args:
         directory: Directory to search in
@@ -91,10 +79,6 @@ def find_override_file(directory: Path) -> Path | None:
     Returns:
         Path to the override file or None if not found
     """
-    for filename in OVERRIDE_FILE_NAMES:
-        filepath = directory / filename
-        if filepath.is_file():
-            return filepath
     return None
 
 
@@ -138,24 +122,26 @@ def discover_project_agents_files(work_dir: Path) -> list[Path]:
         if agents_file and agents_file not in files:
             files.append(agents_file)
 
-        # Also check for override files
-        override_file = find_override_file(directory)
-        if override_file and override_file not in files:
-            files.append(override_file)
-
     return files
 
 
 def get_global_agents_file() -> Path | None:
-    """Get the global AGENTS.md file if it exists.
+    """Get the user-wide home AGENTS file if it exists.
 
     Returns:
-        Path to global agents file or None
+        Path to home agents file or None
     """
-    global_file = GLOBAL_CONFIG_DIR / "AGENTS.md"
-    if global_file.is_file():
-        return global_file
-    return None
+    files = get_global_agents_files()
+    return files[0] if files else None
+
+
+def get_global_agents_files() -> list[Path]:
+    """Get user-wide AGENTS files from the home directory."""
+    files: list[Path] = []
+    agents_file = find_agents_file(Path.home())
+    if agents_file:
+        files.append(agents_file)
+    return files
 
 
 def parse_external_references(content: str) -> list[str]:
@@ -243,10 +229,8 @@ class ProjectRulesLoader:
         """
         files = []
 
-        # 1. Global rules (lowest priority)
-        global_file = get_global_agents_file()
-        if global_file:
-            files.append(global_file)
+        # 1. Home rules (lowest priority)
+        files.extend(get_global_agents_files())
 
         # 2. Project rules (higher priority, from root to work_dir)
         project_files = discover_project_agents_files(self.work_dir)

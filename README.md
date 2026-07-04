@@ -163,7 +163,8 @@ Skills are reusable knowledge or behavior definitions (markdown with YAML frontm
 **Discovery locations (increasing precedence):**
 1. Built-in skills (bundled with AMCP)
 2. User skills: `~/.config/amcp/skills/<name>/SKILL.md`
-3. Project skills: `.amcp/skills/<name>/SKILL.md`
+3. Home agent skills: `~/.agents/skills/<name>/SKILL.md`
+4. Project skills: `.amcp/skills/<name>/SKILL.md`
 
 Skills support scheduled (cron) and event-based auto-triggers for autonomous execution. Hot reload is enabled when running the HTTP server.
 

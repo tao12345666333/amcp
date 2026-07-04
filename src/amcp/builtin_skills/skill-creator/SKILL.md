@@ -16,12 +16,13 @@ equipped with procedural knowledge that no model can fully possess.
 
 ### Skill Location Policy
 
-When creating a skill, place it in one of these two roots:
+When creating a skill, place it in one of these roots:
 
 1. Project-local: `$workspace/.amcp/skills/<skill-name>`
-2. User-level: `~/.config/amcp/skills/<skill-name>` (shared across workspaces)
+2. Home agent-level: `~/.agents/skills/<skill-name>` (shared across agent tools)
+3. User-level: `~/.config/amcp/skills/<skill-name>` (shared across AMCP workspaces)
 
-Prefer project-local by default. Use user-level only when the user explicitly wants the skill available across multiple workspaces.
+Prefer project-local by default. Use home agent-level or user-level only when the user explicitly wants the skill available across multiple workspaces.
 
 ### What Skills Provide
 
@@ -172,6 +173,9 @@ python <path>/scripts/init_skill.py my-skill --path .amcp/skills
 
 # User-level skill
 python <path>/scripts/init_skill.py my-skill --path ~/.config/amcp/skills
+
+# Home agent-level skill
+python <path>/scripts/init_skill.py my-skill --path ~/.agents/skills
 
 # With specific resources
 python <path>/scripts/init_skill.py my-skill --path .amcp/skills --resources scripts,references

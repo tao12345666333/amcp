@@ -18,6 +18,10 @@ Skills are stored in directories containing a `SKILL.md` file:
 └── code-review/
     └── SKILL.md
 
+~/.agents/skills/           # Home agent skills
+└── personal-helper/
+    └── SKILL.md
+
 .amcp/skills/              # Project-level skills
 └── my-project-skill/
     └── SKILL.md
@@ -43,8 +47,12 @@ The frontmatter must include:
 
 ### Discovery Locations
 
-1. **User skills**: `~/.config/amcp/skills/<skill-name>/SKILL.md`
-2. **Project skills**: `.amcp/skills/<skill-name>/SKILL.md` (takes precedence)
+Discovery uses increasing precedence. Later locations override earlier same-name skills.
+
+1. **Built-in skills** bundled with AMCP
+2. **User skills**: `~/.config/amcp/skills/<skill-name>/SKILL.md`
+3. **Home agent skills**: `~/.agents/skills/<skill-name>/SKILL.md`
+4. **Project skills**: `.amcp/skills/<skill-name>/SKILL.md`
 
 ### Using Skills
 

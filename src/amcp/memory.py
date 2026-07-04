@@ -562,6 +562,11 @@ class MemoryManager:
         """
         return self.project_store if scope == "project" else self.user_store
 
+    def _ensure_global_persona_scope(self, scope: str) -> None:
+        """Reject project-scoped persona operations."""
+        if scope != "user":
+            raise ValueError("Agent identity and soul are global-only; use scope='user'.")
+
     def get_memory_context(self) -> str:
         """Get combined memory context from both stores.
 
@@ -597,23 +602,23 @@ class MemoryManager:
 
     def read_soul(self, scope: str = "user", include_default: bool = False) -> str:
         """Read soul from the specified scope."""
-        store = self._store_for_scope(scope)
-        return store.read_soul(include_default=include_default)
+        self._ensure_global_persona_scope(scope)
+        return self.user_store.read_soul(include_default=include_default)
 
     def write_soul(self, content: str, scope: str = "user") -> None:
         """Write soul to the specified scope."""
-        store = self._store_for_scope(scope)
-        store.write_soul(content)
+        self._ensure_global_persona_scope(scope)
+        self.user_store.write_soul(content)
 
     def read_identity(self, scope: str = "user") -> str:
         """Read identity from the specified scope."""
-        store = self._store_for_scope(scope)
-        return store.read_identity()
+        self._ensure_global_persona_scope(scope)
+        return self.user_store.read_identity()
 
     def write_identity(self, content: str, scope: str = "user") -> None:
         """Write identity to the specified scope."""
-        store = self._store_for_scope(scope)
-        store.write_identity(content)
+        self._ensure_global_persona_scope(scope)
+        self.user_store.write_identity(content)
 
     def read_long_term(self, scope: str = "user") -> str:
         """Read long-term memory from the specified scope.

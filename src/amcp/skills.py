@@ -11,6 +11,7 @@ markdown files with YAML frontmatter containing:
 Skills are discovered from (in order of increasing precedence):
 - Built-in skills: Bundled with AMCP (e.g., skill-creator)
 - User skills: ~/.config/amcp/skills/<skill-name>/SKILL.md
+- Home agent skills: ~/.agents/skills/<skill-name>/SKILL.md
 - Project skills: .amcp/skills/<skill-name>/SKILL.md (highest precedence)
 """
 
@@ -94,6 +95,7 @@ class SkillManager:
     Skills are discovered from three sources (lowest to highest precedence):
     - Built-in skills: Bundled with AMCP
     - User-level skills: ~/.config/amcp/skills/
+    - Home agent skills: ~/.agents/skills/
     - Project-level skills: .amcp/skills/
     """
 
@@ -114,9 +116,8 @@ class SkillManager:
 
     @staticmethod
     def get_agents_skills_dir(project_root: Path | None = None) -> Path:
-        """Get the agents-level skills directory."""
-        root = project_root or Path.cwd()
-        return root / ".agents" / "skills"
+        """Get the home-level agents skills directory."""
+        return Path.home() / ".agents" / "skills"
 
     def clear_skills(self) -> None:
         """Clear all discovered skills."""
@@ -136,7 +137,7 @@ class SkillManager:
         Discovery order (lowest to highest precedence):
         1. Built-in skills (bundled with AMCP)
         2. User skills (~/.config/amcp/skills/)
-        3. Agents skills (.agents/skills/)
+        3. Home agent skills (~/.agents/skills/)
         4. Project skills (.amcp/skills/) — highest precedence
 
         Args:
@@ -520,10 +521,10 @@ class SkillWatcher:
         dirs = [
             self._mgr.get_builtin_skills_dir(),
             self._mgr.get_user_skills_dir(),
+            self._mgr.get_agents_skills_dir(self._project_root),
         ]
         if self._project_root:
             dirs.append(self._mgr.get_project_skills_dir(self._project_root))
-            dirs.append(self._mgr.get_agents_skills_dir(self._project_root))
         return [d for d in dirs if d.exists()]
 
     def _take_snapshot(self) -> dict[str, float]:

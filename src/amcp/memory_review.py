@@ -90,6 +90,7 @@ async def run_memory_review(
     conversation_snapshot: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     tool_registry: Any,
+    project_root: str | None = None,
 ) -> str:
     """Run a post-turn memory review.
 
@@ -104,6 +105,7 @@ async def run_memory_review(
         conversation_snapshot: Recent conversation messages.
         tools: Available tool specs (must include memory tool).
         tool_registry: Tool registry for executing tool calls.
+        project_root: Current project root for project-scoped memory writes.
 
     Returns:
         The review result text (or empty string on failure).
@@ -146,7 +148,10 @@ async def run_memory_review(
 
                 # Execute the tool
                 try:
-                    tool_result = tool_registry.execute_tool(tool_name, **args)
+                    exec_args = args
+                    if tool_name == "memory" and project_root:
+                        exec_args = {**args, "project_root": project_root}
+                    tool_result = tool_registry.execute_tool(tool_name, **exec_args)
                     result_text = tool_result.content if tool_result.success else f"Error: {tool_result.error}"
                 except Exception as e:
                     result_text = f"Error: {e}"

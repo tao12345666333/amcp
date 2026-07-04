@@ -735,6 +735,7 @@ class Agent:
                 conversation_snapshot=conversation_snapshot,
                 tools=memory_tools,
                 tool_registry=registry,
+                project_root=str(work_dir) if work_dir else None,
             )
 
             self._emit_event(
@@ -1121,7 +1122,10 @@ class Agent:
                                 from .tools import get_tool_registry
 
                                 registry = get_tool_registry()
-                                tool_result = registry.execute_tool(tool_name, **args)
+                                exec_args = args
+                                if tool_name == "memory" and work_dir is not None:
+                                    exec_args = {**args, "project_root": str(work_dir)}
+                                tool_result = registry.execute_tool(tool_name, **exec_args)
 
                                 if tool_result.success:
                                     tool_result_text = tool_result.content

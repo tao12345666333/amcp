@@ -267,10 +267,17 @@ class TestGlobalSkillManager:
         sm2 = get_skill_manager()
         assert sm1 is not sm2
 
-    def test_agents_skills_discovery(self, skill_manager: SkillManager, temp_skills_dir: Path):
-        """Test discovering skills from .agents/skills directory."""
-        # Setup .agents/skills
-        agents_skills_dir = temp_skills_dir / ".agents" / "skills"
+    def test_agents_skills_discovery(
+        self,
+        skill_manager: SkillManager,
+        temp_skills_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Test discovering skills from ~/.agents/skills directory."""
+        # Setup ~/.agents/skills
+        home_dir = temp_skills_dir / "home"
+        monkeypatch.setattr(Path, "home", lambda: home_dir)
+        agents_skills_dir = home_dir / ".agents" / "skills"
         agents_skills_dir.mkdir(parents=True)
 
         skill_dir = agents_skills_dir / "agent-skill"
@@ -292,15 +299,17 @@ Agent skill body""")
         assert skill.description == "Skill from agents dir"
 
     def test_skills_precedence(self, skill_manager: SkillManager, temp_skills_dir: Path, monkeypatch):
-        """Test precedence: .amcp > .agents > user"""
+        """Test precedence: .amcp > ~/.agents > user"""
 
         # Setup user skills dir
         user_config_dir = temp_skills_dir / "user_config"
         user_skills_dir = user_config_dir / "skills"
         monkeypatch.setattr("amcp.skills.CONFIG_DIR", user_config_dir)
 
-        # Setup .agents/skills dir
-        agents_skills_dir = temp_skills_dir / ".agents" / "skills"
+        # Setup ~/.agents/skills dir
+        home_dir = temp_skills_dir / "home"
+        monkeypatch.setattr(Path, "home", lambda: home_dir)
+        agents_skills_dir = home_dir / ".agents" / "skills"
 
         # Setup .amcp/skills dir
         project_skills_dir = temp_skills_dir / ".amcp" / "skills"

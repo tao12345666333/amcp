@@ -709,7 +709,10 @@ class AMCPAgent(Agent):
             return f"Error: Unknown MCP tool {tool_name}"
 
         registry = get_tool_registry()
-        result: ToolResult = registry.execute_tool(tool_name, **args)
+        exec_args = args
+        if tool_name == "memory":
+            exec_args = {**args, "project_root": session.cwd}
+        result: ToolResult = registry.execute_tool(tool_name, **exec_args)
         return result.content if result.success else f"Error: {result.error}"
 
     def _has_client_capability(self, category: str, capability: str) -> bool:

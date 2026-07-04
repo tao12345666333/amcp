@@ -4,30 +4,23 @@ AMCP now supports automatic loading of project-specific rules from `AGENTS.md` f
 
 ## Overview
 
-When AMCP starts, it automatically discovers and loads `AGENTS.md` files from:
+When AMCP starts, it automatically discovers and loads project rule files from:
 
-1. **Global rules**: `~/.config/amcp/AGENTS.md`
+1. **Home rules**: `~/AGENTS.md` or `~/agents.md`
 2. **Project rules**: From the repository root to the current working directory
 
-Rules are combined with global rules first (lowest priority) and project-specific rules last (highest priority).
+Rules are combined with home rules first (lowest priority) and project-specific rules last (highest priority).
 
 ## File Names
 
 AMCP recognizes the following file names (in priority order):
 
 - `AGENTS.md` (recommended)
-- `AGENT.md`
-- `.agents.md`
 - `agents.md`
-
-You can also create override files for temporary changes:
-
-- `AGENTS.override.md`
-- `AGENT.override.md`
 
 ## File Discovery
 
-AMCP searches for `AGENTS.md` files by:
+AMCP searches for project rule files by:
 
 1. Finding the git repository root (if in a git repo)
 2. Traversing from the root to the current working directory
@@ -79,13 +72,12 @@ You can reference external rule files using the `@path/to/file.md` syntax. The a
 
 This approach avoids context crowding by only loading relevant rules.
 
-## Global Rules
+## Home Rules
 
-Create a global `AGENTS.md` file for personal preferences that apply to all projects:
+Create a home-level `AGENTS.md` file for personal preferences that apply to all projects:
 
 ```bash
-mkdir -p ~/.config/amcp
-cat > ~/.config/amcp/AGENTS.md << 'EOF'
+cat > ~/AGENTS.md << 'EOF'
 # Personal Preferences
 
 ## Coding Style
@@ -210,7 +202,7 @@ print(f"Rules active: {info['has_rules']}")
 
 ### Rules Not Loading
 
-1. Check file name is supported (AGENTS.md, AGENT.md, etc.)
+1. Check file name is supported (`AGENTS.md` or `agents.md`)
 2. Ensure file is in git repository or work directory
 3. Check file permissions
 

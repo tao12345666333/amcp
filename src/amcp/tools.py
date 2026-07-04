@@ -1431,12 +1431,13 @@ Examples:
         max_results: int = 20,
         key: str | None = None,
         category: str | None = None,
+        project_root: str | None = None,
     ) -> ToolResult:
         """Execute memory operations."""
         from .memory import get_memory_manager
 
         try:
-            manager = get_memory_manager()
+            manager = get_memory_manager(Path(project_root) if project_root else None)
 
             def _read() -> ToolResult:
                 memory_content = manager.read_long_term(scope)

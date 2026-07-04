@@ -14,10 +14,16 @@ from amcp.project_rules import (
     find_git_root,
     format_rules_section,
     get_global_agents_file,
+    get_global_agents_files,
     get_project_rules_info,
     load_project_rules,
     parse_external_references,
 )
+
+
+def test_supported_agents_file_names_are_minimal():
+    """Only AGENTS.md and agents.md are supported."""
+    assert AGENTS_FILE_NAMES == ["AGENTS.md", "agents.md"]
 
 
 class TestFindGitRoot:
@@ -53,7 +59,7 @@ class TestFindAgentsFile:
             assert result == agents_file
 
     def test_priority_order(self):
-        """Test that AGENTS.md has priority over other names."""
+        """Test that AGENTS.md has priority over lowercase agents.md."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir).resolve()
             # Create multiple files
@@ -62,6 +68,15 @@ class TestFindAgentsFile:
 
             result = find_agents_file(tmppath)
             assert result.name == "AGENTS.md"
+
+    def test_unsupported_names_are_ignored(self):
+        """Test that older alternate names are no longer discovered."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir).resolve()
+            (tmppath / "AGENT.md").write_text("singular")
+            (tmppath / ".agents.md").write_text("hidden")
+
+            assert find_agents_file(tmppath) is None
 
     def test_returns_none_when_not_found(self):
         """Test returns None when no agents file exists."""
@@ -249,24 +264,26 @@ class TestGetProjectRulesInfo:
 
 
 class TestGlobalAgentsFile:
-    """Tests for global agents file handling."""
+    """Tests for home agents file handling."""
 
     def test_get_global_file_not_exists(self):
         """Test when global file doesn't exist."""
-        with patch("amcp.project_rules.GLOBAL_CONFIG_DIR", Path("/nonexistent")):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("pathlib.Path.home", return_value=Path(tmpdir)),
+        ):
             result = get_global_agents_file()
             assert result is None
 
-    def test_global_file_included_in_discovery(self):
-        """Test global file is included when discovering."""
+    def test_home_file_included_in_discovery(self):
+        """Test home file is included when discovering."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir).resolve()
 
-            # Create global config dir with AGENTS.md
-            global_dir = tmppath / "global"
-            global_dir.mkdir()
-            global_file = global_dir / "AGENTS.md"
-            global_file.write_text("# Global Rules")
+            home_dir = tmppath / "home"
+            home_dir.mkdir()
+            home_file = home_dir / "AGENTS.md"
+            home_file.write_text("# Home Rules")
 
             # Create project dir
             project_dir = tmppath / "project"
@@ -274,11 +291,24 @@ class TestGlobalAgentsFile:
             project_file = project_dir / "AGENTS.md"
             project_file.write_text("# Project Rules")
 
-            with patch("amcp.project_rules.GLOBAL_CONFIG_DIR", global_dir):
+            with patch("pathlib.Path.home", return_value=home_dir):
                 loader = ProjectRulesLoader(project_dir)
                 files = loader.discover_files()
 
-                # Should include both global and project files
+                # Should include home and project files
                 assert len(files) == 2
-                assert global_file in files
+                assert home_file in files
                 assert project_file in files
+
+    def test_get_global_agents_files_returns_home_file(self):
+        """Test user-wide rules come from home only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir).resolve()
+            home_dir = tmppath / "home"
+            home_dir.mkdir()
+            home_file = home_dir / "AGENTS.md"
+            home_file.write_text("# Home Rules")
+
+            with patch("pathlib.Path.home", return_value=home_dir):
+                assert get_global_agents_files() == [home_file]
+                assert get_global_agents_file() == home_file
