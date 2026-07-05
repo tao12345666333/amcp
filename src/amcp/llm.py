@@ -15,6 +15,8 @@ from .config import ChatConfig
 ToolCall = dict[str, Any]
 Message = dict[str, Any]
 
+AMCP_USER_AGENT = "AMCPAgent"
+
 
 def _extract_think_tags(content: str) -> tuple[str | None, str]:
     """Extract content from <think> tags and return (thinking, remaining_content)."""
@@ -60,7 +62,11 @@ class OpenAIClient(BaseLLMClient):
     def __init__(self, base_url: str, api_key: str | None, model: str):
         from openai import OpenAI
 
-        self.client = OpenAI(base_url=base_url, api_key=api_key or "")
+        self.client = OpenAI(
+            base_url=base_url,
+            api_key=api_key or "",
+            default_headers={"User-Agent": AMCP_USER_AGENT},
+        )
         self.model = model
 
     def chat(
@@ -178,7 +184,11 @@ class OpenAIResponsesClient(BaseLLMClient):
     def __init__(self, base_url: str, api_key: str | None, model: str):
         from openai import OpenAI
 
-        self.client = OpenAI(base_url=base_url, api_key=api_key or "")
+        self.client = OpenAI(
+            base_url=base_url,
+            api_key=api_key or "",
+            default_headers={"User-Agent": AMCP_USER_AGENT},
+        )
         self.model = model
 
     def chat(
