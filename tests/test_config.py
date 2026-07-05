@@ -40,6 +40,24 @@ def test_decode_encode_context_roundtrip():
     assert encoded["tool_tiers"]["task"] == "hidden"
 
 
+def test_decode_encode_chat_tool_limits_roundtrip():
+    raw = {
+        "tool_loop_limit": 300,
+        "bash_tool_limit": 100,
+        "default_max_lines": 400,
+    }
+
+    cfg = config_module._decode_chat(raw)
+    assert cfg is not None
+    assert cfg.tool_loop_limit == 300
+    assert cfg.bash_tool_limit == 100
+
+    encoded = config_module._encode_chat(cfg)
+    assert encoded is not None
+    assert encoded["tool_loop_limit"] == 300
+    assert encoded["bash_tool_limit"] == 100
+
+
 def test_decode_encode_automation_roundtrip():
     raw = {
         "enabled": True,

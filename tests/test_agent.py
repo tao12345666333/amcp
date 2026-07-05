@@ -10,7 +10,7 @@ import pytest
 
 from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
-from amcp.config import AMCPConfig, ContextConfig
+from amcp.config import AMCPConfig, ChatConfig, ContextConfig
 from amcp.hooks import HookOutput
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
@@ -124,9 +124,33 @@ class TestAgentToolLimits:
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
 
-        agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(12)]
+            agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(100)]
 
-        assert agent._should_limit_tool_calls("bash") is True
+            assert agent._should_limit_tool_calls("bash") is True
+
+    def test_bash_per_request_limit_is_configurable(self, tmp_path):
+        """Config can tune the bash cap for long-running Telegram agents."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(servers={}, chat=ChatConfig(bash_tool_limit=20))
+            agent = Agent(session_id="test-session")
+
+            agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(19)]
+            assert agent._should_limit_tool_calls("bash") is False
+
+            agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(20)]
+            assert agent._should_limit_tool_calls("bash") is True
+
+    def test_bash_per_request_limit_can_be_disabled(self, tmp_path):
+        """Non-positive bash_tool_limit disables only the bash-specific cap."""
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(servers={}, chat=ChatConfig(bash_tool_limit=0))
+            agent = Agent(session_id="test-session")
+
+            agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(500)]
+
+            assert agent._should_limit_tool_calls("bash") is False
 
     def test_bash_limit_resets_for_new_request(self, tmp_path):
         """A new user request can use bash again after per-request reset."""
