@@ -16,6 +16,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from .config import AMCPConfig, ChatConfig, load_config
+from .llm import AMCP_USER_AGENT
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .readfile import read_file_with_ranges
 
@@ -60,7 +61,11 @@ def _make_client(base_url: str, api_key: str | None):
     except ImportError:  # pragma: no cover
         console.print("[red]openai package not installed. Please install dependencies.[/red]")
         raise
-    return OpenAI(base_url=base_url, api_key=api_key or "")
+    return OpenAI(
+        base_url=base_url,
+        api_key=api_key or "",
+        default_headers={"User-Agent": AMCP_USER_AGENT},
+    )
 
 
 def _stream_chat(client, model: str, messages: list[dict], stream: bool = True) -> str:
