@@ -43,6 +43,8 @@ from .ui import LiveUI
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BASH_TOOL_LIMIT = 100
+
 
 class AgentExecutionError(Exception):
     """Raised when agent execution fails."""
@@ -455,16 +457,25 @@ class Agent:
             return False
 
         # bash can dump large files and quickly balloon tool context during
-        # repo analysis. Keep the per-request loop bounded; session totals are
-        # still tracked in tool_calls_history for diagnostics.
+        # repo analysis. Keep a configurable per-request loop bound; session
+        # totals are still tracked in tool_calls_history for diagnostics.
         if tool_name == "bash":
-            if current_conversation_calls >= 12:
-                self.console.print("[yellow]Per-request bash limit reached (12 calls)[/yellow]")
+            limit = self._resolve_bash_tool_limit()
+            if limit > 0 and current_conversation_calls >= limit:
+                self.console.print(f"[yellow]Per-request bash limit reached ({limit} calls)[/yellow]")
                 return True
             return False
 
         # MCP tools: 100 per tool per conversation
         return tool_name.startswith("mcp.") and current_conversation_calls >= 100
+
+    def _resolve_bash_tool_limit(self) -> int:
+        """Resolve the per-request bash limit; values <= 0 disable this limit."""
+        cfg = load_config()
+        configured = cfg.chat.bash_tool_limit if cfg.chat else None
+        if isinstance(configured, int) and not isinstance(configured, bool):
+            return configured
+        return DEFAULT_BASH_TOOL_LIMIT
 
     def _reset_current_conversation_tool_calls(self) -> None:
         """Reset the current conversation tool calls counter for a new conversation."""

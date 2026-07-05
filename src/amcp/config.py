@@ -70,6 +70,7 @@ class ChatConfig:
 
     # Tool calling settings
     tool_loop_limit: int | None = None
+    bash_tool_limit: int | None = None
     default_max_lines: int | None = None
     read_roots: list[str] | None = None  # list of allowed root paths for read_file
     # MCP tool exposure
@@ -178,6 +179,7 @@ _DEFAULT = {
         "model": "zai-org/GLM-4.6",
         # "api_key": ""  # optional; users can add this if they want config-based auth
         "tool_loop_limit": 300,
+        "bash_tool_limit": 100,
         "default_max_lines": 400,
         # "read_roots": ["."]  # optional; defaults to current working directory when unset
         "mcp_tools_enabled": True,
@@ -287,6 +289,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     api_key = raw.get("api_key")
     api_type = raw.get("api_type")
     tool_loop_limit = raw.get("tool_loop_limit")
+    bash_tool_limit = raw.get("bash_tool_limit")
     default_max_lines = raw.get("default_max_lines")
     read_roots = raw.get("read_roots")
     mcp_tools_enabled = raw.get("mcp_tools_enabled")
@@ -309,6 +312,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         api_type=str(api_type) if api_type is not None else None,
         model_config=model_config,
         tool_loop_limit=int(str(tool_loop_limit)) if tool_loop_limit is not None else None,
+        bash_tool_limit=int(str(bash_tool_limit)) if bash_tool_limit is not None else None,
         default_max_lines=int(str(default_max_lines)) if default_max_lines is not None else None,
         read_roots=[str(p) for p in read_roots] if isinstance(read_roots, list) else None,
         mcp_tools_enabled=bool(mcp_tools_enabled) if mcp_tools_enabled is not None else None,
@@ -524,6 +528,8 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["model_config"] = model_config_dict
     if c.tool_loop_limit is not None:
         out["tool_loop_limit"] = int(c.tool_loop_limit)
+    if c.bash_tool_limit is not None:
+        out["bash_tool_limit"] = int(c.bash_tool_limit)
     if c.default_max_lines is not None:
         out["default_max_lines"] = int(c.default_max_lines)
     if c.read_roots is not None:

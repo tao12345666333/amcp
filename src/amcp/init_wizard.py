@@ -561,6 +561,7 @@ def run_init_wizard() -> Path:
         api_key=api_key if api_key else None,
         model_config=model_config,
         tool_loop_limit=300,
+        bash_tool_limit=100,
         default_max_lines=400,
         mcp_tools_enabled=True,
         write_tool_enabled=True,
