@@ -25,8 +25,6 @@ from .agent_spec import get_default_agent_spec, list_available_agents, load_agen
 from .commands import get_command_manager
 from .config import (
     AMCPConfig,
-    AutomationConfig,
-    AutomationJobConfig,
     load_config,
     save_config,
     save_default_config,
@@ -105,151 +103,6 @@ app.add_typer(acp, name="acp")
 
 telegram = typer.Typer(help="Telegram bot utilities")
 app.add_typer(telegram, name="telegram")
-
-cron_cli = typer.Typer(help="Automation job management (external scheduler friendly)")
-app.add_typer(cron_cli, name="cron")
-
-
-def _get_configured_jobs(cfg: AMCPConfig) -> list[AutomationJobConfig]:
-    """Return configured jobs from [automation.jobs]."""
-    if cfg.automation and cfg.automation.jobs:
-        return cfg.automation.jobs
-    return []
-
-
-# ---------------------------------------------------------------------------
-# Cron commands
-# ---------------------------------------------------------------------------
-
-
-@cron_cli.command("list", help="List scheduled cron jobs")
-def cron_list() -> None:
-    """List all configured cron jobs."""
-    cfg = load_config()
-    jobs = _get_configured_jobs(cfg)
-    if not jobs:
-        console.print("[yellow]No cron jobs configured[/yellow]")
-        console.print("[dim]Add jobs in config.toml under [[automation.jobs]] (recommended).[/dim]")
-        return
-
-    table = Table(title="Cron Jobs")
-    table.add_column("Name", style="cyan")
-    table.add_column("Schedule", style="magenta")
-    table.add_column("Enabled", style="green")
-    table.add_column("Notify", style="yellow")
-    table.add_column("Timeout", style="blue")
-    table.add_column("Command", style="white", max_width=40)
-
-    for job in jobs:
-        schedule = getattr(job, "schedule", None) or "-"
-        table.add_row(
-            job.name,
-            schedule,
-            "✅" if job.enabled else "❌",
-            "🔔" if job.notify else "🔕",
-            f"{job.timeout}s",
-            job.command[:40] + ("…" if len(job.command) > 40 else ""),
-        )
-
-    console.print(table)
-
-
-@cron_cli.command("add", help="Add a new cron job")
-def cron_add(
-    name: Annotated[str, typer.Argument(help="Job name")],
-    command: Annotated[str, typer.Option("--command", "-c", help="Agent command to run")],
-    schedule: Annotated[
-        str | None,
-        typer.Option(
-            "--schedule",
-            "-s",
-            help="Legacy cron expression (recommended: schedule externally via systemd/cron/K8s)",
-        ),
-    ] = None,
-    notify: Annotated[bool, typer.Option("--notify", help="Send notification on completion")] = True,
-    timeout: Annotated[int, typer.Option("--timeout", help="Timeout in seconds")] = 300,
-    skill: Annotated[str | None, typer.Option("--skill", help="Skill to activate")] = None,
-) -> None:
-    """Add a new automation job to the config."""
-
-    cfg = load_config()
-    if cfg.automation is None:
-        cfg.automation = AutomationConfig()
-
-    new_job = AutomationJobConfig(
-        name=name,
-        command=command,
-        notify=notify,
-        timeout=timeout,
-        skill=skill,
-        schedule=schedule,
-    )
-    cfg.automation.jobs.append(new_job)
-    save_config(cfg)
-    schedule_msg = f" (schedule: {schedule})" if schedule else ""
-    console.print(f"[green]Added automation job '{name}'{schedule_msg}[/green]")
-
-
-@cron_cli.command("run", help="Run a cron job immediately")
-def cron_run(
-    name: Annotated[str, typer.Argument(help="Job name to run")],
-) -> None:
-    """Run an automation job immediately."""
-    cfg = load_config()
-    jobs = _get_configured_jobs(cfg)
-    if not jobs:
-        console.print("[red]No cron jobs configured[/red]")
-        raise typer.Exit(1)
-
-    job_cfg = next((j for j in jobs if j.name == name), None)
-    if not job_cfg:
-        console.print(f"[red]Job '{name}' not found[/red]")
-        raise typer.Exit(1)
-
-    console.print(f"[green]Running job '{name}'...[/green]")
-    console.print(f"[dim]Command: {job_cfg.command}[/dim]")
-
-    agent = Agent()
-    if getattr(job_cfg, "skill", None):
-        get_skill_manager().activate_skill(job_cfg.skill)
-
-    work_dir = Path(job_cfg.work_dir) if job_cfg.work_dir else None
-    result = asyncio.run(agent.run(job_cfg.command, work_dir=work_dir))
-    console.print(Panel(Markdown(result), title=f"Job: {name}", border_style="green"))
-
-
-@cron_cli.command("enable", help="Enable a cron job")
-def cron_enable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
-    cfg = load_config()
-    jobs = _get_configured_jobs(cfg)
-    if not jobs:
-        console.print("[red]No cron jobs configured[/red]")
-        raise typer.Exit(1)
-    for job in jobs:
-        if job.name == name:
-            job.enabled = True
-            save_config(cfg)
-            console.print(f"[green]Enabled job '{name}'[/green]")
-            return
-    console.print(f"[red]Job '{name}' not found[/red]")
-    raise typer.Exit(1)
-
-
-@cron_cli.command("disable", help="Disable a cron job")
-def cron_disable(name: Annotated[str, typer.Argument(help="Job name")]) -> None:
-    cfg = load_config()
-    jobs = _get_configured_jobs(cfg)
-    if not jobs:
-        console.print("[red]No cron jobs configured[/red]")
-        raise typer.Exit(1)
-    for job in jobs:
-        if job.name == name:
-            job.enabled = False
-            save_config(cfg)
-            console.print(f"[green]Disabled job '{name}'[/green]")
-            return
-    console.print(f"[red]Job '{name}' not found[/red]")
-    raise typer.Exit(1)
 
 
 @acp.command("serve", help="Run AMCP as an ACP-compliant agent server (stdio transport)")
@@ -451,14 +304,12 @@ def serve_command(
 
     This allows remote clients to connect and interact with AMCP agents.
     AMCP does not start in-process daemon background orchestration.
-    Use external orchestrators (systemd/cron/K8s) and `amcp cron run` for jobs.
 
     Examples:
         amcp serve                          # Start on localhost:4096
         amcp serve --port 8080             # Use custom port
         amcp serve --host 0.0.0.0          # Listen on all interfaces
         amcp serve -w /path/to/project     # Set default working directory
-        amcp cron run ci-check             # Execute automation job once (for systemd/cron/K8s)
 
     API Documentation:
         Once running, visit http://localhost:4096/docs for API docs.
@@ -474,7 +325,6 @@ def serve_command(
         _start_telegram_bot(work_dir)
 
     console.print("[green]Running without in-process daemon background orchestration.[/green]")
-    console.print("[dim]Use systemd/cron/K8s + `amcp cron run <job>` for automation.[/dim]")
 
     run_server(
         host=host,
