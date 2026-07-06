@@ -195,4 +195,8 @@ class TestMakeClient:
             mock_openai = MagicMock()
             mock_import.return_value = MagicMock(OpenAI=mock_openai)
             _make_client("https://api.example.com/v1", "test-key")
-            mock_openai.assert_called_once_with(base_url="https://api.example.com/v1", api_key="test-key")
+            mock_openai.assert_called_once_with(
+                base_url="https://api.example.com/v1",
+                api_key="test-key",
+                default_headers={"User-Agent": "AMCPAgent"},
+            )

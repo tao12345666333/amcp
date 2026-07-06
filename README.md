@@ -47,7 +47,7 @@ uvx amcp-agent --once "summarize this repository and suggest the next test to ru
 | **Research** | Web search/fetch tools plus MCP server integration over stdio or HTTP/SSE |
 | **Agent orchestration** | Primary/subagent architecture with `coder`, `explorer`, `planner`, and `focused_coder` types |
 | **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive tool/skill loading, MEMORY.md/HISTORY.md |
-| **Interfaces** | CLI, ACP for IDEs, FastAPI HTTP/WebSocket server, Telegram bot, scheduled automation jobs |
+| **Interfaces** | CLI, ACP for IDEs, FastAPI HTTP/WebSocket server, Telegram bot |
 | **Customization** | TOML config, YAML agent specs, slash commands, reusable skills, hooks, event bus |
 | **Model support** | OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and OpenAI-compatible endpoints |
 
@@ -129,13 +129,6 @@ amcp attach http://localhost:4096       # connect to a running server
 amcp telegram start                     # start polling
 amcp telegram status                    # show config status
 amcp telegram setup                     # interactive setup
-
-# Automation / cron jobs
-amcp cron list                          # list scheduled jobs
-amcp cron add                           # add a new job
-amcp cron run <job-name>                # run a job immediately
-amcp cron enable <job-name>             # enable a job
-amcp cron disable <job-name>            # disable a job
 
 ```
 
@@ -276,20 +269,6 @@ AMCP provides a Telegram Bot interface for remote interaction with agents. Insta
 
 Configure via `amcp telegram setup` or in `config.toml` under `[telegram]`.
 
-## Automation / Cron Jobs
-
-AMCP supports scheduled automation jobs designed for external orchestrators (systemd, cron, K8s):
-
-```bash
-amcp cron list                # list configured jobs
-amcp cron add                 # add a new job interactively
-amcp cron run ci-check        # execute a job once
-amcp cron enable ci-check     # enable a job
-amcp cron disable ci-check    # disable a job
-```
-
-Jobs are defined in `config.toml` under `[automation.jobs]` and can reference skills or custom prompts with cron schedules.
-
 ## Memory System
 
 AMCP maintains persistent cross-session memory using a two-layer approach:
@@ -410,21 +389,6 @@ code_ttl_seconds = 1800
 
 The Telegram runtime also supports group-specific and topic-specific policy overrides under
 `[telegram.groups."<chat_id>"]` and `[telegram.groups."<chat_id>".topics."<topic_id>"]`.
-
-### Automation Configuration
-
-```toml
-[automation]
-enabled = true
-default_timeout = 300
-
-[[automation.jobs]]
-name = "ci-check"
-command = "Run tests and lint checks"
-schedule = "0 9 * * 1-5"       # weekdays at 9 AM
-enabled = true
-timeout = 600
-```
 
 ## Development
 
