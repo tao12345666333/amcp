@@ -28,6 +28,7 @@ class _FakeBot:
         self.pairing_requests: list[tuple[int, int, str | None]] = []
         self.sent_texts: list[tuple[int, str]] = []
         self.prompts: list[tuple[int, int, str]] = []
+        self.model_provider_requests: list[str] = []
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
         self.pairing_requests.append((user_id, chat_id, username))
@@ -41,6 +42,13 @@ class _FakeBot:
 
     def cancel_session(self, chat_id: int):
         return False, False
+
+    def models_summary(self) -> str:
+        return "Configured providers:\n* test"
+
+    def use_model_provider(self, name: str):
+        self.model_provider_requests.append(name)
+        return True, f"Switched provider to {name}."
 
 
 def test_auth_middleware():
@@ -132,6 +140,41 @@ def test_handle_session_switch_uses_shared_session_command():
         await handlers.handle_session(update, SimpleNamespace(args=["switch", session.session_id]))
 
         assert fake_bot.sent_texts[-1] == (123, f"Switched to session: {session.session_id}")
+
+    asyncio.run(_run())
+
+
+def test_handle_models_lists_configured_providers():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/models", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_models(update, SimpleNamespace(args=[]))
+
+        assert fake_bot.sent_texts[-1] == (123, "Configured providers:\n* test")
+
+    asyncio.run(_run())
+
+
+def test_handle_model_use_switches_provider_for_admin():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42}, admin_users={42})
+        message = _make_message(text="/model use backup", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_model(update, SimpleNamespace(args=["use", "backup"]))
+
+        assert fake_bot.model_provider_requests == ["backup"]
+        assert fake_bot.sent_texts[-1] == (123, "Switched provider to backup.")
 
     asyncio.run(_run())
 
@@ -270,13 +313,17 @@ def test_build_enriched_prompt_with_reply():
     assert reply["from_is_bot"] is True
 
 
-def _make_handlers(config: TelegramConfig, allowed_users: set[int] | None = None):
+def _make_handlers(
+    config: TelegramConfig,
+    allowed_users: set[int] | None = None,
+    admin_users: set[int] | None = None,
+):
     fake_bot = _FakeBot(config)
     manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
     handlers = TelegramHandlers(
         bot=fake_bot,
         session_manager=manager,
-        auth=AuthMiddleware(allowed_users=allowed_users or set(), admin_users=set()),
+        auth=AuthMiddleware(allowed_users=allowed_users or set(), admin_users=admin_users or set()),
         rate_limiter=RateLimiter(limit=100),
     )
     return handlers, fake_bot
@@ -388,10 +435,10 @@ def test_post_init_registers_user_facing_bot_commands():
         names = [c.command for c in commands]
 
         # user-facing commands registered in the menu
-        for expected in ["start", "help", "status", "new", "session", "skills"]:
+        for expected in ["start", "help", "status", "new", "session", "skills", "models"]:
             assert expected in names
         # admin and helper commands intentionally omitted
-        for omitted in ["cancel", "ask", "activate", "memory", "config", "users", "pair", "logs", "shutdown"]:
+        for omitted in ["cancel", "ask", "activate", "memory", "model", "config", "users", "pair", "logs", "shutdown"]:
             assert omitted not in names
 
     asyncio.run(_run())
@@ -404,7 +451,7 @@ def test_get_user_bot_commands_descriptions():
         mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
         commands = bot._get_user_bot_commands()
 
-    assert [c.command for c in commands] == ["start", "help", "status", "new", "session", "skills"]
+    assert [c.command for c in commands] == ["start", "help", "status", "new", "session", "skills", "models"]
     for command in commands:
         assert command.description  # non-empty
 

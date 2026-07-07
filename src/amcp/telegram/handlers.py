@@ -553,6 +553,8 @@ class TelegramHandlers:
             "/activate <skill> - Activate a skill",
             "/skill:<name> [param=value ...] - Invoke a skill explicitly",
             "/memory search <query> - Search memory",
+            "/models - List configured LLM providers",
+            "/model use <name> - Switch LLM provider (admin)",
             "/config show|set <key> <value> - View/update config (admin)",
             "/users list|add|remove <id> - Manage users (admin)",
             "/logs <n> - Show recent logs (admin)",
@@ -741,6 +743,23 @@ class TelegramHandlers:
         for idx, result in enumerate(results, start=1):
             lines.append(f"{idx}. [{result.source}] {result.line_number}: {result.content}")
         await self._bot.send_text(update.effective_chat.id, "\n".join(lines))
+
+    async def handle_models(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """List configured LLM provider profiles."""
+        if not await self._ensure_authorized(update):
+            return
+        await self._bot.send_text(update.effective_chat.id, self._bot.models_summary())
+
+    async def handle_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Switch the active LLM provider profile."""
+        if not await self._ensure_admin(update):
+            return
+        args = context.args or []
+        if len(args) >= 2 and args[0].lower() == "use":
+            _, message = self._bot.use_model_provider(" ".join(args[1:]))
+            await self._bot.send_text(update.effective_chat.id, message)
+            return
+        await self._bot.send_text(update.effective_chat.id, "Usage: /model use <name>")
 
     async def handle_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_admin(update):

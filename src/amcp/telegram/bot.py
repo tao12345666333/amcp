@@ -188,6 +188,66 @@ class TelegramBot:
         except ValueError:
             return False, f"Invalid value for {key}."
 
+    def models_summary(self) -> str:
+        """Return a user-facing summary of configured LLM provider profiles."""
+        cfg = load_config()
+        chat = cfg.chat
+        if chat is None:
+            return "No chat configuration found."
+
+        if not chat.providers:
+            lines = ["Configured providers:", "* current"]
+            if chat.model:
+                lines[-1] += f" — model={chat.model}"
+            if chat.base_url:
+                lines[-1] += f" — base_url={chat.base_url}"
+            lines.append("Add [chat.providers.<name>] entries to config.toml to enable switching.")
+            return "\n".join(lines)
+
+        lines = ["Configured providers:"]
+        for name, provider in sorted(chat.providers.items()):
+            marker = "*" if name == chat.active_provider else "-"
+            details = []
+            if provider.api_type:
+                details.append(f"api_type={provider.api_type}")
+            if provider.model:
+                details.append(f"model={provider.model}")
+            if provider.base_url:
+                details.append(f"base_url={provider.base_url}")
+            suffix = f" — {'; '.join(details)}" if details else ""
+            lines.append(f"{marker} {name}{suffix}")
+        lines.append("Use /model use <name> to switch provider.")
+        return "\n".join(lines)
+
+    def use_model_provider(self, name: str) -> tuple[bool, str]:
+        """Switch the active LLM provider profile and persist it to config.toml."""
+        provider_name = name.strip()
+        if not provider_name:
+            return False, "Usage: /model use <name>"
+
+        cfg = load_config()
+        if cfg.chat is None:
+            return False, "No chat configuration found."
+        provider = cfg.chat.providers.get(provider_name)
+        if provider is None:
+            available = ", ".join(sorted(cfg.chat.providers)) or "none"
+            return False, f"Unknown provider: {provider_name}. Available: {available}"
+
+        cfg.chat.active_provider = provider_name
+        cfg.chat.base_url = provider.base_url
+        cfg.chat.model = provider.model
+        cfg.chat.api_key = provider.api_key
+        cfg.chat.api_type = provider.api_type
+        cfg.chat.model_config = provider.model_config
+        path = save_config(cfg)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            logger.warning("Failed to set config file permissions.")
+        model = provider.model or "unset"
+        api_type = provider.api_type or "openai"
+        return True, f"Switched provider to {provider_name} (api_type={api_type}, model={model})."
+
     async def persist_config(self) -> None:
         cfg = load_config()
         cfg.telegram = self._config
@@ -441,6 +501,8 @@ class TelegramBot:
         application.add_handler(CommandHandler("skills", self._handlers.handle_skills))
         application.add_handler(CommandHandler("activate", self._handlers.handle_activate))
         application.add_handler(CommandHandler("memory", self._handlers.handle_memory))
+        application.add_handler(CommandHandler("models", self._handlers.handle_models))
+        application.add_handler(CommandHandler("model", self._handlers.handle_model))
         application.add_handler(CommandHandler("config", self._handlers.handle_config))
         application.add_handler(CommandHandler("users", self._handlers.handle_users))
         application.add_handler(CommandHandler("pair", self._handlers.handle_pair))
@@ -486,6 +548,7 @@ class TelegramBot:
             BotCommand("new", "Start a new conversation session"),
             BotCommand("session", "Manage sessions (new|list|switch)"),
             BotCommand("skills", "List and manage skills"),
+            BotCommand("models", "List configured LLM providers"),
         ]
 
     async def _post_init(self, application: Application) -> None:
