@@ -54,6 +54,7 @@ __all__ = [
     # Config
     "AMCPConfig",
     "ChatConfig",
+    "ChatProviderConfig",
     "ContextConfig",
     "ModelConfig",
     "TelegramConfig",
@@ -122,6 +123,7 @@ from .compaction import (
 from .config import (
     AMCPConfig,
     ChatConfig,
+    ChatProviderConfig,
     ContextConfig,
     ModelConfig,
     TelegramConfig,

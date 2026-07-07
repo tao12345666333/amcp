@@ -18,6 +18,7 @@ from .config import (
     CONFIG_FILE,
     AMCPConfig,
     ChatConfig,
+    ChatProviderConfig,
     ModelConfig,
     Server,
     save_config,
@@ -559,7 +560,18 @@ def run_init_wizard() -> Path:
         base_url=base_url,
         model=model_id,
         api_key=api_key if api_key else None,
+        api_type="openai",
         model_config=model_config,
+        active_provider=provider_id,
+        providers={
+            provider_id: ChatProviderConfig(
+                base_url=base_url,
+                model=model_id,
+                api_key=api_key if api_key else None,
+                api_type="openai",
+                model_config=model_config,
+            )
+        },
         tool_loop_limit=300,
         bash_tool_limit=100,
         default_max_lines=400,

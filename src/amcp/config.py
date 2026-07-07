@@ -59,6 +59,17 @@ class ModelConfig:
 
 
 @dataclass
+class ChatProviderConfig:
+    """Named LLM provider profile for runtime switching."""
+
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    api_type: str | None = None  # "openai" (default), "openai_responses", or "anthropic"
+    model_config: ModelConfig | None = None
+
+
+@dataclass
 class ChatConfig:
     base_url: str | None = None
     model: str | None = None
@@ -67,6 +78,11 @@ class ChatConfig:
 
     # Model configuration (from models.dev or custom)
     model_config: ModelConfig | None = None
+
+    # Named provider profiles. ``active_provider`` selects which profile is copied
+    # into the top-level chat fields at load time so existing call sites keep working.
+    active_provider: str | None = None
+    providers: dict[str, ChatProviderConfig] = field(default_factory=dict)
 
     # Tool calling settings
     tool_loop_limit: int | None = None
@@ -177,6 +193,14 @@ _DEFAULT = {
     "chat": {
         "base_url": "https://inference.baseten.co/v1",
         "model": "zai-org/GLM-4.6",
+        "active_provider": "baseten",
+        "providers": {
+            "baseten": {
+                "base_url": "https://inference.baseten.co/v1",
+                "model": "zai-org/GLM-4.6",
+                "api_type": "openai",
+            },
+        },
         # "api_key": ""  # optional; users can add this if they want config-based auth
         "tool_loop_limit": 300,
         "bash_tool_limit": 100,
@@ -281,6 +305,38 @@ def _decode_model_config(raw: Mapping[str, object] | None) -> ModelConfig | None
     )
 
 
+def _decode_chat_provider(raw: Mapping[str, object]) -> ChatProviderConfig:
+    """Decode a named chat provider profile from TOML."""
+    base_url = raw.get("base_url")
+    model = raw.get("model")
+    api_key = raw.get("api_key")
+    api_type = raw.get("api_type")
+    raw_model_config = raw.get("model_config")
+    model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
+    return ChatProviderConfig(
+        base_url=str(base_url) if base_url is not None else None,
+        model=str(model) if model is not None else None,
+        api_key=str(api_key) if api_key is not None else None,
+        api_type=str(api_type) if api_type is not None else None,
+        model_config=model_config,
+    )
+
+
+def _apply_active_provider(chat: ChatConfig) -> ChatConfig:
+    """Copy the selected provider profile into top-level chat fields."""
+    if not chat.active_provider:
+        return chat
+    provider = chat.providers.get(chat.active_provider)
+    if provider is None:
+        return chat
+    chat.base_url = provider.base_url
+    chat.model = provider.model
+    chat.api_key = provider.api_key
+    chat.api_type = provider.api_type
+    chat.model_config = provider.model_config
+    return chat
+
+
 def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     if not raw:
         return None
@@ -305,12 +361,22 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     raw_model_config = raw.get("model_config")
     model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
 
-    return ChatConfig(
+    active_provider = raw.get("active_provider")
+    raw_providers = raw.get("providers")
+    providers: dict[str, ChatProviderConfig] = {}
+    if isinstance(raw_providers, dict):
+        for name, provider_raw in raw_providers.items():
+            if isinstance(provider_raw, dict):
+                providers[str(name)] = _decode_chat_provider(provider_raw)
+
+    chat = ChatConfig(
         base_url=str(base_url) if base_url is not None else None,
         model=str(model) if model is not None else None,
         api_key=str(api_key) if api_key is not None else None,
         api_type=str(api_type) if api_type is not None else None,
         model_config=model_config,
+        active_provider=str(active_provider) if active_provider is not None else None,
+        providers=providers,
         tool_loop_limit=int(str(tool_loop_limit)) if tool_loop_limit is not None else None,
         bash_tool_limit=int(str(bash_tool_limit)) if bash_tool_limit is not None else None,
         default_max_lines=int(str(default_max_lines)) if default_max_lines is not None else None,
@@ -323,6 +389,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         enable_queue=bool(enable_queue) if enable_queue is not None else None,
         max_queue_size=int(str(max_queue_size)) if max_queue_size is not None else None,
     )
+    return _apply_active_provider(chat)
 
 
 def _decode_context(raw: Mapping[str, object] | None) -> ContextConfig | None:
@@ -510,22 +577,44 @@ def _encode_model_config(m: ModelConfig | None) -> dict | None:
     return out if out else None
 
 
+def _encode_chat_provider(p: ChatProviderConfig) -> dict:
+    """Encode a named chat provider profile to TOML-compatible dict."""
+    out: dict = {}
+    if p.base_url:
+        out["base_url"] = p.base_url
+    if p.model:
+        out["model"] = p.model
+    if p.api_key:
+        out["api_key"] = p.api_key
+    if p.api_type:
+        out["api_type"] = p.api_type
+    model_config_dict = _encode_model_config(p.model_config)
+    if model_config_dict:
+        out["model_config"] = model_config_dict
+    return out
+
+
 def _encode_chat(c: ChatConfig | None) -> dict | None:
     if c is None:
         return None
     out: dict = {}
-    if c.base_url:
+    provider_profiles_enabled = bool(c.providers)
+    if c.base_url and not provider_profiles_enabled:
         out["base_url"] = c.base_url
-    if c.model:
+    if c.model and not provider_profiles_enabled:
         out["model"] = c.model
-    if c.api_key:
+    if c.api_key and not provider_profiles_enabled:
         out["api_key"] = c.api_key
-    if c.api_type:
+    if c.api_type and not provider_profiles_enabled:
         out["api_type"] = c.api_type
     # Model config
     model_config_dict = _encode_model_config(c.model_config)
-    if model_config_dict:
+    if model_config_dict and not provider_profiles_enabled:
         out["model_config"] = model_config_dict
+    if c.active_provider:
+        out["active_provider"] = c.active_provider
+    if c.providers:
+        out["providers"] = {name: _encode_chat_provider(provider) for name, provider in c.providers.items()}
     if c.tool_loop_limit is not None:
         out["tool_loop_limit"] = int(c.tool_loop_limit)
     if c.bash_tool_limit is not None:

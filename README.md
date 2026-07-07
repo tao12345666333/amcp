@@ -319,9 +319,7 @@ amcp init
 
 ```toml
 [chat]
-api_type = "openai"            # "openai" (default), "openai_responses", or "anthropic"
-base_url = "https://example.com/v1"
-model = "provider/model-name"
+active_provider = "primary"    # optional: selected [chat.providers.<name>] profile
 mcp_tools_enabled = true
 write_tool_enabled = true
 edit_tool_enabled = true
@@ -329,7 +327,21 @@ tool_loop_limit = 300
 default_max_lines = 400
 default_agent = "coder"        # optional: coder, explorer, planner, focused_coder
 max_queue_size = 100
+
+[chat.providers.primary]
+api_type = "openai"
+base_url = "https://example.com/v1"
+model = "provider/model-name"
+
+[chat.providers.backup]
+api_type = "anthropic"
+model = "claude-model-name"
 ```
+
+Telegram can switch configured providers without calling the LLM:
+
+- `/models` lists configured provider profiles.
+- `/model use backup` switches `active_provider` and persists it to `config.toml` (admin only).
 
 **Anthropic Claude:**
 ```toml

@@ -58,6 +58,49 @@ def test_decode_encode_chat_tool_limits_roundtrip():
     assert encoded["bash_tool_limit"] == 100
 
 
+def test_decode_chat_active_provider_applies_profile():
+    raw = {
+        "base_url": "https://primary.example/v1",
+        "model": "primary-model",
+        "active_provider": "backup",
+        "providers": {
+            "primary": {
+                "base_url": "https://primary.example/v1",
+                "model": "primary-model",
+                "api_type": "openai",
+            },
+            "backup": {
+                "base_url": "https://backup.example/v1",
+                "model": "backup-model",
+                "api_type": "anthropic",
+                "model_config": {
+                    "provider_id": "anthropic",
+                    "model_id": "backup-model",
+                    "context_window": 200000,
+                },
+            },
+        },
+    }
+
+    cfg = config_module._decode_chat(raw)
+    assert cfg is not None
+    assert cfg.active_provider == "backup"
+    assert cfg.base_url == "https://backup.example/v1"
+    assert cfg.model == "backup-model"
+    assert cfg.api_type == "anthropic"
+    assert cfg.model_config is not None
+    assert cfg.model_config.provider_id == "anthropic"
+
+    encoded = config_module._encode_chat(cfg)
+    assert encoded is not None
+    assert encoded["active_provider"] == "backup"
+    assert encoded["providers"]["backup"]["model"] == "backup-model"
+    assert "base_url" not in encoded
+    assert "model" not in encoded
+    assert "api_type" not in encoded
+    assert "model_config" not in encoded
+
+
 def test_decode_encode_automation_roundtrip():
     raw = {
         "enabled": True,
