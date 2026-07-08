@@ -39,7 +39,7 @@ def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
         cli_base
         or (cfg.base_url if cfg and cfg.base_url else None)
         or os.environ.get("AMCP_OPENAI_BASE")
-        or "https://inference.baseten.co/v1"
+        or "https://api.gmi-serving.com/v1"
     ).rstrip("/")
     if not base.endswith("/v1"):
         base = base + "/v1"

@@ -126,9 +126,26 @@ class ContextConfig:
 
 
 @dataclass
+class CORSConfig:
+    """HTTP server CORS configuration."""
+
+    enabled: bool = True
+    allow_origins: list[str] = field(
+        default_factory=lambda: [
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+            "tauri://localhost",
+        ]
+    )
+    allow_methods: list[str] = field(default_factory=lambda: ["*"])
+    allow_headers: list[str] = field(default_factory=lambda: ["*"])
+    allow_credentials: bool = True
+
+
+@dataclass
 class AuthConfig:
     enabled: bool = False
-    api_keys: list[str] = field(default_factory=list)
+    api_key: str | None = None
 
 
 @dataclass
@@ -138,7 +155,11 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 4096
     auth: AuthConfig = field(default_factory=AuthConfig)
-    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*", "tauri://localhost"])
+    cors: CORSConfig = field(default_factory=CORSConfig)
+    session_timeout_minutes: int = 60 * 24
+    max_sessions: int = 100
+    work_dir: str | None = None
+    default_agent: str = "default"
 
 
 @dataclass
@@ -186,19 +207,37 @@ _DEFAULT = {
         "port": 4096,
         "auth": {
             "enabled": False,
-            "api_keys": [],
         },
-        "cors_origins": ["http://localhost:*", "tauri://localhost"],
+        "cors": {
+            "enabled": True,
+            "allow_origins": [
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "tauri://localhost",
+            ],
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+            "allow_credentials": True,
+        },
+        "session_timeout_minutes": 1440,
+        "max_sessions": 100,
+        "default_agent": "default",
     },
     "chat": {
-        "base_url": "https://inference.baseten.co/v1",
-        "model": "zai-org/GLM-4.6",
-        "active_provider": "baseten",
+        "base_url": "https://api.gmi-serving.com/v1",
+        "model": "openai/gpt-5.5",
+        "active_provider": "gmi",
         "providers": {
-            "baseten": {
-                "base_url": "https://inference.baseten.co/v1",
-                "model": "zai-org/GLM-4.6",
+            "gmi": {
+                "base_url": "https://api.gmi-serving.com/v1",
+                "model": "openai/gpt-5.5",
                 "api_type": "openai",
+                "model_config": {
+                    "provider_id": "gmi",
+                    "model_id": "openai/gpt-5.5",
+                    "context_window": 1050000,
+                    "output_limit": 131072,
+                },
             },
         },
         # "api_key": ""  # optional; users can add this if they want config-based auth
@@ -415,6 +454,58 @@ def _decode_context(raw: Mapping[str, object] | None) -> ContextConfig | None:
     )
 
 
+def _decode_auth(raw: Mapping[str, object] | None) -> AuthConfig:
+    """Decode HTTP server auth config from TOML."""
+    if not raw:
+        return AuthConfig()
+    api_key = raw.get("api_key")
+    if api_key is None:
+        legacy_api_keys = raw.get("api_keys")
+        if isinstance(legacy_api_keys, list) and legacy_api_keys:
+            api_key = legacy_api_keys[0]
+    return AuthConfig(
+        enabled=bool(raw.get("enabled", False)),
+        api_key=str(api_key) if api_key is not None else None,
+    )
+
+
+def _decode_cors(raw: Mapping[str, object] | None, legacy_origins: object = None) -> CORSConfig:
+    """Decode HTTP server CORS config from TOML."""
+    if not raw:
+        origins = [str(origin) for origin in legacy_origins] if isinstance(legacy_origins, list) else None
+        return CORSConfig(allow_origins=origins) if origins is not None else CORSConfig()
+    allow_origins = raw.get("allow_origins")
+    allow_methods = raw.get("allow_methods")
+    allow_headers = raw.get("allow_headers")
+    return CORSConfig(
+        enabled=bool(raw.get("enabled", True)),
+        allow_origins=(
+            [str(origin) for origin in allow_origins] if isinstance(allow_origins, list) else CORSConfig().allow_origins
+        ),
+        allow_methods=[str(method) for method in allow_methods] if isinstance(allow_methods, list) else ["*"],
+        allow_headers=[str(header) for header in allow_headers] if isinstance(allow_headers, list) else ["*"],
+        allow_credentials=bool(raw.get("allow_credentials", True)),
+    )
+
+
+def _decode_server_config(raw: Mapping[str, object] | None) -> ServerConfig | None:
+    """Decode HTTP server config from TOML."""
+    if not raw:
+        return None
+    auth_raw = raw.get("auth")
+    cors_raw = raw.get("cors")
+    return ServerConfig(
+        host=str(raw.get("host", "127.0.0.1")),
+        port=int(str(raw.get("port", 4096))),
+        auth=_decode_auth(auth_raw if isinstance(auth_raw, dict) else None),
+        cors=_decode_cors(cors_raw if isinstance(cors_raw, dict) else None, raw.get("cors_origins")),
+        session_timeout_minutes=int(str(raw.get("session_timeout_minutes", 1440))),
+        max_sessions=int(str(raw.get("max_sessions", 100))),
+        work_dir=str(raw["work_dir"]) if raw.get("work_dir") else None,
+        default_agent=str(raw.get("default_agent", "default")),
+    )
+
+
 def _decode_telegram_notifications(raw: Mapping[str, object] | None) -> TelegramNotificationsConfig:
     if not raw:
         return TelegramNotificationsConfig()
@@ -530,6 +621,8 @@ def load_config() -> AMCPConfig:
     chat = _decode_chat(chat_data) if isinstance(chat_data, dict) else None
     context_data = data.get("context")
     context = _decode_context(context_data) if isinstance(context_data, dict) else None
+    server_data = data.get("server")
+    server = _decode_server_config(server_data) if isinstance(server_data, dict) else None
     telegram_data = data.get("telegram")
     telegram = _decode_telegram(telegram_data) if isinstance(telegram_data, dict) else None
     telegram = apply_env_overrides(telegram)
@@ -539,6 +632,7 @@ def load_config() -> AMCPConfig:
         servers=servers,
         chat=chat,
         context=context,
+        server=server,
         telegram=telegram,
         automation=automation,
     )
@@ -662,6 +756,42 @@ def _encode_context(c: ContextConfig | None) -> dict | None:
     }
 
 
+def _encode_auth(cfg: AuthConfig) -> dict:
+    out: dict[str, Any] = {
+        "enabled": bool(cfg.enabled),
+    }
+    if cfg.api_key:
+        out["api_key"] = cfg.api_key
+    return out
+
+
+def _encode_cors(cfg: CORSConfig) -> dict:
+    return {
+        "enabled": bool(cfg.enabled),
+        "allow_origins": list(cfg.allow_origins),
+        "allow_methods": list(cfg.allow_methods),
+        "allow_headers": list(cfg.allow_headers),
+        "allow_credentials": bool(cfg.allow_credentials),
+    }
+
+
+def _encode_server_config(cfg: ServerConfig | None) -> dict | None:
+    if cfg is None:
+        return None
+    out: dict[str, Any] = {
+        "host": cfg.host,
+        "port": int(cfg.port),
+        "auth": _encode_auth(cfg.auth),
+        "cors": _encode_cors(cfg.cors),
+        "session_timeout_minutes": int(cfg.session_timeout_minutes),
+        "max_sessions": int(cfg.max_sessions),
+        "default_agent": cfg.default_agent,
+    }
+    if cfg.work_dir:
+        out["work_dir"] = cfg.work_dir
+    return out
+
+
 def _encode_telegram_notifications(cfg: TelegramNotificationsConfig) -> dict:
     return {
         "ci_failures": bool(cfg.ci_failures),
@@ -749,6 +879,9 @@ def save_config(cfg: AMCPConfig) -> Path:
     context_obj = _encode_context(cfg.context)
     if context_obj is not None:
         data["context"] = context_obj
+    server_obj = _encode_server_config(cfg.server)
+    if server_obj is not None:
+        data["server"] = server_obj
     telegram_obj = _encode_telegram(cfg.telegram)
     if telegram_obj is not None:
         data["telegram"] = telegram_obj

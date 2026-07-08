@@ -58,6 +58,21 @@ def test_decode_encode_chat_tool_limits_roundtrip():
     assert encoded["bash_tool_limit"] == 100
 
 
+def test_default_chat_uses_gmi_without_api_key():
+    cfg = config_module._decode_chat(config_module._DEFAULT["chat"])
+
+    assert cfg is not None
+    assert cfg.active_provider == "gmi"
+    assert cfg.base_url == "https://api.gmi-serving.com/v1"
+    assert cfg.model == "openai/gpt-5.5"
+    assert cfg.api_key is None
+    assert "gmi" in cfg.providers
+    assert cfg.providers["gmi"].api_key is None
+    assert cfg.model_config is not None
+    assert cfg.model_config.provider_id == "gmi"
+    assert cfg.model_config.context_window == 1_050_000
+
+
 def test_decode_chat_active_provider_applies_profile():
     raw = {
         "base_url": "https://primary.example/v1",
@@ -99,6 +114,35 @@ def test_decode_chat_active_provider_applies_profile():
     assert "model" not in encoded
     assert "api_type" not in encoded
     assert "model_config" not in encoded
+
+
+def test_decode_encode_server_config_roundtrip():
+    raw = {
+        "host": "0.0.0.0",
+        "port": 8080,
+        "auth": {"enabled": True, "api_key": "test-key"},
+        "cors": {
+            "enabled": True,
+            "allow_origins": ["https://example.com"],
+            "allow_methods": ["GET"],
+            "allow_headers": ["Authorization"],
+            "allow_credentials": False,
+        },
+        "session_timeout_minutes": 30,
+        "max_sessions": 10,
+        "work_dir": "/tmp/amcp",
+        "default_agent": "coder",
+    }
+
+    cfg = config_module._decode_server_config(raw)
+    assert cfg is not None
+    assert cfg.host == "0.0.0.0"
+    assert cfg.auth.api_key == "test-key"
+    assert cfg.cors.allow_origins == ["https://example.com"]
+    assert cfg.cors.allow_credentials is False
+
+    encoded = config_module._encode_server_config(cfg)
+    assert encoded == raw
 
 
 def test_decode_encode_automation_roundtrip():

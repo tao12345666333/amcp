@@ -34,7 +34,7 @@ class TestResolveBaseUrl:
 
     def test_default_fallback(self, monkeypatch):
         monkeypatch.delenv("AMCP_OPENAI_BASE", raising=False)
-        assert _resolve_base_url(None, None) == "https://inference.baseten.co/v1"
+        assert _resolve_base_url(None, None) == "https://api.gmi-serving.com/v1"
 
     def test_appends_v1_when_missing(self):
         assert _resolve_base_url("https://example.com", None) == "https://example.com/v1"
