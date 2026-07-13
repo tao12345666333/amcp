@@ -59,10 +59,16 @@ def test_auth_middleware():
     assert not auth.is_admin(1)
 
 
-def test_formatter_escapes_markdown():
+def test_formatter_converts_standard_markdown():
     formatter = TelegramFormatter(max_length=4096)
-    chunks = formatter.format_response("Hello *world*!")
-    assert chunks == ["Hello \\*world\\*\\!"]
+    chunks = formatter.format_response("**bold** and [link](https://example.com)")
+    assert chunks == ["*bold* and [link](https://example.com)"]
+
+
+def test_formatter_converts_markdown_list():
+    formatter = TelegramFormatter(max_length=4096)
+    chunks = formatter.format_response("- first\n- second")
+    assert chunks == ["⦁ first\n⦁ second\n"]
 
 
 def test_formatter_handles_code_block():
@@ -75,7 +81,22 @@ def test_formatter_handles_code_block():
 def test_formatter_splits_long_text():
     formatter = TelegramFormatter(max_length=10)
     chunks = formatter.format_response("1234567890 123")
-    assert all(len(chunk) <= 10 for chunk in chunks)
+    assert chunks == ["1234567890", " 123"]
+
+
+def test_formatter_splits_markdown_without_breaking_entities():
+    formatter = TelegramFormatter(max_length=20)
+    chunks = formatter.format_response("**" + " ".join(["word"] * 20) + "**")
+
+    assert len(chunks) > 1
+    assert all(chunk.startswith("*") and chunk.endswith("*") for chunk in chunks)
+    assert all(len(chunk.encode("utf-16-le")) // 2 <= 20 for chunk in chunks)
+
+
+def test_formatter_uses_utf16_length_for_emoji():
+    formatter = TelegramFormatter(max_length=6)
+    chunks = formatter.format_response("😀" * 10)
+    assert chunks == ["😀😀😀", "😀😀😀", "😀😀😀", "😀"]
 
 
 def test_session_manager_creates_sessions():

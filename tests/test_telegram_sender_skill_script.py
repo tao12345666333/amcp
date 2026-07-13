@@ -21,9 +21,7 @@ SCRIPT_PATH = (
 @pytest.fixture
 def telegram_send_script(monkeypatch):
     """Load telegram_send.py with lightweight optional dependency stubs."""
-    telegramify_markdown = types.SimpleNamespace(markdownify=lambda text: text)
     requests_stub = types.SimpleNamespace()
-    monkeypatch.setitem(sys.modules, "telegramify_markdown", telegramify_markdown)
     monkeypatch.setitem(sys.modules, "requests", requests_stub)
 
     spec = importlib.util.spec_from_file_location("telegram_send_skill_script", SCRIPT_PATH)
@@ -51,6 +49,13 @@ class FakeResponse:
     def iter_content(self, chunk_size: int):
         """Yield fake download chunks."""
         yield from self._chunks
+
+
+def test_to_markdownv2_converts_standard_markdown(telegram_send_script):
+    """The skill should render standard Markdown as Telegram MarkdownV2."""
+    converted = telegram_send_script._to_markdownv2("**bold** and [link](https://example.com)")
+
+    assert converted == "*bold* and [link](https://example.com)"
 
 
 def test_send_photo_file_id_uses_json_payload(telegram_send_script):

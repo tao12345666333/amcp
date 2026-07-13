@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "requests>=2.31.0",
-#     "telegramify-markdown>=0.5.0",
+#     "telegramify-markdown>=1.0.0,<2",
 # ]
 # ///
 
