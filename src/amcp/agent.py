@@ -18,7 +18,13 @@ from rich.text import Text
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
-from .compaction import SmartCompactor, estimate_tokens
+from .compaction import (
+    CompactionConfig,
+    SmartCompactor,
+    estimate_request_tokens,
+    estimate_tokens,
+    get_model_context_window,
+)
 from .config import AMCPConfig, ContextConfig, ModelConfig, load_config
 from .hooks import (
     HookDecision,
@@ -100,6 +106,16 @@ class Agent:
 
         # Session-level cumulative tracking
         self.total_llm_calls: int = 0  # Total LLM calls across entire session
+        self.total_input_tokens: int = 0
+        self.total_output_tokens: int = 0
+        self.total_cached_input_tokens: int = 0
+        self.total_cache_write_input_tokens: int = 0
+        self.usage_reported_llm_calls: int = 0
+        self.estimated_input_llm_calls: int = 0
+        self.last_context_tokens: int = 0
+        self.last_context_window: int = 0
+        self.last_output_tokens: int | None = None
+        self.last_usage_from_api: bool = False
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -139,6 +155,16 @@ class Agent:
                     self.tool_calls_history = data.get("tool_calls_history", [])
                     self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
                     self.total_llm_calls = data.get("total_llm_calls", 0)
+                    self.total_input_tokens = data.get("total_input_tokens", 0)
+                    self.total_output_tokens = data.get("total_output_tokens", 0)
+                    self.total_cached_input_tokens = data.get("total_cached_input_tokens", 0)
+                    self.total_cache_write_input_tokens = data.get("total_cache_write_input_tokens", 0)
+                    self.usage_reported_llm_calls = data.get("usage_reported_llm_calls", 0)
+                    self.estimated_input_llm_calls = data.get("estimated_input_llm_calls", 0)
+                    self.last_context_tokens = data.get("last_context_tokens", 0)
+                    self.last_context_window = data.get("last_context_window", 0)
+                    self.last_output_tokens = data.get("last_output_tokens")
+                    self.last_usage_from_api = data.get("last_usage_from_api", False)
                     self.console.print(
                         f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
                     )
@@ -160,6 +186,16 @@ class Agent:
                 "tool_calls_history": self.tool_calls_history,
                 "current_conversation_tool_calls": self.current_conversation_tool_calls,
                 "total_llm_calls": self.total_llm_calls,
+                "total_input_tokens": self.total_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_cached_input_tokens": self.total_cached_input_tokens,
+                "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
+                "usage_reported_llm_calls": self.usage_reported_llm_calls,
+                "estimated_input_llm_calls": self.estimated_input_llm_calls,
+                "last_context_tokens": self.last_context_tokens,
+                "last_context_window": self.last_context_window,
+                "last_output_tokens": self.last_output_tokens,
+                "last_usage_from_api": self.last_usage_from_api,
             }
             with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -172,6 +208,16 @@ class Agent:
         self.tool_calls_history = []
         self.current_conversation_tool_calls = []
         self.total_llm_calls = 0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_cached_input_tokens = 0
+        self.total_cache_write_input_tokens = 0
+        self.usage_reported_llm_calls = 0
+        self.estimated_input_llm_calls = 0
+        self.last_context_tokens = 0
+        self.last_context_window = 0
+        self.last_output_tokens = None
+        self.last_usage_from_api = False
         self.current_request_llm_calls = 0
         self.current_request_tool_calls = 0
         try:
@@ -189,6 +235,33 @@ class Agent:
             "total_tool_calls": len(self.tool_calls_history),  # Session total
             "total_llm_calls": self.total_llm_calls,  # Session total
             "session_file": str(self.session_file),
+        }
+
+    def get_token_usage_summary(self) -> dict[str, Any]:
+        """Return current context usage and provider-reported session totals."""
+        context_window = self.last_context_window
+        if not context_window:
+            cfg = load_config()
+            model_config = cfg.chat.model_config if cfg.chat else None
+            context_window = get_model_context_window(
+                self._resolve_model_name(cfg),
+                model_config=model_config,
+            )
+        usage_ratio = self.last_context_tokens / context_window if context_window else 0.0
+        return {
+            "context_tokens": self.last_context_tokens,
+            "context_window": context_window,
+            "context_usage_ratio": usage_ratio,
+            "last_output_tokens": self.last_output_tokens,
+            "last_usage_from_api": self.last_usage_from_api,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_tokens": self.total_input_tokens + self.total_output_tokens,
+            "total_cached_input_tokens": self.total_cached_input_tokens,
+            "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
+            "usage_reported_llm_calls": self.usage_reported_llm_calls,
+            "estimated_input_llm_calls": self.estimated_input_llm_calls,
+            "total_llm_calls": self.total_llm_calls,
         }
 
     @property
@@ -623,29 +696,37 @@ class Agent:
                 system_prompt = self._get_system_prompt(work_dir, user_input=user_input)
                 messages = [{"role": "system", "content": system_prompt}]
 
-                # Add conversation history with compaction if needed
+                # Build tools before compaction so their schemas are included in
+                # the request-size decision.
                 history_to_add = list(self.conversation_history)
+                tools, tool_registry = await self._build_tools_and_registry(
+                    user_input=user_input,
+                    conversation_history=history_to_add,
+                )
 
                 # Apply compaction if context is too large
                 cfg = load_config()
                 base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
                 api_key = _resolve_api_key(None, cfg.chat)
                 client = _make_client(base_url, api_key)
-                model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+                model = self._resolve_model_name(cfg)
                 compactor = SmartCompactor(
                     client,
                     model,
                     model_config=cfg.chat.model_config if cfg.chat else None,
                 )
 
-                if compactor.should_compact(history_to_add):
+                request_tokens = estimate_request_tokens(messages + history_to_add, tools)
+                if (
+                    request_tokens > compactor.threshold_tokens
+                    and estimate_tokens(history_to_add) >= compactor.config.min_tokens_to_compact
+                ):
                     # Pre-compaction memory flush: save durable memories before
                     # context is summarized (inspired by openclaw's memory flush).
                     status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
                     await self._run_memory_review(
                         conversation_snapshot=history_to_add,
                         system_prompt=system_prompt,
-                        tools=None,  # will be built below
                         work_dir=work_dir,
                         status=status,
                     )
@@ -655,12 +736,6 @@ class Agent:
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
                 messages.extend(history_to_add)
-
-                # Build tools and registry (combined to avoid duplicate MCP calls)
-                tools, tool_registry = await self._build_tools_and_registry(
-                    user_input=user_input,
-                    conversation_history=history_to_add,
-                )
 
                 # Run chat with tools
                 result = await self._run_with_tools(
@@ -710,7 +785,6 @@ class Agent:
         self,
         conversation_snapshot: list[dict[str, Any]],
         system_prompt: str,
-        tools: list[dict[str, Any]] | None,
         work_dir: Path | None,
         status: Any = None,
     ) -> None:
@@ -976,8 +1050,17 @@ class Agent:
         self.current_request_llm_calls = 0
 
         # Create a working copy of messages
-        messages = list(messages)
+        messages = [dict(message) for message in messages]
         used_tools = False
+
+        cfg = load_config()
+        model_config = cfg.chat.model_config if cfg.chat else None
+        model = getattr(llm_client, "model", None) or self._resolve_model_name(cfg)
+        compaction_config = CompactionConfig()
+        context_window = get_model_context_window(model, model_config=model_config)
+        input_token_budget = int(
+            context_window * (1 - compaction_config.safety_margin) * compaction_config.threshold_ratio
+        )
 
         for step in range(max_steps):
             self.step_count = step + 1
@@ -995,7 +1078,10 @@ class Agent:
 
                 stream_callback = _stream_callback
 
+            messages = self._fit_tool_context(messages, tools, input_token_budget)
+            estimated_input_tokens = estimate_request_tokens(messages, tools)
             resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
+            self._record_llm_usage(resp, estimated_input_tokens, context_window)
 
             if resp.tool_calls:
                 tool_calls = resp.tool_calls
@@ -1023,13 +1109,36 @@ class Agent:
                     )
                     # Get a final response from the LLM with the current messages
                     try:
+                        self.current_request_llm_calls += 1
+                        self.total_llm_calls += 1
+                        messages = self._fit_tool_context(messages, [], input_token_budget)
+                        estimated_input_tokens = estimate_request_tokens(messages)
                         final_resp = llm_client.chat(messages=messages)
+                        self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
                         return final_text
                     except Exception as e:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
                         return f"Error: Could not get final response: {e}"
+
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": resp.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"] or "{}",
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    }
+                )
 
                 # Process tool calls with Live UI
                 with LiveUI() as live_ui:
@@ -1192,19 +1301,6 @@ class Agent:
 
                             messages.append(
                                 {
-                                    "role": "assistant",
-                                    "content": resp.content or "",
-                                    "tool_calls": [
-                                        {
-                                            "id": tool_id,
-                                            "type": "function",
-                                            "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
-                                        }
-                                    ],
-                                }
-                            )
-                            messages.append(
-                                {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
                                     "name": tool_name,
@@ -1254,6 +1350,86 @@ class Agent:
         # Max steps reached
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
         raise MaxStepsReached(self.max_steps)
+
+    def _record_llm_usage(
+        self,
+        response: Any,
+        estimated_input_tokens: int,
+        context_window: int,
+    ) -> None:
+        """Record context occupancy and provider-reported token consumption."""
+        usage = getattr(response, "usage", None)
+        self.last_context_window = context_window
+        if usage is None:
+            self.last_context_tokens = estimated_input_tokens
+            self.last_output_tokens = None
+            self.last_usage_from_api = False
+            self.total_input_tokens += estimated_input_tokens
+            self.estimated_input_llm_calls += 1
+            return
+
+        self.last_context_tokens = usage.prompt_tokens
+        self.last_output_tokens = usage.output_tokens
+        self.last_usage_from_api = True
+        self.total_input_tokens += usage.prompt_tokens
+        self.total_output_tokens += usage.output_tokens
+        self.total_cached_input_tokens += usage.cached_input_tokens
+        self.total_cache_write_input_tokens += usage.cache_write_input_tokens
+        self.usage_reported_llm_calls += 1
+
+    @staticmethod
+    def _fit_tool_context(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        token_budget: int,
+    ) -> list[dict[str, Any]]:
+        """Fit request-local tool exchanges into the model input budget."""
+        if estimate_request_tokens(messages, tools) <= token_budget:
+            return messages
+
+        fitted = [dict(message) for message in messages]
+        tool_indexes = [i for i, message in enumerate(fitted) if message.get("role") == "tool"]
+
+        # Retain useful head/tail excerpts, shrinking oldest results first.
+        for index in tool_indexes:
+            content = fitted[index].get("content")
+            if not isinstance(content, str) or len(content) <= 1200:
+                continue
+            fitted[index]["content"] = (
+                content[:600] + "\n... [tool result trimmed for context budget] ...\n" + content[-600:]
+            )
+            if estimate_request_tokens(fitted, tools) <= token_budget:
+                return fitted
+
+        # Remove oldest complete tool-call batches, preferring the latest batch.
+        batch_ranges: list[tuple[int, int]] = []
+        index = 0
+        while index < len(fitted):
+            message = fitted[index]
+            if message.get("role") != "assistant" or not message.get("tool_calls"):
+                index += 1
+                continue
+            call_ids = {call.get("id") for call in message["tool_calls"]}
+            end = index + 1
+            seen_ids: set[str | None] = set()
+            while end < len(fitted) and fitted[end].get("role") == "tool":
+                seen_ids.add(fitted[end].get("tool_call_id"))
+                end += 1
+            if call_ids and call_ids <= seen_ids:
+                batch_ranges.append((index, end))
+            index = end
+
+        for start, end in reversed(batch_ranges[:-1]):
+            del fitted[start:end]
+            if estimate_request_tokens(fitted, tools) <= token_budget:
+                return fitted
+
+        # If the newest result alone is too large, reduce all remaining results
+        # to explicit placeholders rather than sending a known-oversized request.
+        for message in fitted:
+            if message.get("role") == "tool" and message.get("content"):
+                message["content"] = "[Tool result omitted: context budget exceeded]"
+        return fitted
 
     def _create_progress_context(self, show_progress: bool):
         """Create progress display context."""

@@ -36,6 +36,7 @@ Example:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -306,6 +307,23 @@ def estimate_tokens(messages: list[dict[str, Any]], use_tiktoken: bool = True) -
                     total += len(str(args)) // 4
 
     return total
+
+
+def estimate_request_tokens(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    use_tiktoken: bool = True,
+) -> int:
+    """Estimate tokens for a complete model request, including tool schemas."""
+    total = estimate_tokens(messages, use_tiktoken=use_tiktoken)
+    if not tools:
+        return total
+
+    serialized_tools = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return total + estimate_tokens(
+        [{"role": "system", "content": serialized_tools}],
+        use_tiktoken=use_tiktoken,
+    )
 
 
 def _messages_to_text(messages: list[dict[str, Any]]) -> str:

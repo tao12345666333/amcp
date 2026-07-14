@@ -30,6 +30,22 @@ def _extract_think_tags(content: str) -> tuple[str | None, str]:
 
 
 @dataclass
+class TokenUsage:
+    """Normalized token usage returned by an LLM provider."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+
+    @property
+    def prompt_tokens(self) -> int:
+        """Return all tokens occupying the input context."""
+        return self.input_tokens + self.cached_input_tokens + self.cache_write_input_tokens
+
+
+@dataclass
 class LLMResponse:
     """Unified response from LLM."""
 
@@ -37,6 +53,74 @@ class LLMResponse:
     tool_calls: list[ToolCall] | None = None
     stop_reason: str | None = None
     thinking: str | None = None  # Reasoning/thinking content from LLM
+    usage: TokenUsage | None = None
+
+
+def _usage_value(usage: Any, name: str) -> int:
+    """Read an integer usage field from SDK objects or dictionaries."""
+    if usage is None:
+        return 0
+    value = usage.get(name, 0) if isinstance(usage, dict) else getattr(usage, name, 0)
+    return int(value or 0)
+
+
+def _usage_details_value(usage: Any, details_name: str, value_name: str) -> int:
+    """Read a nested usage detail from SDK objects or dictionaries."""
+    if usage is None:
+        return 0
+    details = usage.get(details_name) if isinstance(usage, dict) else getattr(usage, details_name, None)
+    return _usage_value(details, value_name)
+
+
+def _openai_chat_usage(usage: Any) -> TokenUsage | None:
+    """Normalize Chat Completions usage."""
+    if usage is None:
+        return None
+    prompt_tokens = _usage_value(usage, "prompt_tokens")
+    output_tokens = _usage_value(usage, "completion_tokens")
+    cache_read = _usage_details_value(usage, "prompt_tokens_details", "cached_tokens")
+    cache_write = _usage_details_value(usage, "prompt_tokens_details", "cache_write_tokens")
+    input_tokens = max(0, prompt_tokens - cache_read - cache_write)
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=_usage_value(usage, "total_tokens") or prompt_tokens + output_tokens,
+        cached_input_tokens=cache_read,
+        cache_write_input_tokens=cache_write,
+    )
+
+
+def _responses_usage(usage: Any) -> TokenUsage | None:
+    """Normalize OpenAI Responses API usage."""
+    if usage is None:
+        return None
+    provider_input_tokens = _usage_value(usage, "input_tokens")
+    output_tokens = _usage_value(usage, "output_tokens")
+    cache_read = _usage_details_value(usage, "input_tokens_details", "cached_tokens")
+    input_tokens = max(0, provider_input_tokens - cache_read)
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=_usage_value(usage, "total_tokens") or provider_input_tokens + output_tokens,
+        cached_input_tokens=cache_read,
+    )
+
+
+def _anthropic_usage(usage: Any) -> TokenUsage | None:
+    """Normalize Anthropic usage, including prompt-cache tokens."""
+    if usage is None:
+        return None
+    uncached_input = _usage_value(usage, "input_tokens")
+    cache_creation = _usage_value(usage, "cache_creation_input_tokens")
+    cache_read = _usage_value(usage, "cache_read_input_tokens")
+    output_tokens = _usage_value(usage, "output_tokens")
+    return TokenUsage(
+        input_tokens=uncached_input,
+        output_tokens=output_tokens,
+        total_tokens=uncached_input + cache_creation + cache_read + output_tokens,
+        cached_input_tokens=cache_read,
+        cache_write_input_tokens=cache_creation,
+    )
 
 
 class BaseLLMClient(ABC):
@@ -95,10 +179,13 @@ class OpenAIClient(BaseLLMClient):
             accumulated_content = []
             tool_calls_chunks = {}  # index -> accumulated chunk
             finish_reason = None
+            usage = None
 
             response = self.client.chat.completions.create(**params)
 
             for chunk in response:
+                if getattr(chunk, "usage", None) is not None:
+                    usage = _openai_chat_usage(chunk.usage)
                 # Some APIs (e.g., DeepSeek) may return chunks with empty choices
                 if not chunk.choices:
                     continue
@@ -149,6 +236,7 @@ class OpenAIClient(BaseLLMClient):
                 tool_calls=tool_calls if tool_calls else None,
                 stop_reason=finish_reason,
                 thinking=thinking,
+                usage=usage,
             )
 
         else:
@@ -174,7 +262,11 @@ class OpenAIClient(BaseLLMClient):
                 thinking, content = _extract_think_tags(content)
 
             return LLMResponse(
-                content=content, tool_calls=tool_calls, stop_reason=resp.choices[0].finish_reason, thinking=thinking
+                content=content,
+                tool_calls=tool_calls,
+                stop_reason=resp.choices[0].finish_reason,
+                thinking=thinking,
+                usage=_openai_chat_usage(getattr(resp, "usage", None)),
             )
 
 
@@ -233,6 +325,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             content="\n".join(content_parts) if content_parts else None,
             tool_calls=tool_calls if tool_calls else None,
             stop_reason=resp.stop_reason,
+            usage=_responses_usage(getattr(resp, "usage", None)),
         )
 
 
@@ -335,6 +428,7 @@ class AnthropicClient(BaseLLMClient):
             tool_calls=tool_calls if tool_calls else None,
             stop_reason=resp.stop_reason,
             thinking="\n".join(thinking_parts) if thinking_parts else None,
+            usage=_anthropic_usage(getattr(resp, "usage", None)),
         )
 
 

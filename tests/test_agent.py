@@ -12,6 +12,7 @@ from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ChatConfig, ContextConfig
 from amcp.hooks import HookOutput
+from amcp.llm import LLMResponse, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 
@@ -249,6 +250,93 @@ class TestAgentHistoryManagement:
                 assert agent.session_file.exists()
                 data = json.loads(agent.session_file.read_text())
                 assert data["conversation_history"] == [{"role": "user", "content": "hi"}]
+
+
+class TestAgentContextBudget:
+    def test_fit_tool_context_trims_old_result_without_mutating_input(self):
+        old_content = "old result " * 3000
+        latest_content = "latest result " * 1000
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "old",
+                        "type": "function",
+                        "function": {"name": "web_fetch", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "old", "content": old_content},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "latest",
+                        "type": "function",
+                        "function": {"name": "web_fetch", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "latest", "content": latest_content},
+        ]
+        budget = 5000
+
+        fitted = Agent._fit_tool_context(messages, [], budget)
+
+        assert "trimmed for context budget" in fitted[2]["content"]
+        assert fitted[4]["content"] == latest_content
+        assert messages[2]["content"] == old_content
+
+    def test_records_provider_usage_for_status(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        response = LLMResponse(
+            content="done",
+            usage=TokenUsage(
+                input_tokens=10_000,
+                output_tokens=500,
+                total_tokens=12_500,
+                cached_input_tokens=2_000,
+            ),
+        )
+        agent.total_llm_calls = 1
+
+        agent._record_llm_usage(response, estimated_input_tokens=10_000, context_window=64_000)
+
+        usage = agent.get_token_usage_summary()
+        assert usage["context_tokens"] == 12_000
+        assert usage["context_usage_ratio"] == 0.1875
+        assert usage["total_tokens"] == 12_500
+        assert usage["total_cached_input_tokens"] == 2_000
+        assert usage["total_cache_write_input_tokens"] == 0
+        assert usage["last_usage_from_api"] is True
+
+    def test_estimates_input_when_provider_omits_usage(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        agent.total_llm_calls = 1
+        agent._record_llm_usage(
+            LLMResponse(content="done"),
+            estimated_input_tokens=8_000,
+            context_window=64_000,
+        )
+
+        usage = agent.get_token_usage_summary()
+        assert usage["context_tokens"] == 8_000
+        assert usage["total_input_tokens"] == 8_000
+        assert usage["last_output_tokens"] is None
+        assert usage["estimated_input_llm_calls"] == 1
+        assert usage["last_usage_from_api"] is False
 
 
 class TestAgentEventCallbacks:

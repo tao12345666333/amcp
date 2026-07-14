@@ -9,6 +9,7 @@ from amcp.compaction import (
     CompactionResult,
     CompactionStrategy,
     SmartCompactor,
+    estimate_request_tokens,
     estimate_tokens,
     get_model_context_window,
 )
@@ -235,6 +236,22 @@ class TestSmartCompactor:
         # Create content that's ~500 tokens
         messages = [{"role": "user", "content": "x" * 2000}]
         assert compactor.should_compact(messages) is False
+
+    def test_request_estimate_includes_tool_schemas(self):
+        """Complete request estimates include tool definitions sent to the provider."""
+        messages = [{"role": "user", "content": "Read this page"}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_fetch",
+                    "description": "Fetch a web page " * 100,
+                    "parameters": {"type": "object", "properties": {"url": {"type": "string"}}},
+                },
+            }
+        ]
+
+        assert estimate_request_tokens(messages, tools) > estimate_tokens(messages)
 
     def test_get_token_usage(self, mock_client):
         """Test get_token_usage returns correct structure."""

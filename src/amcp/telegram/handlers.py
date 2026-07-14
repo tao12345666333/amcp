@@ -577,17 +577,64 @@ class TelegramHandlers:
         queued = len(current_session.queue) if current_session else 0
         active = bool(current_session and current_session.current_task and not current_session.current_task.done())
         policy = self._describe_chat_policy(update.message)
+        lines = [
+            f"Sessions: {len(sessions)}",
+            f"Current session: {current or 'none'}",
+            f"Active task: {active}",
+            f"Queued: {queued}",
+            f"Policy: {policy}",
+        ]
+        usage_getter = getattr(current_session.agent, "get_token_usage_summary", None) if current_session else None
+        if usage_getter:
+            usage = usage_getter()
+            if usage["last_usage_from_api"]:
+                source = "API"
+            elif usage["context_tokens"]:
+                source = "estimated"
+            else:
+                source = "no usage yet"
+            lines.extend(
+                [
+                    (
+                        f"Context: {usage['context_tokens']:,} / {usage['context_window']:,} "
+                        f"({usage['context_usage_ratio']:.1%}, {source})"
+                    ),
+                    (
+                        f"Last output: {usage['last_output_tokens']:,} tokens"
+                        if usage["last_output_tokens"] is not None
+                        else "Last output: unavailable"
+                    ),
+                ]
+            )
+            estimated_calls = usage["estimated_input_llm_calls"]
+            if estimated_calls:
+                lines.extend(
+                    [
+                        (
+                            f"Chat-loop input: {usage['total_input_tokens']:,} tokens "
+                            f"({estimated_calls} call(s) estimated)"
+                        ),
+                        f"Chat-loop output: {usage['total_output_tokens']:,} tokens (partial, API only)",
+                    ]
+                )
+            else:
+                lines.append(
+                    f"Chat-loop tokens: {usage['total_input_tokens']:,} input + "
+                    f"{usage['total_output_tokens']:,} output = {usage['total_tokens']:,}"
+                )
+            cache_read = usage["total_cached_input_tokens"]
+            cache_write = usage["total_cache_write_input_tokens"]
+            if cache_read or cache_write:
+                prompt_tokens = usage["total_input_tokens"]
+                hit_rate = cache_read / prompt_tokens if prompt_tokens else 0.0
+                lines.append(f"Cache: {hit_rate:.1%} hit · {cache_read:,} read, {cache_write:,} write")
+            if usage["usage_reported_llm_calls"] < usage["total_llm_calls"]:
+                lines.append(
+                    f"API usage reported: {usage['usage_reported_llm_calls']} / {usage['total_llm_calls']} LLM calls"
+                )
         await self._bot.send_text(
             chat_id,
-            "\n".join(
-                [
-                    f"Sessions: {len(sessions)}",
-                    f"Current session: {current or 'none'}",
-                    f"Active task: {active}",
-                    f"Queued: {queued}",
-                    f"Policy: {policy}",
-                ]
-            ),
+            "\n".join(lines),
         )
 
     async def handle_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
