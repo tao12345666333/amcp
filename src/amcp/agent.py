@@ -106,6 +106,16 @@ class Agent:
 
         # Session-level cumulative tracking
         self.total_llm_calls: int = 0  # Total LLM calls across entire session
+        self.total_input_tokens: int = 0
+        self.total_output_tokens: int = 0
+        self.total_cached_input_tokens: int = 0
+        self.total_cache_write_input_tokens: int = 0
+        self.usage_reported_llm_calls: int = 0
+        self.estimated_input_llm_calls: int = 0
+        self.last_context_tokens: int = 0
+        self.last_context_window: int = 0
+        self.last_output_tokens: int | None = None
+        self.last_usage_from_api: bool = False
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -145,6 +155,16 @@ class Agent:
                     self.tool_calls_history = data.get("tool_calls_history", [])
                     self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
                     self.total_llm_calls = data.get("total_llm_calls", 0)
+                    self.total_input_tokens = data.get("total_input_tokens", 0)
+                    self.total_output_tokens = data.get("total_output_tokens", 0)
+                    self.total_cached_input_tokens = data.get("total_cached_input_tokens", 0)
+                    self.total_cache_write_input_tokens = data.get("total_cache_write_input_tokens", 0)
+                    self.usage_reported_llm_calls = data.get("usage_reported_llm_calls", 0)
+                    self.estimated_input_llm_calls = data.get("estimated_input_llm_calls", 0)
+                    self.last_context_tokens = data.get("last_context_tokens", 0)
+                    self.last_context_window = data.get("last_context_window", 0)
+                    self.last_output_tokens = data.get("last_output_tokens")
+                    self.last_usage_from_api = data.get("last_usage_from_api", False)
                     self.console.print(
                         f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
                     )
@@ -166,6 +186,16 @@ class Agent:
                 "tool_calls_history": self.tool_calls_history,
                 "current_conversation_tool_calls": self.current_conversation_tool_calls,
                 "total_llm_calls": self.total_llm_calls,
+                "total_input_tokens": self.total_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_cached_input_tokens": self.total_cached_input_tokens,
+                "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
+                "usage_reported_llm_calls": self.usage_reported_llm_calls,
+                "estimated_input_llm_calls": self.estimated_input_llm_calls,
+                "last_context_tokens": self.last_context_tokens,
+                "last_context_window": self.last_context_window,
+                "last_output_tokens": self.last_output_tokens,
+                "last_usage_from_api": self.last_usage_from_api,
             }
             with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -178,6 +208,16 @@ class Agent:
         self.tool_calls_history = []
         self.current_conversation_tool_calls = []
         self.total_llm_calls = 0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_cached_input_tokens = 0
+        self.total_cache_write_input_tokens = 0
+        self.usage_reported_llm_calls = 0
+        self.estimated_input_llm_calls = 0
+        self.last_context_tokens = 0
+        self.last_context_window = 0
+        self.last_output_tokens = None
+        self.last_usage_from_api = False
         self.current_request_llm_calls = 0
         self.current_request_tool_calls = 0
         try:
@@ -195,6 +235,33 @@ class Agent:
             "total_tool_calls": len(self.tool_calls_history),  # Session total
             "total_llm_calls": self.total_llm_calls,  # Session total
             "session_file": str(self.session_file),
+        }
+
+    def get_token_usage_summary(self) -> dict[str, Any]:
+        """Return current context usage and provider-reported session totals."""
+        context_window = self.last_context_window
+        if not context_window:
+            cfg = load_config()
+            model_config = cfg.chat.model_config if cfg.chat else None
+            context_window = get_model_context_window(
+                self._resolve_model_name(cfg),
+                model_config=model_config,
+            )
+        usage_ratio = self.last_context_tokens / context_window if context_window else 0.0
+        return {
+            "context_tokens": self.last_context_tokens,
+            "context_window": context_window,
+            "context_usage_ratio": usage_ratio,
+            "last_output_tokens": self.last_output_tokens,
+            "last_usage_from_api": self.last_usage_from_api,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_tokens": self.total_input_tokens + self.total_output_tokens,
+            "total_cached_input_tokens": self.total_cached_input_tokens,
+            "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
+            "usage_reported_llm_calls": self.usage_reported_llm_calls,
+            "estimated_input_llm_calls": self.estimated_input_llm_calls,
+            "total_llm_calls": self.total_llm_calls,
         }
 
     @property
@@ -1012,7 +1079,9 @@ class Agent:
                 stream_callback = _stream_callback
 
             messages = self._fit_tool_context(messages, tools, input_token_budget)
+            estimated_input_tokens = estimate_request_tokens(messages, tools)
             resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
+            self._record_llm_usage(resp, estimated_input_tokens, context_window)
 
             if resp.tool_calls:
                 tool_calls = resp.tool_calls
@@ -1040,8 +1109,12 @@ class Agent:
                     )
                     # Get a final response from the LLM with the current messages
                     try:
+                        self.current_request_llm_calls += 1
+                        self.total_llm_calls += 1
                         messages = self._fit_tool_context(messages, [], input_token_budget)
+                        estimated_input_tokens = estimate_request_tokens(messages)
                         final_resp = llm_client.chat(messages=messages)
+                        self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
                         return final_text
@@ -1277,6 +1350,32 @@ class Agent:
         # Max steps reached
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
         raise MaxStepsReached(self.max_steps)
+
+    def _record_llm_usage(
+        self,
+        response: Any,
+        estimated_input_tokens: int,
+        context_window: int,
+    ) -> None:
+        """Record context occupancy and provider-reported token consumption."""
+        usage = getattr(response, "usage", None)
+        self.last_context_window = context_window
+        if usage is None:
+            self.last_context_tokens = estimated_input_tokens
+            self.last_output_tokens = None
+            self.last_usage_from_api = False
+            self.total_input_tokens += estimated_input_tokens
+            self.estimated_input_llm_calls += 1
+            return
+
+        self.last_context_tokens = usage.prompt_tokens
+        self.last_output_tokens = usage.output_tokens
+        self.last_usage_from_api = True
+        self.total_input_tokens += usage.prompt_tokens
+        self.total_output_tokens += usage.output_tokens
+        self.total_cached_input_tokens += usage.cached_input_tokens
+        self.total_cache_write_input_tokens += usage.cache_write_input_tokens
+        self.usage_reported_llm_calls += 1
 
     @staticmethod
     def _fit_tool_context(

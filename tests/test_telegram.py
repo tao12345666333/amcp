@@ -182,6 +182,43 @@ def test_handle_models_lists_configured_providers():
     asyncio.run(_run())
 
 
+def test_handle_status_shows_context_and_token_usage():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/status", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+        session = handlers._session_manager.create_session(123)
+        session.agent.get_token_usage_summary = lambda: {
+            "context_tokens": 16_000,
+            "context_window": 64_000,
+            "context_usage_ratio": 0.25,
+            "last_output_tokens": 500,
+            "last_usage_from_api": True,
+            "total_input_tokens": 30_000,
+            "total_output_tokens": 2_000,
+            "total_tokens": 32_000,
+            "total_cached_input_tokens": 4_000,
+            "total_cache_write_input_tokens": 1_000,
+            "usage_reported_llm_calls": 3,
+            "estimated_input_llm_calls": 0,
+            "total_llm_calls": 3,
+        }
+
+        await handlers.handle_status(update, SimpleNamespace(args=[]))
+
+        status = fake_bot.sent_texts[-1][1]
+        assert "Context: 16,000 / 64,000 (25.0%, API)" in status
+        assert "Last output: 500 tokens" in status
+        assert "Chat-loop tokens: 30,000 input + 2,000 output = 32,000" in status
+        assert "Cache: 13.3% hit · 4,000 read, 1,000 write" in status
+
+    asyncio.run(_run())
+
+
 def test_handle_model_use_switches_provider_for_admin():
     async def _run():
         handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42}, admin_users={42})
