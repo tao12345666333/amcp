@@ -18,7 +18,13 @@ from rich.text import Text
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
 from .chat import _make_client, _resolve_api_key, _resolve_base_url
-from .compaction import SmartCompactor, estimate_tokens
+from .compaction import (
+    CompactionConfig,
+    SmartCompactor,
+    estimate_request_tokens,
+    estimate_tokens,
+    get_model_context_window,
+)
 from .config import AMCPConfig, ContextConfig, ModelConfig, load_config
 from .hooks import (
     HookDecision,
@@ -623,29 +629,37 @@ class Agent:
                 system_prompt = self._get_system_prompt(work_dir, user_input=user_input)
                 messages = [{"role": "system", "content": system_prompt}]
 
-                # Add conversation history with compaction if needed
+                # Build tools before compaction so their schemas are included in
+                # the request-size decision.
                 history_to_add = list(self.conversation_history)
+                tools, tool_registry = await self._build_tools_and_registry(
+                    user_input=user_input,
+                    conversation_history=history_to_add,
+                )
 
                 # Apply compaction if context is too large
                 cfg = load_config()
                 base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
                 api_key = _resolve_api_key(None, cfg.chat)
                 client = _make_client(base_url, api_key)
-                model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+                model = self._resolve_model_name(cfg)
                 compactor = SmartCompactor(
                     client,
                     model,
                     model_config=cfg.chat.model_config if cfg.chat else None,
                 )
 
-                if compactor.should_compact(history_to_add):
+                request_tokens = estimate_request_tokens(messages + history_to_add, tools)
+                if (
+                    request_tokens > compactor.threshold_tokens
+                    and estimate_tokens(history_to_add) >= compactor.config.min_tokens_to_compact
+                ):
                     # Pre-compaction memory flush: save durable memories before
                     # context is summarized (inspired by openclaw's memory flush).
                     status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
                     await self._run_memory_review(
                         conversation_snapshot=history_to_add,
                         system_prompt=system_prompt,
-                        tools=None,  # will be built below
                         work_dir=work_dir,
                         status=status,
                     )
@@ -655,12 +669,6 @@ class Agent:
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
                 messages.extend(history_to_add)
-
-                # Build tools and registry (combined to avoid duplicate MCP calls)
-                tools, tool_registry = await self._build_tools_and_registry(
-                    user_input=user_input,
-                    conversation_history=history_to_add,
-                )
 
                 # Run chat with tools
                 result = await self._run_with_tools(
@@ -710,7 +718,6 @@ class Agent:
         self,
         conversation_snapshot: list[dict[str, Any]],
         system_prompt: str,
-        tools: list[dict[str, Any]] | None,
         work_dir: Path | None,
         status: Any = None,
     ) -> None:
@@ -976,8 +983,17 @@ class Agent:
         self.current_request_llm_calls = 0
 
         # Create a working copy of messages
-        messages = list(messages)
+        messages = [dict(message) for message in messages]
         used_tools = False
+
+        cfg = load_config()
+        model_config = cfg.chat.model_config if cfg.chat else None
+        model = getattr(llm_client, "model", None) or self._resolve_model_name(cfg)
+        compaction_config = CompactionConfig()
+        context_window = get_model_context_window(model, model_config=model_config)
+        input_token_budget = int(
+            context_window * (1 - compaction_config.safety_margin) * compaction_config.threshold_ratio
+        )
 
         for step in range(max_steps):
             self.step_count = step + 1
@@ -995,6 +1011,7 @@ class Agent:
 
                 stream_callback = _stream_callback
 
+            messages = self._fit_tool_context(messages, tools, input_token_budget)
             resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
 
             if resp.tool_calls:
@@ -1023,6 +1040,7 @@ class Agent:
                     )
                     # Get a final response from the LLM with the current messages
                     try:
+                        messages = self._fit_tool_context(messages, [], input_token_budget)
                         final_resp = llm_client.chat(messages=messages)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
@@ -1030,6 +1048,24 @@ class Agent:
                     except Exception as e:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
                         return f"Error: Could not get final response: {e}"
+
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": resp.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"] or "{}",
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    }
+                )
 
                 # Process tool calls with Live UI
                 with LiveUI() as live_ui:
@@ -1192,19 +1228,6 @@ class Agent:
 
                             messages.append(
                                 {
-                                    "role": "assistant",
-                                    "content": resp.content or "",
-                                    "tool_calls": [
-                                        {
-                                            "id": tool_id,
-                                            "type": "function",
-                                            "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
-                                        }
-                                    ],
-                                }
-                            )
-                            messages.append(
-                                {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
                                     "name": tool_name,
@@ -1254,6 +1277,60 @@ class Agent:
         # Max steps reached
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
         raise MaxStepsReached(self.max_steps)
+
+    @staticmethod
+    def _fit_tool_context(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        token_budget: int,
+    ) -> list[dict[str, Any]]:
+        """Fit request-local tool exchanges into the model input budget."""
+        if estimate_request_tokens(messages, tools) <= token_budget:
+            return messages
+
+        fitted = [dict(message) for message in messages]
+        tool_indexes = [i for i, message in enumerate(fitted) if message.get("role") == "tool"]
+
+        # Retain useful head/tail excerpts, shrinking oldest results first.
+        for index in tool_indexes:
+            content = fitted[index].get("content")
+            if not isinstance(content, str) or len(content) <= 1200:
+                continue
+            fitted[index]["content"] = (
+                content[:600] + "\n... [tool result trimmed for context budget] ...\n" + content[-600:]
+            )
+            if estimate_request_tokens(fitted, tools) <= token_budget:
+                return fitted
+
+        # Remove oldest complete tool-call batches, preferring the latest batch.
+        batch_ranges: list[tuple[int, int]] = []
+        index = 0
+        while index < len(fitted):
+            message = fitted[index]
+            if message.get("role") != "assistant" or not message.get("tool_calls"):
+                index += 1
+                continue
+            call_ids = {call.get("id") for call in message["tool_calls"]}
+            end = index + 1
+            seen_ids: set[str | None] = set()
+            while end < len(fitted) and fitted[end].get("role") == "tool":
+                seen_ids.add(fitted[end].get("tool_call_id"))
+                end += 1
+            if call_ids and call_ids <= seen_ids:
+                batch_ranges.append((index, end))
+            index = end
+
+        for start, end in reversed(batch_ranges[:-1]):
+            del fitted[start:end]
+            if estimate_request_tokens(fitted, tools) <= token_budget:
+                return fitted
+
+        # If the newest result alone is too large, reduce all remaining results
+        # to explicit placeholders rather than sending a known-oversized request.
+        for message in fitted:
+            if message.get("role") == "tool" and message.get("content"):
+                message["content"] = "[Tool result omitted: context budget exceeded]"
+        return fitted
 
     def _create_progress_context(self, show_progress: bool):
         """Create progress display context."""

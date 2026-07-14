@@ -251,6 +251,46 @@ class TestAgentHistoryManagement:
                 assert data["conversation_history"] == [{"role": "user", "content": "hi"}]
 
 
+class TestAgentContextBudget:
+    def test_fit_tool_context_trims_old_result_without_mutating_input(self):
+        old_content = "old result " * 3000
+        latest_content = "latest result " * 1000
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "old",
+                        "type": "function",
+                        "function": {"name": "web_fetch", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "old", "content": old_content},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "latest",
+                        "type": "function",
+                        "function": {"name": "web_fetch", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "latest", "content": latest_content},
+        ]
+        budget = 5000
+
+        fitted = Agent._fit_tool_context(messages, [], budget)
+
+        assert "trimmed for context budget" in fitted[2]["content"]
+        assert fitted[4]["content"] == latest_content
+        assert messages[2]["content"] == old_content
+
+
 class TestAgentEventCallbacks:
     def test_add_and_emit_event(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home:
