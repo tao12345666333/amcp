@@ -29,6 +29,46 @@ def _extract_think_tags(content: str) -> tuple[str | None, str]:
     return None, content
 
 
+def _response_field(value: Any, name: str, default: Any = None) -> Any:
+    """Read a field from SDK objects or dictionaries."""
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _first_chat_choice(response: Any) -> Any:
+    """Return the first chat-completions choice or raise a clear provider error."""
+    choices = _response_field(response, "choices")
+    if not choices:
+        raise ValueError(
+            "Provider returned a chat completion response without choices. "
+            "Check that api_type, base_url, and model match the provider's supported API."
+        )
+    return choices[0]
+
+
+def _split_response_content(
+    content: str | None,
+    reasoning_content: str | None,
+    *,
+    allow_reasoning_as_content: bool,
+) -> tuple[str | None, str | None]:
+    """Split provider content into user-visible content and hidden thinking."""
+    thinking_from_content = None
+    if content:
+        thinking_from_content, content = _extract_think_tags(content)
+
+    if reasoning_content and not content and allow_reasoning_as_content:
+        return thinking_from_content, reasoning_content
+
+    if reasoning_content:
+        if thinking_from_content:
+            reasoning_content = "\n".join([reasoning_content, thinking_from_content])
+        return reasoning_content, content
+
+    return thinking_from_content, content
+
+
 @dataclass
 class TokenUsage:
     """Normalized token usage returned by an LLM provider."""
@@ -177,6 +217,7 @@ class OpenAIClient(BaseLLMClient):
         if stream_callback:
             # Streaming mode
             accumulated_content = []
+            accumulated_reasoning = []
             tool_calls_chunks = {}  # index -> accumulated chunk
             finish_reason = None
             usage = None
@@ -199,8 +240,7 @@ class OpenAIClient(BaseLLMClient):
 
                 # Handle thinking (if present in specific fields)
                 if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                    # We could stream thinking too, but interface only supports one stream currently
-                    pass
+                    accumulated_reasoning.append(delta.reasoning_content)
 
                 # Handle tool calls (accumulate them)
                 if delta.tool_calls:
@@ -219,6 +259,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Reconstruct full response
             content = "".join(accumulated_content) if accumulated_content else None
+            reasoning_text = "".join(accumulated_reasoning) if accumulated_reasoning else None
 
             tool_calls = []
             if tool_calls_chunks:
@@ -226,10 +267,14 @@ class OpenAIClient(BaseLLMClient):
                     tc = tool_calls_chunks[idx]
                     tool_calls.append({"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]})
 
-            # Extract thinking from content if tags used
-            thinking = None
-            if content:
-                thinking, content = _extract_think_tags(content)
+            if reasoning_text and not content and not tool_calls:
+                stream_callback(reasoning_text)
+
+            thinking, content = _split_response_content(
+                content,
+                reasoning_text,
+                allow_reasoning_as_content=not tool_calls,
+            )
 
             return LLMResponse(
                 content=content,
@@ -242,7 +287,10 @@ class OpenAIClient(BaseLLMClient):
         else:
             # Non-streaming mode (existing logic)
             resp = self.client.chat.completions.create(**params)
-            msg = resp.choices[0].message
+            first_choice = _first_chat_choice(resp)
+            msg = _response_field(first_choice, "message")
+            if msg is None:
+                raise ValueError("Provider returned a chat completion choice without a message.")
 
             tool_calls = None
             if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -251,20 +299,16 @@ class OpenAIClient(BaseLLMClient):
                 ]
 
             # Extract thinking content
-            thinking = None
-            content = msg.content
-
-            # Check for reasoning_content field (DeepSeek, some OpenAI-compatible APIs)
-            if hasattr(msg, "reasoning_content") and msg.reasoning_content:
-                thinking = msg.reasoning_content
-            # Check for <think> tags in content
-            elif content:
-                thinking, content = _extract_think_tags(content)
+            thinking, content = _split_response_content(
+                _response_field(msg, "content"),
+                _response_field(msg, "reasoning_content"),
+                allow_reasoning_as_content=tool_calls is None,
+            )
 
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,
-                stop_reason=resp.choices[0].finish_reason,
+                stop_reason=_response_field(first_choice, "finish_reason"),
                 thinking=thinking,
                 usage=_openai_chat_usage(getattr(resp, "usage", None)),
             )

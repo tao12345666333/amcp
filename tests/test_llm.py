@@ -87,6 +87,99 @@ class TestOpenAIClient:
         assert response.usage.total_tokens == 150
         assert response.usage.cached_input_tokens == 40
 
+    def test_chat_uses_reasoning_as_content_when_content_missing(self):
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client.client.chat.completions.create = lambda **_kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        reasoning_content="DeepSeek final answer",
+                        tool_calls=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+        response = client.chat([{"role": "user", "content": "hello"}])
+
+        assert response.content == "DeepSeek final answer"
+        assert response.thinking is None
+
+    def test_chat_keeps_reasoning_hidden_when_content_present(self):
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client.client.chat.completions.create = lambda **_kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Visible answer",
+                        reasoning_content="Hidden reasoning",
+                        tool_calls=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+        response = client.chat([{"role": "user", "content": "hello"}])
+
+        assert response.content == "Visible answer"
+        assert response.thinking == "Hidden reasoning"
+
+    def test_streaming_chat_uses_reasoning_as_content_when_content_missing(self):
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client.client.chat.completions.create = lambda **_kwargs: [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            reasoning_content="Deep",
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            reasoning_content="Seek",
+                            tool_calls=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            ),
+        ]
+        streamed_chunks = []
+
+        response = client.chat(
+            [{"role": "user", "content": "hello"}],
+            stream_callback=streamed_chunks.append,
+        )
+
+        assert streamed_chunks == ["DeepSeek"]
+        assert response.content == "DeepSeek"
+        assert response.thinking is None
+
+    def test_chat_raises_clear_error_when_choices_missing(self):
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client.client.chat.completions.create = lambda **_kwargs: SimpleNamespace(
+            choices=None,
+            usage=None,
+        )
+
+        with pytest.raises(ValueError, match="without choices"):
+            client.chat([{"role": "user", "content": "hello"}])
+
 
 class TestOpenAIResponsesClient:
     def test_client_creation(self):
