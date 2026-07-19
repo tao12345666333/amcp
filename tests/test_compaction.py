@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from amcp.compaction import (
+    COMPACT_PROMPT,
     CompactionConfig,
     CompactionResult,
     CompactionStrategy,
@@ -182,6 +183,28 @@ class TestCompactionStrategy:
         assert CompactionStrategy.TRUNCATE.value == "truncate"
         assert CompactionStrategy.SLIDING_WINDOW.value == "sliding_window"
         assert CompactionStrategy.HYBRID.value == "hybrid"
+
+
+class TestCompactPrompt:
+    def test_prompt_contains_structured_handoff_sections(self):
+        expected_sections = [
+            "<active_task>",
+            "<goal>",
+            "<constraints_and_preferences>",
+            "<completed_actions>",
+            "<active_state>",
+            "<in_progress>",
+            "<blocked>",
+            "<key_decisions>",
+            "<pending_asks>",
+            "<relevant_files>",
+            "<remaining_work>",
+            "<critical_context>",
+        ]
+
+        for section in expected_sections:
+            assert section in COMPACT_PROMPT
+        assert "Mark stale" in COMPACT_PROMPT
 
 
 class TestSmartCompactor:

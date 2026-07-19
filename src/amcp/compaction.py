@@ -140,24 +140,55 @@ COMPACT_PROMPT = """You are tasked with compacting a coding conversation context
 
 {context}
 
-**Output a concise summary (aim for {target_tokens} tokens) in this structure:**
+**Output a concise summary (aim for {target_tokens} tokens) in this exact structure:**
 
-<current_task>
-[What we're working on now - be specific about files and goals]
-</current_task>
+<active_task>
+[Most recent unfulfilled user request, verbatim when possible. If none, write "None."]
+</active_task>
 
-<completed>
-- [Task]: [Brief outcome + key changes made]
-</completed>
+<goal>
+[The user-visible goal and desired outcome.]
+</goal>
 
-<code_state>
-[Key files and their current state - signatures + key logic only]
-[Include file paths that were modified]
-</code_state>
+<constraints_and_preferences>
+- [Durable instructions, constraints, style preferences, environment assumptions.]
+</constraints_and_preferences>
 
-<important>
-[Any crucial context: errors, decisions made, constraints, blockers]
-</important>
+<completed_actions>
+- [Past-tense, dated when possible: action taken, tool/file target, outcome.]
+</completed_actions>
+
+<active_state>
+[Current known state of the workspace, session, services, tests, or UI.]
+</active_state>
+
+<in_progress>
+- [Work started but not completed. Include exact files/commands if relevant.]
+</in_progress>
+
+<blocked>
+- [Blocker, cause, attempted fixes, and what is needed to unblock.]
+</blocked>
+
+<key_decisions>
+- [Decision and rationale.]
+</key_decisions>
+
+<pending_asks>
+- [Questions asked of the user that remain unanswered. Mark stale if they may no longer apply.]
+</pending_asks>
+
+<relevant_files>
+- [path]: [why it matters, key symbols, current state]
+</relevant_files>
+
+<remaining_work>
+- [Next steps. Mark stale if inferred from older context rather than the latest user turn.]
+</remaining_work>
+
+<critical_context>
+[Errors, exact command outputs, IDs, line numbers, or caveats required to continue safely.]
+</critical_context>
 """
 
 
