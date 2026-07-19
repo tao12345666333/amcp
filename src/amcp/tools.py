@@ -1780,6 +1780,91 @@ Examples:
         }
 
 
+class SessionSearchTool(BaseTool):
+    """Tool for searching persisted user/assistant session transcripts."""
+
+    @property
+    def name(self) -> str:
+        return "session_search"
+
+    @property
+    def description(self) -> str:
+        return """Search prior AMCP conversation transcripts.
+
+Use this proactively before asking the user to repeat prior work, plans,
+completed tasks, decisions, dates, preferences, or follow-ups. Transcript
+search is for episodic task history; use memory for curated durable facts."""
+
+    def execute(  # type: ignore[override]
+        self,
+        query: str,
+        max_results: int = 10,
+        session_id: str | None = None,
+        source: str | None = None,
+    ) -> ToolResult:
+        """Search session transcripts."""
+        if not query.strip():
+            return ToolResult(success=False, content="", error="Query is required.")
+        try:
+            from .session_search import get_transcript_store
+
+            results = get_transcript_store().search(
+                query,
+                max_results=max_results,
+                session_id=session_id,
+                source=source,
+            )
+        except Exception as e:
+            return ToolResult(success=False, content="", error=f"Session search failed: {e}")
+
+        if not results:
+            return ToolResult(
+                success=True,
+                content=f"No transcript results found for '{query}'.",
+                metadata={"query": query, "count": 0},
+            )
+
+        lines = [f"Found {len(results)} transcript results for '{query}':"]
+        for idx, result in enumerate(results, start=1):
+            chat = f" chat:{result.chat_id}" if result.chat_id else ""
+            lines.append(
+                f"{idx}. [{result.timestamp} session:{result.session_id}"
+                f" {result.source}{chat} {result.role}] {result.snippet}"
+            )
+        return ToolResult(
+            success=True,
+            content="\n".join(lines),
+            metadata={"query": query, "count": len(results)},
+        )
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query for prior session transcripts.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Maximum results to return (default: 10).",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Optional session id filter.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Optional source filter, such as telegram or agent.",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        }
+
+
 # Initialize default tool registry
 def create_default_tool_registry(
     enable_write: bool = True,
@@ -1806,6 +1891,7 @@ def create_default_tool_registry(
     registry.register(WebFetchTool())
     registry.register(TodoTool())
     registry.register(MemoryTool())
+    registry.register(SessionSearchTool())
 
     if enable_write:
         registry.register(WriteFileTool())

@@ -44,6 +44,7 @@ from .progressive.skill_view import ProgressiveSkillView
 from .progressive.tool_view import ProgressiveToolView
 from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
+from .session_search import get_transcript_store
 from .skills import get_skill_manager
 from .tools import ToolRegistry
 from .ui import LiveUI
@@ -827,6 +828,17 @@ class Agent:
                     )
                 except (OSError, ValueError):
                     pass  # Memory logging is best-effort
+
+                try:
+                    get_transcript_store().append_turn(
+                        session_id=self.session_id,
+                        user=user_input,
+                        assistant=result,
+                        source=str(self.execution_context.get("source", "agent")),
+                        chat_id=self.execution_context.get("telegram_chat_id"),
+                    )
+                except Exception as e:
+                    logger.debug(f"Transcript indexing failed (non-critical): {e}")
 
                 await self._maybe_run_periodic_memory_review(
                     conversation_snapshot=list(self.conversation_history),

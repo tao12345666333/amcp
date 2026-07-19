@@ -337,6 +337,8 @@ class TelegramBot:
         context = getattr(session.agent, "execution_context", None)
         if isinstance(context, dict):
             context["memory_project_root"] = str(self.memory_project_root(chat_id))
+            context["source"] = "telegram"
+            context["telegram_chat_id"] = str(chat_id)
 
     async def flush_session_memory(self, chat_id: int, session: Any) -> bool:
         """Flush durable memory for a Telegram session before it is replaced."""
