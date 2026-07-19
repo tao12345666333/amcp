@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -238,6 +238,54 @@ class TestAgentHistoryManagement:
                 assert summary["message_count"] == 1
                 assert summary["total_tool_calls"] == 1
                 assert summary["total_llm_calls"] == 3
+
+    @pytest.mark.asyncio
+    async def test_periodic_memory_review_runs_every_ten_user_turns(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        conversation = []
+        for idx in range(10):
+            conversation.extend(
+                [
+                    {"role": "user", "content": f"u{idx}"},
+                    {"role": "assistant", "content": f"a{idx}"},
+                ]
+            )
+
+        with patch.object(agent, "_run_memory_review", new_callable=AsyncMock) as review:
+            await agent._maybe_run_periodic_memory_review(
+                conversation_snapshot=conversation,
+                system_prompt="system",
+                work_dir=tmp_path,
+                status=MagicMock(),
+            )
+
+        review.assert_awaited_once()
+        assert agent._last_memory_review_turn_count == 10
+
+    @pytest.mark.asyncio
+    async def test_flush_memory_marks_reviewed_turn_count(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+        agent.conversation_history = [
+            {"role": "user", "content": "remember I prefer concise replies"},
+            {"role": "assistant", "content": "ok"},
+        ]
+
+        with (
+            patch.object(agent, "_get_system_prompt", return_value="system"),
+            patch.object(agent, "_run_memory_review", new_callable=AsyncMock, return_value=True) as review,
+        ):
+            saved = await agent.flush_memory(work_dir=tmp_path)
+
+        assert saved is True
+        review.assert_awaited_once()
+        assert agent._last_memory_review_turn_count == 1
 
     def test_save_conversation_history(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home:

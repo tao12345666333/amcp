@@ -724,7 +724,13 @@ class TelegramHandlers:
             return
 
         if result.action == "new_session":
-            session = self._session_manager.create_session(chat_id, abandon_current=True)
+            old_session = self._session_manager.get_current_session(chat_id)
+            if old_session:
+                self._session_manager.abandon_current_session(chat_id)
+                flush_session_memory = getattr(self._bot, "flush_session_memory", None)
+                if callable(flush_session_memory):
+                    await flush_session_memory(chat_id, old_session)
+            session = self._session_manager.create_session(chat_id)
             await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
             return
 
@@ -781,7 +787,8 @@ class TelegramHandlers:
             await self._bot.send_text(update.effective_chat.id, "Usage: /memory search <query>")
             return
         query = " ".join(args[1:])
-        memory_manager = get_memory_manager(self._work_dir)
+        memory_project_root = getattr(self._bot, "memory_project_root", lambda _chat_id: self._work_dir)
+        memory_manager = get_memory_manager(memory_project_root(update.effective_chat.id))
         results = memory_manager.search(query)
         if not results:
             await self._bot.send_text(update.effective_chat.id, "No results found.")
