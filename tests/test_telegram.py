@@ -36,6 +36,7 @@ class _FakeBot:
         self.prompts: list[tuple[int, int, str]] = []
         self.model_provider_requests: list[str] = []
         self.flushed_sessions: list[tuple[int, str]] = []
+        self.scheduled_prompts: list[SimpleNamespace] = []
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
         self.pairing_requests.append((user_id, chat_id, username))
@@ -60,6 +61,45 @@ class _FakeBot:
     def use_model_provider(self, name: str):
         self.model_provider_requests.append(name)
         return True, f"Switched provider to {name}."
+
+    def create_scheduled_prompt(self, chat_id: int, schedule: str, prompt: str):
+        job = SimpleNamespace(
+            id=f"job-{len(self.scheduled_prompts) + 1}",
+            chat_id=chat_id,
+            schedule=schedule,
+            prompt=prompt,
+            name=None,
+            blueprint=None,
+        )
+        self.scheduled_prompts.append(job)
+        return True, f"Created scheduled prompt {job.id}: {schedule}"
+
+    def create_scheduled_blueprint(self, chat_id: int, blueprint: str, schedule: str):
+        job = SimpleNamespace(
+            id=f"job-{len(self.scheduled_prompts) + 1}",
+            chat_id=chat_id,
+            schedule=schedule,
+            prompt="",
+            name=blueprint,
+            blueprint=blueprint,
+        )
+        self.scheduled_prompts.append(job)
+        return True, f"Created scheduled blueprint {blueprint} as {job.id}: {schedule}"
+
+    def list_scheduled_prompts(self, chat_id: int):
+        return [job for job in self.scheduled_prompts if job.chat_id == chat_id]
+
+    def delete_scheduled_prompt(self, chat_id: int, job_id: str):
+        before = len(self.scheduled_prompts)
+        self.scheduled_prompts = [
+            job for job in self.scheduled_prompts if not (job.chat_id == chat_id and job.id == job_id)
+        ]
+        if len(self.scheduled_prompts) == before:
+            return False, f"Scheduled prompt not found: {job_id}"
+        return True, f"Deleted scheduled prompt {job_id}."
+
+    def list_schedule_blueprints(self):
+        return "Schedule blueprints:\n- hackernews_daily: Fetch HN"
 
 
 def test_auth_middleware():
@@ -268,6 +308,54 @@ def test_handle_model_use_switches_provider_for_admin():
 
         assert fake_bot.model_provider_requests == ["backup"]
         assert fake_bot.sent_texts[-1] == (123, "Switched provider to backup.")
+
+    asyncio.run(_run())
+
+
+def test_handle_schedule_add_lists_and_deletes_prompt():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/schedule", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_schedule(
+            update,
+            SimpleNamespace(args=["add", "0", "8", "*", "*", "*", "send", "Hacker", "News"]),
+        )
+        await handlers.handle_schedule(update, SimpleNamespace(args=["list"]))
+        await handlers.handle_schedule(update, SimpleNamespace(args=["delete", "job-1"]))
+
+        assert fake_bot.sent_texts[0] == (123, "Created scheduled prompt job-1: 0 8 * * *")
+        assert "job-1" in fake_bot.sent_texts[1][1]
+        assert fake_bot.sent_texts[2] == (123, "Deleted scheduled prompt job-1.")
+
+    asyncio.run(_run())
+
+
+def test_handle_schedule_blueprint_creates_hackernews_job():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        message = _make_message(text="/schedule", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_schedule(
+            update,
+            SimpleNamespace(args=["blueprint", "hackernews_daily", "0", "8", "*", "*", "*"]),
+        )
+
+        assert fake_bot.sent_texts[-1] == (
+            123,
+            "Created scheduled blueprint hackernews_daily as job-1: 0 8 * * *",
+        )
+        assert fake_bot.scheduled_prompts[-1].blueprint == "hackernews_daily"
 
     asyncio.run(_run())
 
@@ -534,7 +622,7 @@ def test_post_init_registers_user_facing_bot_commands():
         names = [c.command for c in commands]
 
         # user-facing commands registered in the menu
-        for expected in ["start", "help", "status", "new", "session", "skills", "models"]:
+        for expected in ["start", "help", "status", "new", "session", "schedule", "skills", "models"]:
             assert expected in names
         # admin and helper commands intentionally omitted
         for omitted in ["cancel", "ask", "activate", "memory", "model", "config", "users", "pair", "logs", "shutdown"]:
@@ -550,7 +638,16 @@ def test_get_user_bot_commands_descriptions():
         mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
         commands = bot._get_user_bot_commands()
 
-    assert [c.command for c in commands] == ["start", "help", "status", "new", "session", "skills", "models"]
+    assert [c.command for c in commands] == [
+        "start",
+        "help",
+        "status",
+        "new",
+        "session",
+        "schedule",
+        "skills",
+        "models",
+    ]
     for command in commands:
         assert command.description  # non-empty
 

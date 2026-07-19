@@ -15,6 +15,7 @@ import httpx
 
 from ..config import load_config
 from ..tools import BaseTool, ToolResult
+from .scheduler import SCHEDULE_BLUEPRINTS, TelegramScheduleStore
 
 logger = logging.getLogger(__name__)
 
@@ -261,5 +262,195 @@ The text supports Markdown formatting which is auto-converted to MarkdownV2."""
                 },
             },
             "required": ["action", "text"],
+            "additionalProperties": False,
+        }
+
+
+class TelegramScheduleTool(BaseTool):
+    """Tool for creating and managing Telegram scheduled prompt jobs."""
+
+    def __init__(self, store: TelegramScheduleStore) -> None:
+        super().__init__()
+        self._store = store
+
+    @property
+    def name(self) -> str:
+        return "telegram_schedule"
+
+    @property
+    def description(self) -> str:
+        return """Create, list, delete, or instantiate blueprint-based Telegram scheduled prompts.
+
+Use this when a Telegram user asks AMCP to proactively run a recurring task, for example
+"每天 8 点推送 Hacker News 热榜". Convert the requested cadence to a 5-field local cron
+expression like "0 8 * * *", use the chat_id from Telegram metadata, and include a clear prompt.
+
+Actions:
+- create: create a custom scheduled prompt
+- create_blueprint: create from a built-in blueprint such as hackernews_daily or heartbeat
+- list: list scheduled prompts for a chat
+- delete: delete one scheduled prompt by id
+- blueprints: list built-in blueprints
+
+Scheduled agents may reply exactly [SILENT] to suppress delivery."""
+
+    def execute(  # type: ignore[override]
+        self,
+        action: str,
+        chat_id: str | int | None = None,
+        schedule: str | None = None,
+        prompt: str | None = None,
+        job_id: str | None = None,
+        name: str | None = None,
+        blueprint: str | None = None,
+        notify: bool = True,
+        timeout: int = 900,
+    ) -> ToolResult:
+        """Execute a Telegram schedule action."""
+        try:
+            if action == "blueprints":
+                return self._blueprints()
+            if action == "list":
+                return self._list(chat_id)
+            if action == "delete":
+                return self._delete(chat_id, job_id)
+            if action == "create":
+                return self._create(chat_id, schedule, prompt, name, notify, timeout)
+            if action == "create_blueprint":
+                return self._create_blueprint(chat_id, schedule, blueprint, name, notify, timeout)
+        except ValueError as exc:
+            return ToolResult(success=False, content="", error=str(exc))
+        return ToolResult(
+            success=False,
+            content="",
+            error="Invalid action. Use: create, create_blueprint, list, delete, blueprints",
+        )
+
+    def _coerce_chat_id(self, chat_id: str | int | None) -> int:
+        if chat_id is None or str(chat_id).strip() == "":
+            raise ValueError("chat_id is required.")
+        return int(str(chat_id).strip())
+
+    def _create(
+        self,
+        chat_id: str | int | None,
+        schedule: str | None,
+        prompt: str | None,
+        name: str | None,
+        notify: bool,
+        timeout: int,
+    ) -> ToolResult:
+        job = self._store.create_job(
+            chat_id=self._coerce_chat_id(chat_id),
+            schedule=schedule or "",
+            prompt=prompt or "",
+            name=name,
+            notify=notify,
+            timeout=timeout,
+        )
+        return ToolResult(
+            success=True,
+            content=f"Created Telegram scheduled prompt {job.id} ({job.schedule}).",
+            metadata={"job_id": job.id},
+        )
+
+    def _create_blueprint(
+        self,
+        chat_id: str | int | None,
+        schedule: str | None,
+        blueprint: str | None,
+        name: str | None,
+        notify: bool,
+        timeout: int,
+    ) -> ToolResult:
+        if not blueprint:
+            raise ValueError("blueprint is required.")
+        job = self._store.create_blueprint_job(
+            chat_id=self._coerce_chat_id(chat_id),
+            blueprint=blueprint,
+            schedule=schedule or "",
+            name=name,
+            notify=notify,
+            timeout=timeout,
+        )
+        return ToolResult(
+            success=True,
+            content=f"Created Telegram scheduled blueprint {job.blueprint} as {job.id} ({job.schedule}).",
+            metadata={"job_id": job.id, "blueprint": job.blueprint},
+        )
+
+    def _list(self, chat_id: str | int | None) -> ToolResult:
+        jobs = self._store.list_jobs(self._coerce_chat_id(chat_id))
+        if not jobs:
+            return ToolResult(success=True, content="No Telegram scheduled prompts.", metadata={"jobs": []})
+        lines = ["Telegram scheduled prompts:"]
+        for job in jobs:
+            label = job.name or job.id
+            source = f" blueprint={job.blueprint}" if job.blueprint else ""
+            lines.append(f"- {job.id} {label}: {job.schedule}{source}")
+        return ToolResult(
+            success=True,
+            content="\n".join(lines),
+            metadata={"jobs": [job.id for job in jobs]},
+        )
+
+    def _delete(self, chat_id: str | int | None, job_id: str | None) -> ToolResult:
+        if not job_id:
+            raise ValueError("job_id is required.")
+        deleted = self._store.delete_job(self._coerce_chat_id(chat_id), job_id)
+        if not deleted:
+            return ToolResult(success=False, content="", error=f"Scheduled prompt not found: {job_id}")
+        return ToolResult(success=True, content=f"Deleted Telegram scheduled prompt {job_id}.")
+
+    def _blueprints(self) -> ToolResult:
+        lines = ["Telegram schedule blueprints:"]
+        for name, blueprint in sorted(SCHEDULE_BLUEPRINTS.items()):
+            lines.append(f"- {name}: {blueprint.description}")
+        return ToolResult(success=True, content="\n".join(lines), metadata={"blueprints": sorted(SCHEDULE_BLUEPRINTS)})
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "create_blueprint", "list", "delete", "blueprints"],
+                    "description": "Schedule action to perform.",
+                },
+                "chat_id": {
+                    "type": "string",
+                    "description": "Telegram chat ID from message metadata.",
+                },
+                "schedule": {
+                    "type": "string",
+                    "description": "5-field local cron expression, for example '0 8 * * *'.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Prompt to run on schedule for custom jobs.",
+                },
+                "job_id": {
+                    "type": "string",
+                    "description": "Scheduled prompt ID for delete.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Optional display name.",
+                },
+                "blueprint": {
+                    "type": "string",
+                    "enum": sorted(SCHEDULE_BLUEPRINTS),
+                    "description": "Built-in blueprint name.",
+                },
+                "notify": {
+                    "type": "boolean",
+                    "description": "Whether AMCP should send non-silent results to the chat.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Maximum execution time in seconds.",
+                },
+            },
+            "required": ["action"],
             "additionalProperties": False,
         }

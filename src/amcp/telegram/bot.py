@@ -23,6 +23,7 @@ from .auth import AuthMiddleware
 from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
 from .formatter import TelegramFormatter
 from .handlers import RateLimiter, SessionManager, TelegramHandlers, TelegramQueuedMessage
+from .scheduler import SCHEDULE_BLUEPRINTS, TelegramScheduledPrompt, TelegramScheduleStore
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -101,6 +102,8 @@ class TelegramBot:
         self._typing_tasks: dict[int, asyncio.Task[None]] = {}
         self._pairing_requests: dict[str, PairingRequest] = {}
         self._scheduler: Any = None  # AssistantScheduler (lazy import)
+        self._prompt_scheduler: Any = None  # TelegramPromptScheduler (lazy import)
+        self._schedule_store = TelegramScheduleStore()
         self._session_boundary_locks: dict[int, asyncio.Lock] = {}
         self._memory_dream_task: asyncio.Task[None] | None = None
         self._memory_dream_interval_seconds = TELEGRAM_MEMORY_DREAM_INTERVAL_SECONDS
@@ -271,24 +274,31 @@ class TelegramBot:
 
     async def start_polling(self) -> None:
         self._register_telegram_send_tool()
+        self._register_telegram_schedule_tool()
         self._register_notifications()
         await self._start_skill_watcher()
         if self._config.assistant_mode:
             await self._start_assistant_scheduler()
+        await self._start_prompt_scheduler()
         self._start_memory_dream_loop()
         await self._run_polling_loop()
 
     async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
         self._register_telegram_send_tool()
+        self._register_telegram_schedule_tool()
         self._register_notifications()
         await self._start_skill_watcher()
         if self._config.assistant_mode:
             await self._start_assistant_scheduler()
+        await self._start_prompt_scheduler()
         self._start_memory_dream_loop()
         await self._run_webhook_loop(url, listen=listen, port=port)
 
     async def stop(self) -> None:
         await self._stop_memory_dream_loop()
+        if self._prompt_scheduler:
+            await self._prompt_scheduler.stop()
+            self._prompt_scheduler = None
         if self._scheduler:
             await self._scheduler.stop()
             self._scheduler = None
@@ -305,6 +315,7 @@ class TelegramBot:
             except Exception:
                 logger.exception("Failed to stop Telegram application cleanly.")
         self._unregister_notifications()
+        self._unregister_telegram_schedule_tool()
         self._unregister_telegram_send_tool()
 
     def cancel_session(self, chat_id: int) -> tuple[bool, bool]:
@@ -341,11 +352,79 @@ class TelegramBot:
         return CONFIG_DIR / "telegram" / f"chat_{chat_id}"
 
     def _bind_session_memory(self, chat_id: int, session: Any) -> None:
-        context = getattr(session.agent, "execution_context", None)
+        self._bind_agent_memory_context(chat_id, session.agent)
+
+    def _bind_agent_memory_context(self, chat_id: int, agent: Any) -> None:
+        context = getattr(agent, "execution_context", None)
         if isinstance(context, dict):
             context["memory_project_root"] = str(self.memory_project_root(chat_id))
             context["source"] = "telegram"
             context["telegram_chat_id"] = str(chat_id)
+
+    def create_scheduled_prompt(
+        self,
+        chat_id: int,
+        schedule: str,
+        prompt: str,
+        *,
+        name: str | None = None,
+        notify: bool = True,
+        timeout: int = 900,
+    ) -> tuple[bool, str]:
+        """Create a persistent scheduled prompt for a Telegram chat."""
+        try:
+            job = self._schedule_store.create_job(
+                chat_id=chat_id,
+                schedule=schedule,
+                prompt=prompt,
+                name=name,
+                notify=notify,
+                timeout=timeout,
+            )
+        except ValueError as exc:
+            return False, str(exc)
+        return True, f"Created scheduled prompt {job.id}: {job.schedule}"
+
+    def create_scheduled_blueprint(
+        self,
+        chat_id: int,
+        blueprint: str,
+        schedule: str,
+        *,
+        name: str | None = None,
+        notify: bool = True,
+        timeout: int = 900,
+    ) -> tuple[bool, str]:
+        """Create a persistent scheduled prompt from a built-in blueprint."""
+        try:
+            job = self._schedule_store.create_blueprint_job(
+                chat_id=chat_id,
+                blueprint=blueprint,
+                schedule=schedule,
+                name=name,
+                notify=notify,
+                timeout=timeout,
+            )
+        except ValueError as exc:
+            return False, str(exc)
+        return True, f"Created scheduled blueprint {job.blueprint} as {job.id}: {job.schedule}"
+
+    def list_scheduled_prompts(self, chat_id: int) -> list[TelegramScheduledPrompt]:
+        """List persistent scheduled prompts for a Telegram chat."""
+        return self._schedule_store.list_jobs(chat_id)
+
+    def delete_scheduled_prompt(self, chat_id: int, job_id: str) -> tuple[bool, str]:
+        """Delete one persistent scheduled prompt for a Telegram chat."""
+        if self._schedule_store.delete_job(chat_id, job_id):
+            return True, f"Deleted scheduled prompt {job_id}."
+        return False, f"Scheduled prompt not found: {job_id}"
+
+    def list_schedule_blueprints(self) -> str:
+        """Return a user-facing list of built-in schedule blueprints."""
+        lines = ["Schedule blueprints:"]
+        for name, blueprint in sorted(SCHEDULE_BLUEPRINTS.items()):
+            lines.append(f"- {name}: {blueprint.description}")
+        return "\n".join(lines)
 
     async def flush_session_memory(self, chat_id: int, session: Any) -> bool:
         """Flush durable memory for a Telegram session before it is replaced."""
@@ -607,6 +686,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("new", self._handlers.handle_new))
         application.add_handler(CommandHandler("cancel", self._handlers.handle_cancel))
         application.add_handler(CommandHandler("ask", self._handlers.handle_ask))
+        application.add_handler(CommandHandler("schedule", self._handlers.handle_schedule))
         application.add_handler(CommandHandler("skills", self._handlers.handle_skills))
         application.add_handler(CommandHandler("activate", self._handlers.handle_activate))
         application.add_handler(CommandHandler("memory", self._handlers.handle_memory))
@@ -656,6 +736,7 @@ class TelegramBot:
             BotCommand("status", "Show agent and session status"),
             BotCommand("new", "Start a new conversation session"),
             BotCommand("session", "Manage sessions (new|list|switch)"),
+            BotCommand("schedule", "Manage scheduled prompts"),
             BotCommand("skills", "List and manage skills"),
             BotCommand("models", "List configured LLM providers"),
         ]
@@ -738,6 +819,25 @@ class TelegramBot:
             registry.unregister("telegram_send")
             logger.info("Unregistered telegram_send tool")
 
+    def _register_telegram_schedule_tool(self) -> None:
+        """Register the TelegramScheduleTool with the global tool registry."""
+        from ..tools import get_tool_registry
+        from .tools import TelegramScheduleTool
+
+        registry = get_tool_registry()
+        if registry.get_tool("telegram_schedule") is None:
+            registry.register(TelegramScheduleTool(self._schedule_store))
+            logger.info("Registered telegram_schedule tool")
+
+    def _unregister_telegram_schedule_tool(self) -> None:
+        """Unregister the TelegramScheduleTool from the global tool registry."""
+        from ..tools import get_tool_registry
+
+        registry = get_tool_registry()
+        if registry.get_tool("telegram_schedule") is not None:
+            registry.unregister("telegram_schedule")
+            logger.info("Unregistered telegram_schedule tool")
+
     def _register_notifications(self) -> None:
         if not self._config.notifications:
             return
@@ -805,6 +905,22 @@ class TelegramBot:
         )
         await self._scheduler.start()
         logger.info("Telegram: AssistantScheduler started")
+
+    async def _start_prompt_scheduler(self) -> None:
+        """Start the internal scheduler for persistent Telegram prompt jobs."""
+        from .scheduler import TelegramPromptScheduler
+
+        if self._prompt_scheduler:
+            return
+        self._prompt_scheduler = TelegramPromptScheduler(
+            store=self._schedule_store,
+            agent_factory=self._session_manager._agent_factory,
+            send_chat=self.send_text,
+            bind_agent_context=self._bind_agent_memory_context,
+            work_dir=self._work_dir,
+        )
+        await self._prompt_scheduler.start()
+        logger.info("Telegram: PromptScheduler started")
 
     async def _start_typing(self, chat_id: int) -> None:
         if not self._config.typing_indicator:
