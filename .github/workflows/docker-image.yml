@@ -61,3 +61,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract GMI Docker metadata
+        id: gmi-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch,prefix=gmi-
+            type=ref,event=pr,prefix=gmi-
+            type=semver,pattern=gmi-{{version}}
+            type=sha,prefix=gmi-sha-
+            type=raw,value=gmi-latest,enable={{is_default_branch}}
+
+      - name: Build and publish GMI Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./deploy-gmi/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.gmi-meta.outputs.tags }}
+          labels: ${{ steps.gmi-meta.outputs.labels }}
+          cache-from: type=gha,scope=gmi
+          cache-to: type=gha,mode=max,scope=gmi
