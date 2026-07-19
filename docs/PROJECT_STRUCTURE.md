@@ -15,7 +15,7 @@ AMCP/
 │   ├── tools.py           # Built-in tools (read, grep, bash, etc.)
 │   ├── config.py          # Configuration management
 │   ├── mcp_client.py      # MCP server integration
-│   ├── chat.py            # Chat/LLM interaction
+│   ├── chat.py            # OpenAI-compatible client helpers
 │   └── readfile.py        # File reading utilities
 │
 ├── tests/                 # Test suite
@@ -87,4 +87,4 @@ AMCP/
 - **tools.py**: Built-in tool implementations
 - **config.py**: Configuration loading/saving
 - **mcp_client.py**: MCP protocol communication
-- **chat.py**: LLM interaction, streaming responses
+- **chat.py**: Shared OpenAI-compatible client construction and config resolution
