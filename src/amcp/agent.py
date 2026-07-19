@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -123,6 +124,7 @@ class Agent:
         self._frozen_memory_project_root: Path | None = None
         self._frozen_persona_context: str = ""
         self._frozen_memory_context: str = ""
+        self._pending_memory_review_tasks: set[asyncio.Task[None]] = set()
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -936,18 +938,45 @@ class Agent:
         work_dir: Path | None,
         status: Any = None,
     ) -> None:
-        """Run a lightweight memory review every N user turns."""
+        """Schedule an isolated memory review every N user turns."""
         turn_count = self._conversation_turn_count(conversation_snapshot)
         if turn_count - self._last_memory_review_turn_count < MEMORY_REVIEW_TURN_INTERVAL:
             return
+        self._last_memory_review_turn_count = turn_count
+        self._save_conversation_history()
+        task = asyncio.create_task(
+            self._run_isolated_memory_review(
+                conversation_snapshot=list(conversation_snapshot),
+                system_prompt=system_prompt,
+                work_dir=work_dir,
+            )
+        )
+        self._pending_memory_review_tasks.add(task)
+        task.add_done_callback(self._on_memory_review_task_done)
+
+    async def _run_isolated_memory_review(
+        self,
+        conversation_snapshot: list[dict[str, Any]],
+        system_prompt: str,
+        work_dir: Path | None,
+    ) -> None:
+        """Run a background memory review without mutating chat history."""
         await self._run_memory_review(
             conversation_snapshot=conversation_snapshot,
             system_prompt=system_prompt,
             work_dir=work_dir,
-            status=status,
+            status=None,
         )
-        self._last_memory_review_turn_count = turn_count
-        self._save_conversation_history()
+
+    def _on_memory_review_task_done(self, task: asyncio.Task[None]) -> None:
+        """Remove completed background review tasks and log failures."""
+        self._pending_memory_review_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as e:
+            logger.debug(f"Periodic memory review failed (non-critical): {e}")
 
     def is_busy(self) -> bool:
         """Check if this agent's session is currently busy."""

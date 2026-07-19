@@ -291,7 +291,7 @@ class TestAgentHistoryManagement:
                 ]
             )
 
-        with patch.object(agent, "_run_memory_review", new_callable=AsyncMock) as review:
+        with patch.object(agent, "_run_isolated_memory_review", new_callable=AsyncMock) as review:
             await agent._maybe_run_periodic_memory_review(
                 conversation_snapshot=conversation,
                 system_prompt="system",
@@ -299,6 +299,9 @@ class TestAgentHistoryManagement:
                 status=MagicMock(),
             )
 
+        tasks = list(agent._pending_memory_review_tasks)
+        assert len(tasks) == 1
+        await tasks[0]
         review.assert_awaited_once()
         assert agent._last_memory_review_turn_count == 10
 
