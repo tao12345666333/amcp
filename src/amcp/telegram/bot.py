@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import secrets
 import string
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -253,7 +254,10 @@ class TelegramBot:
 
     async def persist_config(self) -> None:
         cfg = load_config()
-        cfg.telegram = self._config
+        telegram_cfg = self._config
+        if os.environ.get("AMCP_TELEGRAM_BOT_TOKEN"):
+            telegram_cfg = replace(telegram_cfg, bot_token=None)
+        cfg.telegram = telegram_cfg
         path = save_config(cfg)
         try:
             path.chmod(0o600)

@@ -17,7 +17,16 @@ if [ -n "${GMI_MAAS_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     export OPENAI_API_KEY="$GMI_MAAS_API_KEY"
 fi
 
-RAW_MODEL="${AMCP_CHAT_MODEL:-${GMI_MODELS:-DeepSeek-V3.1-Terminus}}"
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo "GMI_MAAS_API_KEY or OPENAI_API_KEY is required" >&2
+    exit 1
+fi
+
+RAW_MODEL="${AMCP_CHAT_MODEL:-${GMI_MODELS:-}}"
+if [ -z "$RAW_MODEL" ]; then
+    echo "GMI_MODELS or AMCP_CHAT_MODEL is required" >&2
+    exit 1
+fi
 case "$RAW_MODEL" in
     *,*) MODEL="${RAW_MODEL%%,*}" ;;
     *) MODEL="$RAW_MODEL" ;;
@@ -29,7 +38,7 @@ CONFIG_DIR="$CONFIG_ROOT/amcp"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 mkdir -p "$CONFIG_DIR" "$WORK_DIR"
 
-if [ ! -f "$CONFIG_FILE" ] || [ "${AMCP_GMI_REWRITE_CONFIG:-0}" = "1" ]; then
+if [ ! -f "$CONFIG_FILE" ] || [ "${AMCP_GMI_REWRITE_CONFIG:-1}" = "1" ]; then
     cat > "$CONFIG_FILE" <<EOF
 [server]
 host = "$HOST"
@@ -66,4 +75,39 @@ progressive_skills = true
 EOF
 fi
 
-exec amcp serve --host "$HOST" --port "$PORT" --work-dir "$WORK_DIR"
+set -- serve --host "$HOST" --port "$PORT" --work-dir "$WORK_DIR"
+
+if [ -n "${AMCP_TELEGRAM_BOT_TOKEN:-}" ]; then
+    if [ -z "${AMCP_TELEGRAM_ALLOWED_USERS:-}" ]; then
+        echo "AMCP_TELEGRAM_ALLOWED_USERS is required when Telegram is enabled" >&2
+        exit 1
+    fi
+    amcp "$@" &
+    server_pid=$!
+    amcp telegram start --work-dir "$WORK_DIR" &
+    telegram_pid=$!
+
+    stop_children() {
+        kill "$server_pid" "$telegram_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+        wait "$telegram_pid" 2>/dev/null || true
+    }
+    trap 'stop_children; exit 143' INT TERM
+
+    while kill -0 "$server_pid" 2>/dev/null && kill -0 "$telegram_pid" 2>/dev/null; do
+        sleep 2
+    done
+
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+        if wait "$server_pid"; then status=0; else status=$?; fi
+    else
+        if wait "$telegram_pid"; then status=0; else status=$?; fi
+    fi
+    if [ "$status" -eq 0 ]; then
+        status=1
+    fi
+    stop_children
+    exit "$status"
+fi
+
+exec amcp "$@"

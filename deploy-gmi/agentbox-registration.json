@@ -6,7 +6,7 @@
     "dockerfile": "deploy-gmi/Dockerfile",
     "local_image": "amcp-gmi:latest",
     "build_command": "docker build -f deploy-gmi/Dockerfile -t amcp-gmi:latest .",
-    "registry_url": "ghcr.io/tao12345666333/amcp:gmi-0.11.0"
+    "registry_url": "ghcr.io/tao12345666333/amcp:gmi-0.11.1"
   },
   "infrastructure": {
     "compute_tier": "Container, 2 vCPU, 4 GB RAM, 10 GiB ephemeral storage, 30 GiB data storage",
@@ -38,12 +38,27 @@
     {
       "name": "AMCP_GMI_REWRITE_CONFIG",
       "type": "TEXT",
-      "value": "0"
+      "value": "1"
     },
     {
       "name": "AMCP_CHAT_MODEL",
       "type": "TEXT",
       "value": "<optional primary GMI MaaS model>"
+    },
+    {
+      "name": "AMCP_TELEGRAM_BOT_TOKEN",
+      "type": "SECRET",
+      "value": "<token from BotFather>"
+    },
+    {
+      "name": "AMCP_TELEGRAM_ALLOWED_USERS",
+      "type": "TEXT",
+      "value": "<comma-separated Telegram numeric user IDs>"
+    },
+    {
+      "name": "AMCP_TELEGRAM_ADMIN_USERS",
+      "type": "TEXT",
+      "value": "<optional comma-separated Telegram numeric user IDs>"
     }
   ],
   "endpoint_smoke_tests": [

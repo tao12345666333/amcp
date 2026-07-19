@@ -9,6 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:${PATH}" \
+    HOME=/workspace \
+    XDG_CONFIG_HOME=/workspace/.config \
     PORT=8080 \
     AMCP_WORK_DIR=/workspace
 
@@ -25,11 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --no-editable --extra telegram
 
 COPY deploy-gmi/gmi-entrypoint.sh /usr/local/bin/gmi-entrypoint
 RUN chmod +x /usr/local/bin/gmi-entrypoint \
-    && mkdir -p /root/.config/amcp /workspace
+    && mkdir -p /workspace/.config/amcp
 
 WORKDIR /workspace
 

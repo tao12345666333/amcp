@@ -1,6 +1,6 @@
 [project]
 name = "amcp-agent"
-version = "0.11.0"
+version = "0.11.1"
 description = "AMCP is an out-of-the-box coding-agent runtime for terminal, IDE, server, and Telegram, with built-in tools, subagents, skills, memory, MCP/ACP, hooks, and automation."
 readme = "README.md"
 requires-python = ">=3.11"

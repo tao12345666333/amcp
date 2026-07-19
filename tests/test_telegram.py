@@ -549,6 +549,25 @@ def test_get_user_bot_commands_descriptions():
         assert command.description  # non-empty
 
 
+def test_persist_config_does_not_write_environment_bot_token(monkeypatch, tmp_path):
+    async def _run():
+        bot = _make_bot_for_typing()
+        loaded_config = SimpleNamespace(telegram=None)
+
+        monkeypatch.setenv("AMCP_TELEGRAM_BOT_TOKEN", "runtime-secret")
+        with (
+            patch("amcp.telegram.bot.load_config", return_value=loaded_config),
+            patch("amcp.telegram.bot.save_config", return_value=tmp_path / "config.toml") as save_config,
+        ):
+            await bot.persist_config()
+
+        saved_config = save_config.call_args.args[0]
+        assert saved_config.telegram.bot_token is None
+        assert bot.config.bot_token == "fake-token"
+
+    asyncio.run(_run())
+
+
 def test_typing_start_creates_task():
     async def _run():
         bot = _make_bot_for_typing()
