@@ -13,7 +13,6 @@ from amcp.chat import (
     _is_within_root,
     _make_client,
     _normalize_exa_web_search_args,
-    _parse_read_intent,
     _resolve_api_key,
     _resolve_base_url,
 )
@@ -51,30 +50,6 @@ class TestResolveApiKey:
 
     def test_none_when_missing(self):
         assert _resolve_api_key(None, None) is None
-
-
-class TestParseReadIntent:
-    def test_read_cmd_whole_file(self):
-        result = _parse_read_intent("/read src/main.py")
-        assert len(result) == 1
-        assert result[0][0] == Path("src/main.py")
-        assert result[0][1] is None
-
-    def test_read_cmd_with_range(self):
-        result = _parse_read_intent("read src/main.py lines 10-20")
-        assert len(result) == 1
-        assert result[0][0] == Path("src/main.py")
-        assert result[0][1] == ["10-20"]
-
-    def test_inline_path_range(self):
-        result = _parse_read_intent("src/main.py:10-20")
-        assert len(result) == 1
-        assert result[0][0] == Path("src/main.py")
-        assert result[0][1] == ["10-20"]
-
-    def test_no_match(self):
-        result = _parse_read_intent("hello world")
-        assert result == []
 
 
 class TestIsWithinRoot:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -144,37 +143,6 @@ def _attach_file_context(path: Path, ranges: Iterable[str] | None, max_lines: in
         if not ranges and len(b["lines"]) > max_lines:
             llm_context.append("[...truncated...]")
     return "\n\n".join(rendered_parts), "\n\n".join(llm_context)
-
-
-_READ_CMD = re.compile(
-    r"^\s*(?:/read|read|open|查看|读取|打开)\s+(?P<path>\S+)(?:\s+(?:lines?|行|第)\s*(?P<s>\d+)\s*[-~]\s*(?P<e>\d+))?\s*$",
-    re.I,
-)
-_PATH_RANGE_INLINE = re.compile(r"(?P<path>\S+?):(?P<s>\d+)-(?P<e>\d+)")
-
-
-def _parse_read_intent(text: str) -> list[tuple[Path, list[str] | None]]:
-    """Return list of (path, ranges) if the user text clearly asks for reading files.
-    Supports:
-    - '/read PATH - implicit whole file'
-    - 'read PATH lines 10-20'
-    - 'PATH:10-20' inline
-    """
-    out: list[tuple[Path, list[str] | None]] = []
-    m = _READ_CMD.match(text)
-    if m:
-        p = Path(m.group("path")).expanduser()
-        ranges = None
-        if m.group("s") and m.group("e"):
-            ranges = [f"{m.group('s')}-{m.group('e')}"]
-        out.append((p, ranges))
-        return out
-    for m in _PATH_RANGE_INLINE.finditer(text):
-        p = Path(m.group("path")).expanduser()
-        ranges = [f"{m.group('s')}-{m.group('e')}"]
-        out.append((p, ranges))
-    # If the text starts with known verbs and the next token looks like a path ending with a known ext
-    return out
 
 
 def _builtin_read_tool_spec() -> dict:
@@ -540,7 +508,7 @@ def chat_repl(
             f"Default max lines: {settings['default_max_lines']}\n"
             f"Allowed read roots:\n{roots_str}\n"
             f"{mcp_line}\n\n"
-            f"Commands: /read <path> [lines A-B], /quit",
+            f"Commands: /quit",
             title="amcp chat",
             border_style="green",
         )
@@ -563,26 +531,6 @@ def chat_repl(
         if text.strip() in {"/quit", ":q"}:
             console.print("[dim]Bye.[/dim]")
             return
-        if text.startswith("/read "):
-            # Try parse and attach, but do NOT send to model yet unless more content exists
-            try:
-                intents = _parse_read_intent(text)
-                if intents:
-                    for p, ranges in intents:
-                        if not p.is_absolute():
-                            p = Path.cwd() / p
-                        if p.is_file():
-                            console.print(Panel(f"Attaching file context: {p}", border_style="blue"))
-                            rendered, llm = _attach_file_context(p, ranges)
-                            console.print(rendered)
-                            messages.append({"role": "system", "content": f"File context:\n{llm}"})
-                        else:
-                            console.print(f"[red]File not found:[/red] {p}")
-                    # If the input was purely a read request, continue to next prompt
-                    if _READ_CMD.match(text) or _PATH_RANGE_INLINE.fullmatch(text.strip()):
-                        continue
-            except (OSError, ValueError) as e:
-                console.print(f"[yellow]File intent parse/read warning:[/yellow] {e}")
 
         messages.append({"role": "user", "content": text})
         try:
