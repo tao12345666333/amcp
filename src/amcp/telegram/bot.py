@@ -686,7 +686,6 @@ class TelegramBot:
         application.add_handler(CommandHandler("new", self._handlers.handle_new))
         application.add_handler(CommandHandler("cancel", self._handlers.handle_cancel))
         application.add_handler(CommandHandler("ask", self._handlers.handle_ask))
-        application.add_handler(CommandHandler("schedule", self._handlers.handle_schedule))
         application.add_handler(CommandHandler("skills", self._handlers.handle_skills))
         application.add_handler(CommandHandler("activate", self._handlers.handle_activate))
         application.add_handler(CommandHandler("memory", self._handlers.handle_memory))
@@ -736,7 +735,6 @@ class TelegramBot:
             BotCommand("status", "Show agent and session status"),
             BotCommand("new", "Start a new conversation session"),
             BotCommand("session", "Manage sessions (new|list|switch)"),
-            BotCommand("schedule", "Manage scheduled prompts"),
             BotCommand("skills", "List and manage skills"),
             BotCommand("models", "List configured LLM providers"),
         ]

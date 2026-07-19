@@ -553,7 +553,6 @@ class TelegramHandlers:
             "/session new|list|switch <id> - Manage sessions",
             "/cancel - Cancel current operation",
             "/ask <prompt> - Send a prompt",
-            "/schedule add|list|delete|blueprints|blueprint - Manage scheduled prompts",
             "/skills - List skills",
             "/activate <skill> - Activate a skill",
             "/skill:<name> [param=value ...] - Invoke a skill explicitly",
@@ -675,79 +674,6 @@ class TelegramHandlers:
         if message:
             prompt = _build_enriched_prompt(prompt, message, assistant_mode=self._bot.config.assistant_mode)
         await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, prompt)
-
-    async def handle_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Manage persistent Telegram scheduled prompts."""
-        if not await self._ensure_authorized(update):
-            return
-        chat_id = update.effective_chat.id
-        args = context.args or []
-        if not args:
-            await self._bot.send_text(chat_id, self._schedule_usage())
-            return
-
-        action = args[0].lower()
-        if action == "list":
-            await self._bot.send_text(chat_id, self._format_scheduled_prompts(chat_id))
-            return
-        if action in {"blueprints", "catalog"}:
-            await self._bot.send_text(chat_id, self._bot.list_schedule_blueprints())
-            return
-        if action in {"delete", "del", "remove", "rm"}:
-            if len(args) != 2:
-                await self._bot.send_text(chat_id, "Usage: /schedule delete <id>")
-                return
-            _, message = self._bot.delete_scheduled_prompt(chat_id, args[1])
-            await self._bot.send_text(chat_id, message)
-            return
-        if action == "add":
-            if len(args) < 7:
-                await self._bot.send_text(chat_id, "Usage: /schedule add <m h dom mon dow> <prompt>")
-                return
-            schedule = " ".join(args[1:6])
-            prompt = " ".join(args[6:])
-            _, message = self._bot.create_scheduled_prompt(chat_id, schedule, prompt)
-            await self._bot.send_text(chat_id, message)
-            return
-        if action == "blueprint":
-            if len(args) < 7:
-                await self._bot.send_text(
-                    chat_id,
-                    "Usage: /schedule blueprint <name> <m h dom mon dow>",
-                )
-                return
-            blueprint = args[1]
-            schedule = " ".join(args[2:7])
-            _, message = self._bot.create_scheduled_blueprint(chat_id, blueprint, schedule)
-            await self._bot.send_text(chat_id, message)
-            return
-
-        await self._bot.send_text(chat_id, self._schedule_usage())
-
-    @staticmethod
-    def _schedule_usage() -> str:
-        return "\n".join(
-            [
-                "Usage:",
-                "/schedule add <m h dom mon dow> <prompt>",
-                "/schedule list",
-                "/schedule delete <id>",
-                "/schedule blueprints",
-                "/schedule blueprint <name> <m h dom mon dow>",
-                "Example: /schedule blueprint hackernews_daily 0 8 * * *",
-            ]
-        )
-
-    def _format_scheduled_prompts(self, chat_id: int) -> str:
-        jobs = self._bot.list_scheduled_prompts(chat_id)
-        if not jobs:
-            return "No scheduled prompts."
-        lines = ["Scheduled prompts:"]
-        for job in jobs:
-            label = job.name or job.id
-            blueprint = f" blueprint={job.blueprint}" if job.blueprint else ""
-            lines.append(f"- {job.id} {label}: {job.schedule}{blueprint}")
-        return "\n".join(lines)
 
     async def handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = "/skills"
