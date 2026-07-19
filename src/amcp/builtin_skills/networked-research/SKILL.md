@@ -11,7 +11,7 @@ Use live web access when local context is not enough.
 
 - Use `web_search` for internet discovery, current docs, release notes, API references, and unknown technologies.
 - Use `web_fetch` to read a specific URL after you already know the page you need.
-- The default `auto` backend tries Exa first when available, then falls back to Firecrawl.
+- These tools work out of the box and do not require the user to configure a search MCP server.
 
 ## When to search vs fetch
 
@@ -26,17 +26,3 @@ Use live web access when local context is not enough.
 3. Fetch the most relevant page or pages.
 4. Base your answer or implementation on the fetched content, not on stale model memory.
 5. Mention uncertainty if the web results conflict or look incomplete.
-
-## Exa MCP
-
-If Exa MCP tools are visible in the tool list, they are also valid:
-
-- `mcp.exa.web_search_exa`
-- `mcp.exa.web_fetch_exa`
-
-Use them the same way you would use `web_search` and `web_fetch`.
-
-## Firecrawl notes
-
-- Firecrawl search can work without an API key for quick starts, though rate limits may be lower.
-- Set `FIRECRAWL_API_KEY` (or `AMCP_FIRECRAWL_API_KEY`) for better reliability and for scrape-heavy usage.

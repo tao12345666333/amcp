@@ -112,8 +112,8 @@ amcp --list-types                       # list built-in agent types
 amcp --list-sessions                    # list saved sessions
 
 # MCP server management
-amcp mcp tools --server exa
-amcp mcp call --server exa --tool web_search_exa --args '{"query":"rust async"}'
+amcp mcp tools --server custom
+amcp mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
 
 # ACP (IDE integration)
 amcp acp serve                          # start ACP agent server (stdio)
@@ -144,8 +144,8 @@ amcp telegram setup                     # interactive setup
 | **apply_patch** | Apply diff-based patches to files (see [docs/apply-patch.md](docs/apply-patch.md)) |
 | **write_file** | Write content to files (for creating new small files) |
 | **task** | Spawn sub-agents for parallel task execution |
-| **web_search** | Search the web for information |
-| **web_fetch** | Fetch and extract content from web pages |
+| **web_search** | Search the web for information without configuring a search API key |
+| **web_fetch** | Fetch and extract content from web pages without configuring a search API key |
 | **memory** | Store and retrieve persistent cross-session memories |
 
 ## Multi-Agent System
@@ -356,14 +356,18 @@ Install with: `pip install amcp-agent[anthropic]`
 
 ```toml
 # HTTP/SSE transport
-[servers.exa]
-url = "https://mcp.exa.ai/mcp"
+[servers.custom]
+url = "https://example.com/mcp"
 
 # stdio transport
-[servers.custom]
+[servers.local]
 command = "npx"
 args = ["-y", "@some/mcp-server"]
 ```
+
+Configured MCP servers are exposed as `mcp.<server>.<tool>` tools. The built-in
+`web_search` and `web_fetch` tools are available separately and work out of the
+box without adding a search MCP server.
 
 ### Context Optimization
 

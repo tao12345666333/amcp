@@ -197,11 +197,7 @@ class AMCPConfig:
 
 
 _DEFAULT = {
-    "servers": {
-        "exa": {
-            "url": "https://mcp.exa.ai/mcp",
-        }
-    },
+    "servers": {},
     "server": {
         "host": "127.0.0.1",
         "port": 4096,
@@ -246,7 +242,7 @@ _DEFAULT = {
         "default_max_lines": 400,
         # "read_roots": ["."]  # optional; defaults to current working directory when unset
         "mcp_tools_enabled": True,
-        # "mcp_servers": ["exa"]  # optional; if unset, expose all configured servers
+        # "mcp_servers": ["custom"]  # optional; if unset, expose all configured servers
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
     },

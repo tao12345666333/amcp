@@ -580,10 +580,9 @@ def run_init_wizard() -> Path:
         edit_tool_enabled=True,
     )
 
-    # Default MCP server
-    servers = {
-        "exa": Server(url="https://mcp.exa.ai/mcp"),
-    }
+    # User-configured MCP servers are optional. Built-in web tools work without
+    # adding search providers here.
+    servers: dict[str, Server] = {}
 
     config = AMCPConfig(servers=servers, chat=chat_config)
 

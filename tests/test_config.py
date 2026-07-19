@@ -73,6 +73,10 @@ def test_default_chat_uses_gmi_without_api_key():
     assert cfg.model_config.context_window == 1_050_000
 
 
+def test_default_config_has_no_user_visible_mcp_servers():
+    assert config_module._DEFAULT["servers"] == {}
+
+
 def test_decode_chat_active_provider_applies_profile():
     raw = {
         "base_url": "https://primary.example/v1",

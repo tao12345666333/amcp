@@ -434,31 +434,6 @@ def _normalize_exa_web_search_args(args: dict) -> dict:
     return out
 
 
-def do_exa_search(server_name: str, query: str, num_results: int = 4) -> str:
-    cfg: AMCPConfig = load_config()
-    if server_name not in cfg.servers:
-        raise RuntimeError(f"Unknown MCP server '{server_name}'. Use 'amcp mcp tools -s ...' to verify.")
-    result = console.status("Calling MCP web_search_exa...")
-    with result:
-        resp = __import__("asyncio").run(
-            call_mcp_tool(
-                cfg.servers[server_name],
-                "web_search_exa",
-                {
-                    "query": query,
-                    "numResults": num_results,
-                    "type": "fast",
-                },
-            )
-        )
-    # Render
-    out_lines = [f"MCP search results for: {query}"]
-    for block in resp.get("content", []):
-        if block.get("type") == "text":
-            out_lines.append(block.get("text", ""))
-    return "\n".join(out_lines)
-
-
 # Global cfg snapshot for MCP dispatch
 cfg_global: AMCPConfig = load_config()
 
@@ -468,7 +443,6 @@ def chat_once(
     user_text: str,
     base_url: str | None = None,
     system_prompt: str | None = None,
-    mcp_server: str = "exa",
     stream: bool = True,
     api_key: str | None = None,
     work_dir: Path | None = None,
@@ -523,7 +497,6 @@ def chat_repl(
     model: str | None,
     base_url: str | None = None,
     system_prompt: str | None = None,
-    mcp_server: str = "exa",
     stream: bool = True,
     api_key: str | None = None,
     work_dir: Path | None = None,
@@ -567,7 +540,7 @@ def chat_repl(
             f"Default max lines: {settings['default_max_lines']}\n"
             f"Allowed read roots:\n{roots_str}\n"
             f"{mcp_line}\n\n"
-            f"Commands: /read <path> [lines A-B], /search <q>, /quit",
+            f"Commands: /read <path> [lines A-B], /quit",
             title="amcp chat",
             border_style="green",
         )
@@ -610,15 +583,6 @@ def chat_repl(
                         continue
             except (OSError, ValueError) as e:
                 console.print(f"[yellow]File intent parse/read warning:[/yellow] {e}")
-
-        if text.startswith("/search "):
-            q = text[len("/search ") :].strip()
-            try:
-                result = do_exa_search(mcp_server, q)
-                console.print(Panel(Markdown(result), title="exa search", border_style="magenta"))
-            except (OSError, ValueError) as e:
-                console.print(f"[red]MCP search error:[/red] {e}")
-            continue
 
         messages.append({"role": "user", "content": text})
         try:

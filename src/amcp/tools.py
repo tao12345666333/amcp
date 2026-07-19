@@ -189,19 +189,27 @@ def _truncate_text(value: str, max_chars: int) -> str:
     return value[: max_chars - 16].rstrip() + "\n...[truncated]"
 
 
+_DEFAULT_EXA_MCP_URL = "https://mcp.exa.ai/mcp"
+_DEFAULT_FIRECRAWL_MCP_URL = "https://mcp.firecrawl.dev/v2/mcp"
+
+
 def _firecrawl_api_base() -> str:
     return (
         os.environ.get("AMCP_FIRECRAWL_API_URL") or os.environ.get("FIRECRAWL_API_URL") or "https://api.firecrawl.dev"
     ).rstrip("/")
 
 
-def _firecrawl_headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    token = (
+def _firecrawl_api_key() -> str | None:
+    return (
         os.environ.get("AMCP_FIRECRAWL_API_KEY")
         or os.environ.get("FIRECRAWL_API_KEY")
         or os.environ.get("FIRECRAWL_OAUTH_TOKEN")
     )
+
+
+def _firecrawl_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    token = _firecrawl_api_key()
     if token:
         bearer = token if token.lower().startswith("bearer ") else f"Bearer {token}"
         headers["Authorization"] = bearer
@@ -215,19 +223,106 @@ def _call_firecrawl(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], response.json())
 
 
-def _get_exa_server_config():
-    from .config import load_config
+def _get_firecrawl_server_config():
+    """Return the internal Firecrawl MCP server configuration.
+
+    The built-in web tools use this as an implementation detail. The server is
+    intentionally not part of the default user-visible MCP server list.
+    """
+    from dataclasses import replace
+
+    from .config import Server, load_config
 
     cfg = load_config()
-    return cfg.servers.get("exa")
+    server = cfg.servers.get("firecrawl") or Server(
+        url=os.environ.get("AMCP_FIRECRAWL_MCP_URL") or _DEFAULT_FIRECRAWL_MCP_URL
+    )
+    token = _firecrawl_api_key()
+    if token and not server.headers.get("Authorization") and not server.headers.get("authorization"):
+        bearer = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        return replace(server, headers={**server.headers, "Authorization": bearer})
+    return server
+
+
+def _call_firecrawl_mcp(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call a firecrawl MCP tool and parse the text payload as JSON.
+
+    The hosted firecrawl MCP server returns search/scrape results as a JSON
+    string inside a single text content item, mirroring the REST API shape
+    (e.g. ``{"data": {"web": [...]}}`` for search). We parse it back into a
+    dict so callers can reuse the existing REST response handling.
+    """
+    import json
+
+    from .mcp_client import call_mcp_tool
+
+    server = _get_firecrawl_server_config()
+    response = cast(
+        dict[str, Any],
+        _run_coroutine_in_thread(call_mcp_tool(server, tool_name, arguments)),
+    )
+    if response.get("is_error"):
+        text = _render_mcp_text_response("Web provider error", response)
+        raise ToolExecutionError(text)
+
+    for item in response.get("content", []) or []:
+        if item.get("type") == "text":
+            raw = str(item.get("text", "")).strip()
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    # Merge metadata so callers can still inspect the MCP envelope.
+                    parsed.setdefault("_mcp", response)
+                    return parsed
+            except json.JSONDecodeError:
+                # Some tools return prose; surface it as a data field.
+                return {"data": {"markdown": raw}, "_mcp": response}
+    # No text content; fall back to the raw MCP envelope.
+    return response
+
+
+def _firecrawl_search(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run a firecrawl search via MCP (keyless) or REST (when an API key is set)."""
+    if _firecrawl_api_key() is None:
+        mcp_args: dict[str, Any] = {"query": payload.get("query", "")}
+        if "limit" in payload:
+            mcp_args["limit"] = payload["limit"]
+        if "includeDomains" in payload:
+            mcp_args["includeDomains"] = payload["includeDomains"]
+        if "excludeDomains" in payload:
+            mcp_args["excludeDomains"] = payload["excludeDomains"]
+        scrape_options = payload.get("scrapeOptions")
+        if scrape_options:
+            mcp_args["scrapeOptions"] = scrape_options
+        return _call_firecrawl_mcp("firecrawl_search", mcp_args)
+    return _call_firecrawl("/v2/search", payload)
+
+
+def _firecrawl_scrape(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run a firecrawl scrape via MCP (keyless) or REST (when an API key is set)."""
+    if _firecrawl_api_key() is None:
+        mcp_args: dict[str, Any] = {"url": payload.get("url", "")}
+        if "formats" in payload:
+            mcp_args["formats"] = payload["formats"]
+        if "onlyMainContent" in payload:
+            mcp_args["onlyMainContent"] = payload["onlyMainContent"]
+        return _call_firecrawl_mcp("firecrawl_scrape", mcp_args)
+    return _call_firecrawl("/v2/scrape", payload)
+
+
+def _get_exa_server_config():
+    from .config import Server, load_config
+
+    cfg = load_config()
+    return cfg.servers.get("exa") or Server(url=os.environ.get("AMCP_EXA_MCP_URL") or _DEFAULT_EXA_MCP_URL)
 
 
 def _call_exa_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     from .mcp_client import call_mcp_tool
 
     server = _get_exa_server_config()
-    if server is None:
-        raise ToolExecutionError("Exa MCP server is not configured")
     return cast(dict[str, Any], _run_coroutine_in_thread(call_mcp_tool(server, tool_name, arguments)))
 
 
@@ -244,7 +339,7 @@ def _render_mcp_text_response(prefix: str, response: dict[str, Any]) -> str:
 
 
 class WebSearchTool(BaseTool):
-    """Search the live web using Exa or Firecrawl."""
+    """Search the live web."""
 
     @property
     def name(self) -> str:
@@ -254,8 +349,7 @@ class WebSearchTool(BaseTool):
     def description(self) -> str:
         return (
             "Search the public internet for live documentation, libraries, APIs, current events, "
-            "and web pages. Uses Exa when available and otherwise falls back to Firecrawl search. "
-            "Use this when you need current information from the web."
+            "and web pages. Use this when you need current information from the web."
         )
 
     def execute(  # type: ignore[override]
@@ -290,13 +384,13 @@ class WebSearchTool(BaseTool):
                 )
                 return ToolResult(
                     success=True,
-                    content=_render_mcp_text_response(f"Exa web search results for: {query}", exa_response),
+                    content=_render_mcp_text_response(f"Web search results for: {query}", exa_response),
                     metadata={"backend": "exa", "response": exa_response},
                 )
-            except Exception as exc:
+            except Exception:
                 if backend == "exa":
-                    return ToolResult(success=False, content="", error=str(exc))
-                errors.append(f"Exa failed: {exc}")
+                    return ToolResult(success=False, content="", error="web search provider failed")
+                errors.append("primary web search provider failed")
 
         try:
             payload: dict[str, Any] = {
@@ -312,10 +406,10 @@ class WebSearchTool(BaseTool):
                     "formats": ["markdown"],
                     "onlyMainContent": True,
                 }
-            response = _call_firecrawl("/v2/search", payload)
+            response = _firecrawl_search(payload)
             items = response.get("data", {}).get("web", []) or []
 
-            lines = [f"Firecrawl web search results for: {query}"]
+            lines = [f"Web search results for: {query}"]
             for idx, item in enumerate(items, start=1):
                 title = str(item.get("title") or item.get("metadata", {}).get("title") or "Untitled")
                 url = str(item.get("url") or item.get("metadata", {}).get("url") or "")
@@ -343,8 +437,8 @@ class WebSearchTool(BaseTool):
                 content="\n".join(lines),
                 metadata={"backend": "firecrawl", "response": response},
             )
-        except Exception as exc:
-            errors.append(f"Firecrawl failed: {exc}")
+        except Exception:
+            errors.append("fallback web search provider failed")
             return ToolResult(success=False, content="", error="; ".join(errors))
 
     def validate_parameters(  # type: ignore[override]
@@ -380,12 +474,6 @@ class WebSearchTool(BaseTool):
                     "description": "Maximum number of results to return.",
                     "default": 5,
                 },
-                "backend": {
-                    "type": "string",
-                    "enum": ["auto", "exa", "firecrawl"],
-                    "description": "Preferred backend. 'auto' tries Exa first, then Firecrawl.",
-                    "default": "auto",
-                },
                 "fetch_content": {
                     "type": "boolean",
                     "description": "Whether to include fetched page content for the results.",
@@ -408,7 +496,7 @@ class WebSearchTool(BaseTool):
 
 
 class WebFetchTool(BaseTool):
-    """Fetch live webpage content using Exa or Firecrawl."""
+    """Fetch live webpage content."""
 
     @property
     def name(self) -> str:
@@ -417,9 +505,8 @@ class WebFetchTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Fetch and read a public web page as cleaned text or markdown. Uses Exa when available "
-            "and otherwise falls back to Firecrawl scrape. Use this after a search result or when "
-            "the user gives you a URL to read."
+            "Fetch and read a public web page as cleaned text or markdown. Use this after a search "
+            "result or when the user gives you a URL to read."
         )
 
     def execute(  # type: ignore[override]
@@ -433,37 +520,35 @@ class WebFetchTool(BaseTool):
         errors: list[str] = []
 
         if backend in {"auto", "exa"}:
-            exa_error: Exception | None = None
             for exa_args in ({"urls": [url]}, {"url": url}):
                 try:
                     exa_response = _call_exa_tool("web_fetch_exa", exa_args)
-                    text = _render_mcp_text_response(f"Exa fetched page: {url}", exa_response)
+                    text = _render_mcp_text_response(f"Fetched page: {url}", exa_response)
                     return ToolResult(
                         success=True,
                         content=_truncate_text(text, max_chars),
                         metadata={"backend": "exa", "response": exa_response},
                     )
-                except Exception as exc:
-                    exa_error = exc
+                except Exception:
+                    pass
             if backend == "exa":
-                return ToolResult(success=False, content="", error=str(exa_error))
-            errors.append(f"Exa failed: {exa_error}")
+                return ToolResult(success=False, content="", error="web fetch provider failed")
+            errors.append("primary web fetch provider failed")
 
         try:
-            response = _call_firecrawl(
-                "/v2/scrape",
+            response = _firecrawl_scrape(
                 {
                     "url": url,
                     "formats": ["markdown"],
                     "onlyMainContent": only_main_content,
-                },
+                }
             )
             data = response.get("data", {}) or {}
             title = str(data.get("metadata", {}).get("title") or "Untitled")
             markdown = str(data.get("markdown") or "").strip()
 
             lines = [
-                f"Firecrawl fetched page: {url}",
+                f"Fetched page: {url}",
                 f"Title: {title}",
                 "",
                 _truncate_text(markdown, max_chars),
@@ -477,8 +562,8 @@ class WebFetchTool(BaseTool):
                 content="\n".join(lines).strip(),
                 metadata={"backend": "firecrawl", "response": response},
             )
-        except Exception as exc:
-            errors.append(f"Firecrawl failed: {exc}")
+        except Exception:
+            errors.append("fallback web fetch provider failed")
             return ToolResult(success=False, content="", error="; ".join(errors))
 
     def validate_parameters(  # type: ignore[override]
@@ -502,12 +587,6 @@ class WebFetchTool(BaseTool):
                 "url": {
                     "type": "string",
                     "description": "Public web URL to fetch and read.",
-                },
-                "backend": {
-                    "type": "string",
-                    "enum": ["auto", "exa", "firecrawl"],
-                    "description": "Preferred backend. 'auto' tries Exa first, then Firecrawl.",
-                    "default": "auto",
                 },
                 "max_chars": {
                     "type": "integer",
