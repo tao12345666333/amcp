@@ -239,6 +239,42 @@ class TestAgentHistoryManagement:
                 assert summary["total_tool_calls"] == 1
                 assert summary["total_llm_calls"] == 3
 
+    def test_memory_prompt_context_is_frozen_per_root(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        manager = MagicMock()
+        manager.get_persona_context.return_value = "persona"
+        manager.get_memory_context.return_value = "memory"
+
+        with patch("amcp.agent.get_memory_manager", return_value=manager) as get_manager:
+            assert agent._get_memory_prompt_context(tmp_path) == ("persona", "memory")
+            manager.get_persona_context.return_value = "changed-persona"
+            manager.get_memory_context.return_value = "changed-memory"
+            assert agent._get_memory_prompt_context(tmp_path) == ("persona", "memory")
+
+        get_manager.assert_called_once_with(tmp_path.resolve())
+
+    def test_reset_memory_context_snapshot_refreshes_memory(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        first = MagicMock()
+        first.get_persona_context.return_value = "first-persona"
+        first.get_memory_context.return_value = "first-memory"
+        second = MagicMock()
+        second.get_persona_context.return_value = "second-persona"
+        second.get_memory_context.return_value = "second-memory"
+
+        with patch("amcp.agent.get_memory_manager", side_effect=[first, second]):
+            assert agent._get_memory_prompt_context(tmp_path) == ("first-persona", "first-memory")
+            agent.reset_memory_context_snapshot()
+            assert agent._get_memory_prompt_context(tmp_path) == ("second-persona", "second-memory")
+
     @pytest.mark.asyncio
     async def test_periodic_memory_review_runs_every_ten_user_turns(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:

@@ -120,6 +120,9 @@ class Agent:
         self.last_output_tokens: int | None = None
         self.last_usage_from_api: bool = False
         self._last_memory_review_turn_count: int = 0
+        self._frozen_memory_project_root: Path | None = None
+        self._frozen_persona_context: str = ""
+        self._frozen_memory_context: str = ""
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -232,6 +235,7 @@ class Agent:
                 self.session_file.unlink()
         except OSError as e:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
+        self.reset_memory_context_snapshot()
 
     def _resolve_memory_project_root(self, work_dir: Path | None = None) -> Path:
         """Return the project root used for project-scoped persistent memory."""
@@ -264,6 +268,22 @@ class Agent:
         user = self._trim_memory_log_text(user_input, MEMORY_LOG_USER_LIMIT)
         agent = self._trim_memory_log_text(result, MEMORY_LOG_AGENT_LIMIT)
         return f"User:\n{user}\n\nAgent:\n{agent}"
+
+    def reset_memory_context_snapshot(self) -> None:
+        """Refresh memory prompt context on the next system prompt build."""
+        self._frozen_memory_project_root = None
+        self._frozen_persona_context = ""
+        self._frozen_memory_context = ""
+
+    def _get_memory_prompt_context(self, work_dir: Path | None) -> tuple[str, str]:
+        """Return the session-frozen persona and memory prompt context."""
+        memory_project_root = self._resolve_memory_project_root(work_dir)
+        if self._frozen_memory_project_root != memory_project_root:
+            memory_manager = get_memory_manager(memory_project_root)
+            self._frozen_memory_project_root = memory_project_root
+            self._frozen_persona_context = memory_manager.get_persona_context()
+            self._frozen_memory_context = memory_manager.get_memory_context()
+        return self._frozen_persona_context, self._frozen_memory_context
 
     def get_conversation_summary(self) -> dict[str, Any]:
         """Get summary of the conversation (session-level statistics)."""
@@ -453,10 +473,9 @@ class Agent:
             skills_summary = skill_manager.build_skills_summary()
             skills_content = skill_manager.get_active_skills_content()
 
-        # Get persona and memory context
-        memory_manager = get_memory_manager(self._resolve_memory_project_root(work_dir))
-        persona_context = memory_manager.get_persona_context()
-        memory_context = memory_manager.get_memory_context()
+        # Get session-frozen persona and memory context. Freezing keeps the
+        # prompt prefix stable across a long Telegram session.
+        persona_context, memory_context = self._get_memory_prompt_context(work_dir)
 
         # Respect per-component budgets for noisy sections
         if project_rules:
@@ -773,6 +792,7 @@ class Agent:
 
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
                     history_to_add, _ = compactor.compact(history_to_add)
+                    self.reset_memory_context_snapshot()
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
                 messages.extend(history_to_add)
