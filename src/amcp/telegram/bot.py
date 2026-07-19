@@ -15,7 +15,7 @@ from ..agent import Agent, BusyError, create_agent_by_name
 from ..agent_spec import get_default_agent_spec
 from ..config import load_config, save_config
 from ..event_bus import EventType, get_event_bus
-from ..memory import get_memory_manager
+from ..memory import CONFIG_DIR, get_memory_manager
 from ..multi_agent import get_agent_registry
 from .auth import AuthMiddleware
 from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
@@ -36,6 +36,9 @@ except ImportError:  # pragma: no cover - optional dependency
     filters = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+TELEGRAM_MEMORY_LOG_USER_LIMIT = 1000
+TELEGRAM_MEMORY_LOG_AGENT_LIMIT = 2000
 
 
 @dataclass
@@ -302,6 +305,32 @@ class TelegramBot:
         session.queue.clear()
         return cancelled, queued
 
+    def memory_project_root(self, chat_id: int) -> Path:
+        """Return the isolated project-memory root for a Telegram chat."""
+        return CONFIG_DIR / "telegram" / f"chat_{chat_id}"
+
+    def _bind_session_memory(self, chat_id: int, session: Any) -> None:
+        context = getattr(session.agent, "execution_context", None)
+        if isinstance(context, dict):
+            context["memory_project_root"] = str(self.memory_project_root(chat_id))
+
+    async def flush_session_memory(self, chat_id: int, session: Any) -> bool:
+        """Flush durable memory for a Telegram session before it is replaced."""
+        self._bind_session_memory(chat_id, session)
+        flush = getattr(session.agent, "flush_memory", None)
+        if not callable(flush):
+            return False
+        try:
+            return bool(
+                await asyncio.wait_for(
+                    flush(work_dir=self._work_dir),
+                    timeout=60,
+                )
+            )
+        except Exception:
+            logger.exception("Telegram memory flush failed.")
+            return False
+
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None) -> tuple[str, bool]:
         self._prune_pairing_requests()
         for request in self._pairing_requests.values():
@@ -435,6 +464,7 @@ class TelegramBot:
     async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
         generation = getattr(session, "generation", 0)
         task: asyncio.Task | None = None
+        self._bind_session_memory(message.chat_id, session)
         async with self._typing_session(message.chat_id):
             try:
                 task = asyncio.create_task(
@@ -481,13 +511,25 @@ class TelegramBot:
 
         if getattr(session, "generation", 0) != generation:
             return
-        memory_manager = get_memory_manager(self._work_dir)
+        memory_manager = get_memory_manager(self.memory_project_root(message.chat_id))
         memory_manager.append_history(
-            content=(f"[Telegram] User {message.user_id}: {message.text[:200]}\nAgent: {response_text[:300]}"),
+            content=self._format_telegram_history_entry(message, response_text),
             session_id=session.session_id,
             tags=["telegram", "conversation"],
             scope="project",
         )
+
+    @staticmethod
+    def _trim_memory_log_text(text: str, limit: int) -> str:
+        stripped = text.strip()
+        if len(stripped) <= limit:
+            return stripped
+        return stripped[:limit].rstrip() + "\n[... truncated ...]"
+
+    def _format_telegram_history_entry(self, message: TelegramQueuedMessage, response_text: str) -> str:
+        user = self._trim_memory_log_text(message.text, TELEGRAM_MEMORY_LOG_USER_LIMIT)
+        agent = self._trim_memory_log_text(response_text, TELEGRAM_MEMORY_LOG_AGENT_LIMIT)
+        return f"[Telegram] chat={message.chat_id} user={message.user_id}\n\nUser:\n{user}\n\nAgent:\n{agent}"
 
     def _build_application(self) -> Application:
         application = ApplicationBuilder().token(self._token).post_init(self._post_init).build()

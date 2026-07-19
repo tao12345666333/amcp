@@ -50,6 +50,9 @@ from .ui import LiveUI
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASH_TOOL_LIMIT = 100
+MEMORY_REVIEW_TURN_INTERVAL = 10
+MEMORY_LOG_USER_LIMIT = 1000
+MEMORY_LOG_AGENT_LIMIT = 2000
 
 
 class AgentExecutionError(Exception):
@@ -116,6 +119,7 @@ class Agent:
         self.last_context_window: int = 0
         self.last_output_tokens: int | None = None
         self.last_usage_from_api: bool = False
+        self._last_memory_review_turn_count: int = 0
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -165,6 +169,7 @@ class Agent:
                     self.last_context_window = data.get("last_context_window", 0)
                     self.last_output_tokens = data.get("last_output_tokens")
                     self.last_usage_from_api = data.get("last_usage_from_api", False)
+                    self._last_memory_review_turn_count = data.get("last_memory_review_turn_count", 0)
                     self.console.print(
                         f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
                     )
@@ -196,6 +201,7 @@ class Agent:
                 "last_context_window": self.last_context_window,
                 "last_output_tokens": self.last_output_tokens,
                 "last_usage_from_api": self.last_usage_from_api,
+                "last_memory_review_turn_count": self._last_memory_review_turn_count,
             }
             with open(self.session_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -218,6 +224,7 @@ class Agent:
         self.last_context_window = 0
         self.last_output_tokens = None
         self.last_usage_from_api = False
+        self._last_memory_review_turn_count = 0
         self.current_request_llm_calls = 0
         self.current_request_tool_calls = 0
         try:
@@ -225,6 +232,38 @@ class Agent:
                 self.session_file.unlink()
         except OSError as e:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
+
+    def _resolve_memory_project_root(self, work_dir: Path | None = None) -> Path:
+        """Return the project root used for project-scoped persistent memory."""
+        configured_root = self.execution_context.get("memory_project_root")
+        if configured_root:
+            return Path(configured_root).expanduser().resolve()
+        return work_dir.resolve() if work_dir else Path.cwd()
+
+    def _memory_history_scope(self, work_dir: Path | None = None) -> str:
+        """Return the default scope for automatic conversation history entries."""
+        if self.execution_context.get("memory_project_root"):
+            return "project"
+        return "project" if work_dir else "user"
+
+    @staticmethod
+    def _conversation_turn_count(messages: list[dict[str, Any]]) -> int:
+        """Count user turns in a conversation snapshot."""
+        return sum(1 for msg in messages if msg.get("role") == "user")
+
+    @staticmethod
+    def _trim_memory_log_text(text: str, limit: int) -> str:
+        """Trim text for compact, readable memory history logs."""
+        stripped = text.strip()
+        if len(stripped) <= limit:
+            return stripped
+        return stripped[:limit].rstrip() + "\n[... truncated ...]"
+
+    def _format_conversation_history_entry(self, user_input: str, result: str) -> str:
+        """Format an automatic conversation history entry."""
+        user = self._trim_memory_log_text(user_input, MEMORY_LOG_USER_LIMIT)
+        agent = self._trim_memory_log_text(result, MEMORY_LOG_AGENT_LIMIT)
+        return f"User:\n{user}\n\nAgent:\n{agent}"
 
     def get_conversation_summary(self) -> dict[str, Any]:
         """Get summary of the conversation (session-level statistics)."""
@@ -415,7 +454,7 @@ class Agent:
             skills_content = skill_manager.get_active_skills_content()
 
         # Get persona and memory context
-        memory_manager = get_memory_manager(resolved_work_dir)
+        memory_manager = get_memory_manager(self._resolve_memory_project_root(work_dir))
         persona_context = memory_manager.get_persona_context()
         memory_context = memory_manager.get_memory_context()
 
@@ -730,6 +769,7 @@ class Agent:
                         work_dir=work_dir,
                         status=status,
                     )
+                    self._last_memory_review_turn_count = self._conversation_turn_count(history_to_add)
 
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
                     history_to_add, _ = compactor.compact(history_to_add)
@@ -755,16 +795,23 @@ class Agent:
 
                 # Log to memory history
                 try:
-                    memory_mgr = get_memory_manager(work_dir)
-                    summary = f"User: {user_input[:200]}\nAgent: {result[:300]}"
+                    memory_mgr = get_memory_manager(self._resolve_memory_project_root(work_dir))
+                    summary = self._format_conversation_history_entry(user_input, result)
                     memory_mgr.append_history(
                         content=summary,
                         session_id=self.session_id,
                         tags=["conversation"],
-                        scope="project" if work_dir else "user",
+                        scope=self._memory_history_scope(work_dir),
                     )
                 except (OSError, ValueError):
                     pass  # Memory logging is best-effort
+
+                await self._maybe_run_periodic_memory_review(
+                    conversation_snapshot=list(self.conversation_history),
+                    system_prompt=system_prompt,
+                    work_dir=work_dir,
+                    status=status,
+                )
 
                 return result
 
@@ -787,7 +834,7 @@ class Agent:
         system_prompt: str,
         work_dir: Path | None,
         status: Any = None,
-    ) -> None:
+    ) -> bool:
         """Run a pre-compaction memory flush to save durable memories.
 
         Inspired by openclaw's pre-compaction memory flush: before the
@@ -808,10 +855,11 @@ class Agent:
             registry = get_tool_registry()
             memory_tool = registry.get_tool("memory")
             if not memory_tool:
-                return
+                return False
             memory_tools = [memory_tool.get_spec()]
 
             self._emit_event("memory.review_start", {})
+            memory_project_root = self._resolve_memory_project_root(work_dir)
 
             result = await run_memory_review(
                 client=client,
@@ -820,21 +868,66 @@ class Agent:
                 conversation_snapshot=conversation_snapshot,
                 tools=memory_tools,
                 tool_registry=registry,
-                project_root=str(work_dir) if work_dir else None,
+                project_root=str(memory_project_root),
             )
 
+            saved = bool(result and result.strip() != "Nothing to save.")
             self._emit_event(
                 "memory.review_complete",
-                {"saved": result != "Nothing to save." if result else False},
+                {"saved": saved},
             )
 
-            if result and result.strip() != "Nothing to save.":
-                self.console.print("[dim]Memory flush: saved durable memories before compaction[/dim]")
+            if saved:
+                self.console.print("[dim]Memory flush: saved durable memories[/dim]")
             else:
                 logger.debug("Memory flush: nothing to save")
+            return saved
 
         except Exception as e:
             logger.debug(f"Memory flush failed (non-critical): {e}")
+            return False
+
+    async def flush_memory(
+        self,
+        work_dir: Path | None = None,
+        *,
+        conversation_snapshot: list[dict[str, Any]] | None = None,
+        status: Any = None,
+    ) -> bool:
+        """Review the current conversation and persist durable memories."""
+        snapshot = list(conversation_snapshot or self.conversation_history)
+        if not snapshot:
+            return False
+        system_prompt = self._get_system_prompt(work_dir)
+        saved = await self._run_memory_review(
+            conversation_snapshot=snapshot,
+            system_prompt=system_prompt,
+            work_dir=work_dir,
+            status=status,
+        )
+        self._last_memory_review_turn_count = self._conversation_turn_count(snapshot)
+        self._save_conversation_history()
+        return saved
+
+    async def _maybe_run_periodic_memory_review(
+        self,
+        conversation_snapshot: list[dict[str, Any]],
+        system_prompt: str,
+        work_dir: Path | None,
+        status: Any = None,
+    ) -> None:
+        """Run a lightweight memory review every N user turns."""
+        turn_count = self._conversation_turn_count(conversation_snapshot)
+        if turn_count - self._last_memory_review_turn_count < MEMORY_REVIEW_TURN_INTERVAL:
+            return
+        await self._run_memory_review(
+            conversation_snapshot=conversation_snapshot,
+            system_prompt=system_prompt,
+            work_dir=work_dir,
+            status=status,
+        )
+        self._last_memory_review_turn_count = turn_count
+        self._save_conversation_history()
 
     def is_busy(self) -> bool:
         """Check if this agent's session is currently busy."""
@@ -1243,8 +1336,11 @@ class Agent:
 
                                 registry = get_tool_registry()
                                 exec_args = args
-                                if tool_name == "memory" and work_dir is not None:
-                                    exec_args = {**args, "project_root": str(work_dir)}
+                                if tool_name == "memory":
+                                    exec_args = {
+                                        **args,
+                                        "project_root": str(self._resolve_memory_project_root(work_dir)),
+                                    }
                                 tool_result = registry.execute_tool(tool_name, **exec_args)
 
                                 if tool_result.success:

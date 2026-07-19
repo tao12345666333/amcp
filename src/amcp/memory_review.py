@@ -7,11 +7,10 @@ Two-layer memory strategy:
    normal conversation — user preferences → upsert_fact, personality →
    write_soul, identity → identify, etc.
 
-2. **Pre-compaction memory flush** (on-demand): when the conversation is
-   about to be compacted (context too large), run a focused LLM call with
-   only the memory tool available, asking the agent to save durable
-   memories before they get summarized away. Inspired by openclaw's
-   pre-compaction flush; lighter than hermes-agent's every-N-turns nudge.
+2. **Memory review flush** (on-demand): when the conversation reaches a
+   durability checkpoint (compaction, periodic review, or session rollover),
+   run a focused LLM call with only the memory tool available, asking the
+   agent to save durable memories before context is compacted or abandoned.
 """
 
 from __future__ import annotations
@@ -63,8 +62,9 @@ loaded automatically in every new session.
 
 
 MEMORY_REVIEW_PROMPT = """\
-The conversation is about to be compacted (summarized to save context). \
-Before that happens, save any durable memories that would be lost.
+The conversation has reached a memory review checkpoint (compaction, periodic \
+review, or session rollover). Save any durable memories that would otherwise \
+be hard to recover later.
 
 Focus on:
 1. Has the user revealed things about themselves — their persona, desires, \

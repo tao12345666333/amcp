@@ -20,6 +20,12 @@ from amcp.telegram.handlers import (
 class _FakeAgent:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
+        self.execution_context: dict[str, str] = {}
+        self.flush_calls: list[dict] = []
+
+    async def flush_memory(self, **kwargs):
+        self.flush_calls.append(kwargs)
+        return True
 
 
 class _FakeBot:
@@ -29,6 +35,7 @@ class _FakeBot:
         self.sent_texts: list[tuple[int, str]] = []
         self.prompts: list[tuple[int, int, str]] = []
         self.model_provider_requests: list[str] = []
+        self.flushed_sessions: list[tuple[int, str]] = []
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
         self.pairing_requests.append((user_id, chat_id, username))
@@ -42,6 +49,10 @@ class _FakeBot:
 
     def cancel_session(self, chat_id: int):
         return False, False
+
+    async def flush_session_memory(self, chat_id: int, session):
+        self.flushed_sessions.append((chat_id, session.session_id))
+        return await session.agent.flush_memory()
 
     def models_summary(self) -> str:
         return "Configured providers:\n* test"
@@ -143,6 +154,30 @@ def test_handle_new_uses_shared_session_command():
 
         assert fake_bot.sent_texts
         assert fake_bot.sent_texts[-1][1].startswith("Created session: telegram-123-")
+
+    asyncio.run(_run())
+
+
+def test_handle_new_flushes_old_session_before_replacement():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        old_session = handlers._session_manager.create_session(123)
+        old_session.queue.append(TelegramQueuedMessage(chat_id=123, user_id=42, text="queued"))
+        message = _make_message(text="/new", user_id=42)
+        update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_user=message.from_user,
+            message=message,
+        )
+
+        await handlers.handle_new(update, SimpleNamespace(args=[]))
+
+        new_session_id = handlers._session_manager.get_current_session_id(123)
+        assert new_session_id != old_session.session_id
+        assert old_session.generation == 1
+        assert len(old_session.queue) == 0
+        assert fake_bot.flushed_sessions == [(123, old_session.session_id)]
+        assert old_session.agent.flush_calls == [{}]
 
     asyncio.run(_run())
 
