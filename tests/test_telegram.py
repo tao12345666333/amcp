@@ -482,7 +482,12 @@ def test_message_access_topic_override_precedence():
 # --- Typing lifecycle tests ---
 
 
-def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int = 1):
+def _make_bot_for_typing(
+    *,
+    typing_indicator: bool = True,
+    typing_interval: int = 1,
+    agent_factory=None,
+):
     """Build a TelegramBot with mocked internals for typing tests."""
     config = TelegramConfig(
         enabled=True,
@@ -510,6 +515,7 @@ def _make_bot_for_typing(*, typing_indicator: bool = True, typing_interval: int 
             allowed_users={1},
             admin_users={1},
             config=config,
+            agent_factory=agent_factory,
         )
     return bot
 
@@ -579,6 +585,35 @@ def test_typing_start_creates_task():
 
         await bot._stop_typing(100)
         assert 100 not in bot._typing_tasks
+
+    asyncio.run(_run())
+
+
+def test_create_new_session_flushes_and_replaces_under_boundary_lock():
+    async def _run():
+        bot = _make_bot_for_typing(agent_factory=_FakeAgent)
+        old_session = bot._session_manager.create_session(800)
+        old_session.queue.append(TelegramQueuedMessage(chat_id=800, user_id=1, text="queued"))
+        task = asyncio.create_task(asyncio.sleep(60))
+        old_session.current_task = task
+
+        flushed: list[str] = []
+
+        async def _flush(chat_id: int, session) -> bool:
+            flushed.append(f"{chat_id}:{session.session_id}:{session.generation}:{len(session.queue)}")
+            return True
+
+        with patch.object(bot, "flush_session_memory", side_effect=_flush):
+            new_session = await bot.create_new_session(800)
+
+        await asyncio.sleep(0)
+        assert new_session.session_id != old_session.session_id
+        assert bot._session_manager.get_current_session_id(800) == new_session.session_id
+        assert old_session.generation == 1
+        assert len(old_session.queue) == 0
+        assert task.cancelled()
+        assert flushed == [f"800:{old_session.session_id}:1:0"]
+        assert new_session.agent.execution_context["memory_project_root"] == str(bot.memory_project_root(800))
 
     asyncio.run(_run())
 

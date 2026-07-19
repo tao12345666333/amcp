@@ -724,13 +724,17 @@ class TelegramHandlers:
             return
 
         if result.action == "new_session":
-            old_session = self._session_manager.get_current_session(chat_id)
-            if old_session:
-                self._session_manager.abandon_current_session(chat_id)
-                flush_session_memory = getattr(self._bot, "flush_session_memory", None)
-                if callable(flush_session_memory):
-                    await flush_session_memory(chat_id, old_session)
-            session = self._session_manager.create_session(chat_id)
+            create_new_session = getattr(self._bot, "create_new_session", None)
+            if callable(create_new_session):
+                session = await create_new_session(chat_id)
+            else:
+                old_session = self._session_manager.get_current_session(chat_id)
+                if old_session:
+                    self._session_manager.abandon_current_session(chat_id)
+                    flush_session_memory = getattr(self._bot, "flush_session_memory", None)
+                    if callable(flush_session_memory):
+                        await flush_session_memory(chat_id, old_session)
+                session = self._session_manager.create_session(chat_id)
             await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
             return
 

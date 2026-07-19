@@ -99,6 +99,7 @@ class TelegramBot:
         self._typing_tasks: dict[int, asyncio.Task[None]] = {}
         self._pairing_requests: dict[str, PairingRequest] = {}
         self._scheduler: Any = None  # AssistantScheduler (lazy import)
+        self._session_boundary_locks: dict[int, asyncio.Lock] = {}
 
     @property
     def config(self) -> TelegramConfig:
@@ -308,6 +309,25 @@ class TelegramBot:
         queued = len(session.queue) > 0
         session.queue.clear()
         return cancelled, queued
+
+    def _get_session_boundary_lock(self, chat_id: int) -> asyncio.Lock:
+        lock = self._session_boundary_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_boundary_locks[chat_id] = lock
+        return lock
+
+    async def create_new_session(self, chat_id: int) -> Any:
+        """Atomically flush and replace the current Telegram session."""
+        async with self._get_session_boundary_lock(chat_id):
+            old_session = self._session_manager.get_current_session(chat_id)
+            if old_session:
+                self._session_manager.abandon_current_session(chat_id)
+                await self.flush_session_memory(chat_id, old_session)
+
+            session = self._session_manager.create_session(chat_id)
+            self._bind_session_memory(chat_id, session)
+            return session
 
     def memory_project_root(self, chat_id: int) -> Path:
         """Return the isolated project-memory root for a Telegram chat."""
