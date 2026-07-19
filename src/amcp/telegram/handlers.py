@@ -460,6 +460,10 @@ class SessionManager:
         self.prune_expired()
         return list(self._sessions.get(chat_id, {}).values())
 
+    def list_chat_ids(self) -> list[int]:
+        self.prune_expired()
+        return list(self._sessions.keys())
+
     def switch_session(self, chat_id: int, session_id: str) -> bool:
         session = self._sessions.get(chat_id, {}).get(session_id)
         if not session:

@@ -618,6 +618,38 @@ def test_create_new_session_flushes_and_replaces_under_boundary_lock():
     asyncio.run(_run())
 
 
+def test_memory_dream_once_runs_for_active_chat():
+    async def _run():
+        bot = _make_bot_for_typing(agent_factory=_FakeAgent)
+        bot._session_manager.create_session(801)
+        run_once = MagicMock(return_value=SimpleNamespace(ran=True, updated=False, reason="no_reply"))
+        dreamer_cls = MagicMock(return_value=SimpleNamespace(run_once=run_once))
+
+        with patch("amcp.telegram.bot.MemoryDreamer", dreamer_cls):
+            await bot._run_memory_dream_once()
+
+        dreamer_cls.assert_called_once_with(bot.memory_project_root(801))
+        run_once.assert_called_once()
+
+    asyncio.run(_run())
+
+
+def test_memory_dream_loop_start_stop():
+    async def _run():
+        bot = _make_bot_for_typing(agent_factory=_FakeAgent)
+        bot._memory_dream_interval_seconds = 60
+        bot._start_memory_dream_loop()
+
+        assert bot._memory_dream_task is not None
+        assert not bot._memory_dream_task.done()
+
+        await bot._stop_memory_dream_loop()
+
+        assert bot._memory_dream_task is None
+
+    asyncio.run(_run())
+
+
 def test_typing_start_sends_immediate_chat_action():
     async def _run():
         bot = _make_bot_for_typing()

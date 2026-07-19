@@ -17,6 +17,7 @@ from ..agent_spec import get_default_agent_spec
 from ..config import load_config, save_config
 from ..event_bus import EventType, get_event_bus
 from ..memory import CONFIG_DIR, get_memory_manager
+from ..memory_dream import MemoryDreamer
 from ..multi_agent import get_agent_registry
 from .auth import AuthMiddleware
 from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_MEMORY_LOG_USER_LIMIT = 1000
 TELEGRAM_MEMORY_LOG_AGENT_LIMIT = 2000
+TELEGRAM_MEMORY_DREAM_INTERVAL_SECONDS = 60 * 60
 
 
 @dataclass
@@ -100,6 +102,8 @@ class TelegramBot:
         self._pairing_requests: dict[str, PairingRequest] = {}
         self._scheduler: Any = None  # AssistantScheduler (lazy import)
         self._session_boundary_locks: dict[int, asyncio.Lock] = {}
+        self._memory_dream_task: asyncio.Task[None] | None = None
+        self._memory_dream_interval_seconds = TELEGRAM_MEMORY_DREAM_INTERVAL_SECONDS
 
     @property
     def config(self) -> TelegramConfig:
@@ -271,6 +275,7 @@ class TelegramBot:
         await self._start_skill_watcher()
         if self._config.assistant_mode:
             await self._start_assistant_scheduler()
+        self._start_memory_dream_loop()
         await self._run_polling_loop()
 
     async def start_webhook(self, url: str, listen: str = "0.0.0.0", port: int = 8443) -> None:
@@ -279,9 +284,11 @@ class TelegramBot:
         await self._start_skill_watcher()
         if self._config.assistant_mode:
             await self._start_assistant_scheduler()
+        self._start_memory_dream_loop()
         await self._run_webhook_loop(url, listen=listen, port=port)
 
     async def stop(self) -> None:
+        await self._stop_memory_dream_loop()
         if self._scheduler:
             await self._scheduler.stop()
             self._scheduler = None
@@ -356,6 +363,40 @@ class TelegramBot:
         except Exception:
             logger.exception("Telegram memory flush failed.")
             return False
+
+    def _start_memory_dream_loop(self) -> None:
+        if self._memory_dream_task and not self._memory_dream_task.done():
+            return
+        self._memory_dream_task = asyncio.create_task(self._memory_dream_loop())
+
+    async def _stop_memory_dream_loop(self) -> None:
+        task = self._memory_dream_task
+        if not task:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        self._memory_dream_task = None
+
+    async def _memory_dream_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._memory_dream_interval_seconds)
+            await self._run_memory_dream_once()
+
+    async def _run_memory_dream_once(self) -> None:
+        for chat_id in self._session_manager.list_chat_ids():
+            project_root = self.memory_project_root(chat_id)
+            try:
+                result = await asyncio.to_thread(MemoryDreamer(project_root).run_once)
+                logger.debug(
+                    "Telegram memory dream chat=%s ran=%s updated=%s reason=%s",
+                    chat_id,
+                    result.ran,
+                    result.updated,
+                    result.reason,
+                )
+            except Exception:
+                logger.exception("Telegram memory dream failed for chat %s.", chat_id)
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None) -> tuple[str, bool]:
         self._prune_pairing_requests()
