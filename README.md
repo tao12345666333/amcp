@@ -4,6 +4,9 @@
 [![CI](https://github.com/tao12345666333/amcp/workflows/CI/badge.svg)](https://github.com/tao12345666333/amcp/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Deploy your own on GMI Cloud](https://img.shields.io/badge/Deploy%20your%20own-GMI%20Cloud-ddea4d)](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/amcp-agent)
+
+New to GMI Cloud? [Create an account with my referral link](https://console.gmicloud.ai/ref/KP3NWZV4).
 
 **An out-of-the-box coding-agent runtime for your terminal, IDE, server, and Telegram.**
 
