@@ -535,21 +535,7 @@ class TelegramBot:
         session = self._session_manager.get_or_create_session(chat_id)
         session.last_used = datetime.now()
         queued_message = TelegramQueuedMessage(chat_id=chat_id, user_id=user_id, text=text)
-
-        if session.lock.locked():
-            if self._is_queue_full(session):
-                await self.send_text(chat_id, "Session queue is full. Please try again later.")
-                return
-            session.queue.append(queued_message)
-            await self.send_text(chat_id, "Session busy. Your message was queued.")
-            return
-
-        generation = getattr(session, "generation", 0)
-        async with session.lock:
-            await self._process_message(session, queued_message)
-            while session.queue and getattr(session, "generation", 0) == generation:
-                next_message = session.queue.popleft()
-                await self._process_message(session, next_message)
+        await self._enqueue_message(session, queued_message)
 
     async def handle_media(
         self, chat_id: int, user_id: int, text: str, message_type: str, metadata: dict[str, Any] | None
@@ -559,32 +545,102 @@ class TelegramBot:
         queued_message = TelegramQueuedMessage(
             chat_id=chat_id, user_id=user_id, text=text, message_type=message_type, metadata=metadata
         )
+        await self._enqueue_message(session, queued_message)
 
-        if session.lock.locked():
-            if self._is_queue_full(session):
-                await self.send_text(chat_id, "Session queue is full. Please try again later.")
+    async def _enqueue_message(self, session: Any, message: TelegramQueuedMessage) -> None:
+        queue_lock = self._get_session_queue_lock(session)
+        async with queue_lock:
+            active = self._session_worker_active(session)
+            if active and self._is_queue_full(session):
+                await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
                 return
-            session.queue.append(queued_message)
-            await self.send_text(chat_id, "Session busy. Your message was queued.")
+
+            status_text = (
+                f"Session busy. Queued at position {len(session.queue) + 1}."
+                if active
+                else "Started processing your request..."
+            )
+            status_message = await self.send_text(message.chat_id, status_text)
+            message.status_message_id = self._get_telegram_message_id(status_message)
+            session.queue.append(message)
+
+            if not active:
+                generation = getattr(session, "generation", 0)
+                worker = asyncio.create_task(self._drain_session_queue(session, generation))
+                session.worker_task = worker
+                worker.add_done_callback(
+                    lambda task, bound_session=session: self._on_session_worker_done(bound_session, task)
+                )
+
+    @staticmethod
+    def _get_session_queue_lock(session: Any) -> asyncio.Lock:
+        lock = getattr(session, "queue_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            session.queue_lock = lock
+        return lock
+
+    @staticmethod
+    def _session_worker_active(session: Any) -> bool:
+        worker = getattr(session, "worker_task", None)
+        if worker and not worker.done():
+            return True
+        current = getattr(session, "current_task", None)
+        return bool(current and not current.done())
+
+    @staticmethod
+    def _get_telegram_message_id(message: Any) -> int | None:
+        message_id = getattr(message, "message_id", None)
+        return int(message_id) if message_id is not None else None
+
+    async def _drain_session_queue(self, session: Any, generation: int) -> None:
+        while getattr(session, "generation", 0) == generation:
+            queue_lock = self._get_session_queue_lock(session)
+            async with queue_lock:
+                if not session.queue:
+                    break
+                message = session.queue.popleft()
+
+            if message.status_message_id is not None:
+                await self._edit_text(message.chat_id, message.status_message_id, "Processing...")
+            await self._process_message(session, message)
+
+    def _on_session_worker_done(self, session: Any, task: asyncio.Task[None]) -> None:
+        if getattr(session, "worker_task", None) is task:
+            session.worker_task = None
+        if task.cancelled():
             return
+        try:
+            task.result()
+        except Exception:
+            logger.exception("Telegram session worker failed.")
 
-        generation = getattr(session, "generation", 0)
-        async with session.lock:
-            await self._process_message(session, queued_message)
-            while session.queue and getattr(session, "generation", 0) == generation:
-                next_message = session.queue.popleft()
-                await self._process_message(session, next_message)
+    async def send_text(self, chat_id: int, text: str) -> Any:
+        return await self._application.bot.send_message(chat_id=chat_id, text=text)
 
-    async def send_text(self, chat_id: int, text: str) -> None:
-        await self._application.bot.send_message(chat_id=chat_id, text=text)
-
-    async def send_markdown(self, chat_id: int, text: str) -> None:
-        await self._application.bot.send_message(
+    async def send_markdown(self, chat_id: int, text: str) -> Any:
+        return await self._application.bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode="MarkdownV2",
             disable_web_page_preview=True,
         )
+
+    async def _edit_text(self, chat_id: int, message_id: int, text: str, *, markdown: bool = False) -> bool:
+        try:
+            kwargs: dict[str, Any] = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+            }
+            if markdown:
+                kwargs["parse_mode"] = "MarkdownV2"
+                kwargs["disable_web_page_preview"] = True
+            await self._application.bot.edit_message_text(**kwargs)
+            return True
+        except Exception as exc:
+            logger.debug("Failed to edit Telegram status message %s/%s: %s", chat_id, message_id, exc)
+            return False
 
     async def send_notification(self, text: str) -> None:
         if self._loop and asyncio.get_running_loop() is not self._loop:
@@ -610,6 +666,7 @@ class TelegramBot:
     async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
         generation = getattr(session, "generation", 0)
         task: asyncio.Task | None = None
+        status_message_id = message.status_message_id
         self._bind_session_memory(message.chat_id, session)
         async with self._typing_session(message.chat_id):
             try:
@@ -626,21 +683,37 @@ class TelegramBot:
                 response = await task
             except asyncio.CancelledError:
                 if getattr(session, "generation", 0) == generation:
-                    await self.send_text(message.chat_id, "Request cancelled.")
+                    await self._deliver_status_or_text(
+                        message.chat_id,
+                        status_message_id,
+                        "Request cancelled.",
+                    )
                 return
             except BusyError:
                 if getattr(session, "generation", 0) != generation:
                     return
                 if self._is_queue_full(session):
-                    await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
+                    await self._deliver_status_or_text(
+                        message.chat_id,
+                        status_message_id,
+                        "Session queue is full. Please try again later.",
+                    )
                 else:
                     session.queue.appendleft(message)
-                    await self.send_text(message.chat_id, "Session busy. Your message was queued.")
+                    await self._deliver_status_or_text(
+                        message.chat_id,
+                        status_message_id,
+                        "Session busy. Your message was queued.",
+                    )
                 return
             except Exception as exc:
                 logger.exception("Failed to process Telegram message.")
                 if getattr(session, "generation", 0) == generation:
-                    await self.send_markdown(message.chat_id, self._formatter.format_error(str(exc)))
+                    await self._deliver_status_or_markdown(
+                        message.chat_id,
+                        status_message_id,
+                        self._formatter.format_error(str(exc)),
+                    )
                 return
             finally:
                 if getattr(session, "current_task", None) is task:
@@ -650,10 +723,10 @@ class TelegramBot:
             if getattr(session, "generation", 0) != generation:
                 return
             if response_text:
-                for chunk in self._formatter.format_response(response_text):
-                    if getattr(session, "generation", 0) != generation:
-                        return
-                    await self.send_markdown(message.chat_id, chunk)
+                chunks = self._formatter.format_response(response_text)
+                await self._deliver_response_chunks(message.chat_id, status_message_id, chunks, generation, session)
+            elif status_message_id is not None:
+                await self._edit_text(message.chat_id, status_message_id, "Done.")
 
         if getattr(session, "generation", 0) != generation:
             return
@@ -664,6 +737,36 @@ class TelegramBot:
             tags=["telegram", "conversation"],
             scope="project",
         )
+
+    async def _deliver_status_or_text(self, chat_id: int, message_id: int | None, text: str) -> None:
+        if message_id is not None and await self._edit_text(chat_id, message_id, text):
+            return
+        await self.send_text(chat_id, text)
+
+    async def _deliver_status_or_markdown(self, chat_id: int, message_id: int | None, text: str) -> None:
+        if message_id is not None and await self._edit_text(chat_id, message_id, text, markdown=True):
+            return
+        await self.send_markdown(chat_id, text)
+
+    async def _deliver_response_chunks(
+        self,
+        chat_id: int,
+        message_id: int | None,
+        chunks: list[str],
+        generation: int,
+        session: Any,
+    ) -> None:
+        if not chunks:
+            return
+
+        start_idx = 0
+        if message_id is not None and await self._edit_text(chat_id, message_id, chunks[0], markdown=True):
+            start_idx = 1
+
+        for chunk in chunks[start_idx:]:
+            if getattr(session, "generation", 0) != generation:
+                return
+            await self.send_markdown(chat_id, chunk)
 
     @staticmethod
     def _trim_memory_log_text(text: str, limit: int) -> str:

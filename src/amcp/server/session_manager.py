@@ -283,57 +283,58 @@ class SessionManager:
         """
         session = await self.get_session(session_id)
 
-        # Update status
-        session.update_status(SessionStatus.BUSY)
-        self._emit_event(
-            "session.status_changed",
-            {"session_id": session_id, "status": SessionStatus.BUSY.value},
-        )
-
-        try:
-            # Resolve work directory
-            effective_work_dir = work_dir or Path(session.cwd)
-
-            # Map priority string to enum
-            from ..message_queue import MessagePriority as MQPriority
-
-            priority_map = {
-                "low": MQPriority.LOW,
-                "normal": MQPriority.NORMAL,
-                "high": MQPriority.HIGH,
-                "urgent": MQPriority.URGENT,
-            }
-            mq_priority = priority_map.get(priority, MQPriority.NORMAL)
-
-            # Run the agent
-            # Note: Agent.run returns a string, not an async generator.
-            # For streaming support, the agent emits 'message.chunk' events via callbacks
-            # which are captured and forwarded by the EventBridge.
-            result = await session.agent.run(
-                user_input=content,
-                work_dir=effective_work_dir,
-                stream=stream,
-                show_progress=False,  # Server doesn't show progress
-                priority=mq_priority,
-            )
-            yield result
-
-            session.message_count += 1
-            session.update_status(SessionStatus.IDLE)
-
-        except Exception as e:
-            session.update_status(SessionStatus.ERROR)
-            self._emit_event(
-                "session.error",
-                {"session_id": session_id, "error": str(e)},
-            )
-            raise
-
-        finally:
+        async with session._lock:
+            # Update status
+            session.update_status(SessionStatus.BUSY)
             self._emit_event(
                 "session.status_changed",
-                {"session_id": session_id, "status": session.status.value},
+                {"session_id": session_id, "status": SessionStatus.BUSY.value},
             )
+
+            try:
+                # Resolve work directory
+                effective_work_dir = work_dir or Path(session.cwd)
+
+                # Map priority string to enum
+                from ..message_queue import MessagePriority as MQPriority
+
+                priority_map = {
+                    "low": MQPriority.LOW,
+                    "normal": MQPriority.NORMAL,
+                    "high": MQPriority.HIGH,
+                    "urgent": MQPriority.URGENT,
+                }
+                mq_priority = priority_map.get(priority, MQPriority.NORMAL)
+
+                # Run the agent
+                # Note: Agent.run returns a string, not an async generator.
+                # For streaming support, the agent emits 'message.chunk' events via callbacks
+                # which are captured and forwarded by the EventBridge.
+                result = await session.agent.run(
+                    user_input=content,
+                    work_dir=effective_work_dir,
+                    stream=stream,
+                    show_progress=False,  # Server doesn't show progress
+                    priority=mq_priority,
+                )
+                yield result
+
+                session.message_count += 1
+                session.update_status(SessionStatus.IDLE)
+
+            except Exception as e:
+                session.update_status(SessionStatus.ERROR)
+                self._emit_event(
+                    "session.error",
+                    {"session_id": session_id, "error": str(e)},
+                )
+                raise
+
+            finally:
+                self._emit_event(
+                    "session.status_changed",
+                    {"session_id": session_id, "status": session.status.value},
+                )
 
     async def cancel_session(self, session_id: str, force: bool = False) -> None:
         """Cancel the current operation in a session.
