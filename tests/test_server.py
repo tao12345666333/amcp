@@ -1,16 +1,21 @@
 """Tests for AMCP Server module."""
 
+import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from amcp.message_queue import get_message_queue_manager
 from amcp.server import ServerConfig, create_app
+from amcp.server.models import SessionStatus
 from amcp.server.session_manager import (
     ManagedSession,
     MaxSessionsReachedError,
     SessionManager,
     SessionNotFoundError,
+    get_session_manager,
 )
 
 
@@ -161,6 +166,46 @@ class TestSessionEndpoints:
         assert data["status"] == "handled"
         assert data["new_session_id"]
         assert data["new_session_id"] != session_id
+
+    def test_prompt_non_stream_executes_agent_and_returns_response(self, client):
+        """Test non-stream prompt endpoint runs the agent and returns its response."""
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.agent.run = AsyncMock(return_value="server response")
+
+        response = client.post(
+            f"/api/v1/sessions/{session_id}/prompt",
+            json={"content": "hello", "stream": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "complete"
+        assert data["response"] == "server response"
+        managed.agent.run.assert_awaited_once()
+        assert managed.agent.run.await_args.kwargs["user_input"] == "hello"
+        assert managed.agent.run.await_args.kwargs["stream"] is False
+
+    def test_prompt_non_stream_busy_queue_actually_enqueues(self, client):
+        """Test busy non-stream prompt endpoint enqueues the prompt before returning queued."""
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.update_status(SessionStatus.BUSY)
+
+        response = client.post(
+            f"/api/v1/sessions/{session_id}/prompt",
+            json={"content": "queued prompt", "stream": False, "conflict_strategy": "queue"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "queued"
+        assert data["position"] == 1
+        assert managed.agent.queued_count() == 1
+        assert get_message_queue_manager().queued_prompts(managed.agent.session_id) == ["queued prompt"]
+        asyncio.run(managed.agent.clear_queue())
 
 
 class TestToolEndpoints:
@@ -460,6 +505,8 @@ class TestConflictStrategy:
         # Create a session
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.agent.run = AsyncMock(return_value="queued strategy response")
 
         # Send prompt with queue strategy (default)
         response = client.post(
@@ -469,13 +516,16 @@ class TestConflictStrategy:
         assert response.status_code == 200
         data = response.json()
         assert data["session_id"] == session_id
-        assert data["status"] in ["streaming", "processing", "queued"]
+        assert data["status"] == "complete"
+        assert data["response"] == "queued strategy response"
 
     def test_prompt_with_reject_strategy_on_idle_session(self, client):
         """Test prompt with reject strategy on idle session succeeds."""
         # Create a session
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.agent.run = AsyncMock(return_value="reject strategy response")
 
         # Send prompt with reject strategy - should succeed since session is idle
         response = client.post(
@@ -484,4 +534,5 @@ class TestConflictStrategy:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] in ["streaming", "processing"]
+        assert data["status"] == "complete"
+        assert data["response"] == "reject strategy response"

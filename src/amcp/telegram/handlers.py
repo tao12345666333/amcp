@@ -27,8 +27,10 @@ class TelegramSession:
     agent: Any
     last_used: datetime = field(default_factory=datetime.now)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    queue_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     queue: deque[TelegramQueuedMessage] = field(default_factory=deque)
     current_task: asyncio.Task | None = None
+    worker_task: asyncio.Task | None = None
     generation: int = 0
 
 
@@ -39,6 +41,7 @@ class TelegramQueuedMessage:
     text: str = ""
     message_type: str = "text"
     metadata: dict[str, Any] | None = None
+    status_message_id: int | None = None
 
 
 def _format_photo_message(message: Any) -> tuple[str, dict[str, Any] | None]:

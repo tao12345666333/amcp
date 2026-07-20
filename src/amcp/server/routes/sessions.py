@@ -36,6 +36,36 @@ async def _safe_emit(coro: Coroutine[Any, Any, None]) -> None:
         await coro
 
 
+def _queue_priority(priority: str):
+    """Map server API priority strings to the agent queue enum."""
+    from ...message_queue import MessagePriority as QueuePriority
+
+    priority_map = {
+        "low": QueuePriority.LOW,
+        "normal": QueuePriority.NORMAL,
+        "high": QueuePriority.HIGH,
+        "urgent": QueuePriority.URGENT,
+    }
+    return priority_map.get(priority, QueuePriority.NORMAL)
+
+
+async def _enqueue_agent_prompt(session: Any, content: str, request: PromptRequest) -> int:
+    """Enqueue a prompt directly into the agent session queue and return its position."""
+    from ...message_queue import get_message_queue_manager
+
+    position = session.agent.queued_count() + 1
+    queue_manager = get_message_queue_manager()
+    await queue_manager.enqueue(
+        session_id=session.agent.session_id,
+        prompt=content,
+        priority=_queue_priority(request.priority.value),
+        work_dir=session.cwd,
+        stream=request.stream,
+        show_progress=False,
+    )
+    return position
+
+
 @router.post("", response_model=Session)
 async def create_session(request: CreateSessionRequest | None = None) -> Session:
     """Create a new session.
@@ -102,8 +132,8 @@ async def delete_session(session_id: str) -> dict:
 async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse:
     """Send a prompt to a session.
 
-    For streaming responses, use the /sessions/{id}/prompt/stream endpoint.
-    This endpoint queues the message and returns immediately.
+    Runs the prompt and returns the complete response. For incremental output,
+    use the /sessions/{id}/prompt/stream endpoint.
 
     The `conflict_strategy` parameter controls behavior when the session is busy:
     - `queue`: Add the prompt to the queue (default)
@@ -170,7 +200,7 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
 
         if is_busy:
             # Default: queue the message
-            position = session.agent.queued_count() + 1
+            position = await _enqueue_agent_prompt(session, routed.content, request)
 
             # Notify about queuing
             await _safe_emit(
@@ -196,10 +226,23 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
             )
         )
 
+        response_text = ""
+        async for chunk in session_manager.prompt_session(
+            session_id=session_id,
+            content=routed.content,
+            stream=False,
+            priority=request.priority.value,
+        ):
+            if isinstance(chunk, str):
+                response_text += chunk
+            elif hasattr(chunk, "content"):
+                response_text += str(chunk.content)
+
         return PromptResponse(
             session_id=session_id,
             message_id=message_id,
-            status="streaming" if request.stream else "processing",
+            status="complete",
+            response=response_text,
         )
 
     except SessionNotFoundError:

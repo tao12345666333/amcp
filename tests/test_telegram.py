@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -498,7 +499,10 @@ def _make_bot_for_typing(
     mock_app = MagicMock()
     mock_app.bot = MagicMock()
     mock_app.bot.send_chat_action = AsyncMock()
-    mock_app.bot.send_message = AsyncMock()
+    message_ids = iter(range(1, 1000))
+    mock_app.bot.send_message = AsyncMock(side_effect=lambda **kwargs: SimpleNamespace(message_id=next(message_ids)))
+    mock_app.bot.edit_message_text = AsyncMock()
+    importlib.import_module("amcp.telegram.bot")
 
     with (
         patch("amcp.telegram.bot.ApplicationBuilder") as builder_cls,
@@ -723,6 +727,98 @@ def test_typing_stop_all():
         await bot._stop_all_typing()
 
         assert len(bot._typing_tasks) == 0
+
+    asyncio.run(_run())
+
+
+def test_handle_prompt_starts_background_worker_and_returns():
+    async def _run():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class _SlowAgent:
+            def __init__(self, session_id: str) -> None:
+                self.session_id = session_id
+                self.execution_context = {}
+
+            async def run(self, **kwargs):
+                started.set()
+                await release.wait()
+                return "done"
+
+        bot = _make_bot_for_typing(agent_factory=_SlowAgent)
+
+        await bot.handle_prompt(900, 1, "hi")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        session = bot._session_manager.get_current_session(900)
+        assert session is not None
+        assert session.worker_task is not None
+        assert not session.worker_task.done()
+        assert session.current_task is not None
+        assert not session.current_task.done()
+        assert (
+            bot._application.bot.send_message.call_args_list[0].kwargs["text"] == "Started processing your request..."
+        )
+
+        release.set()
+        await session.worker_task
+
+        bot._application.bot.edit_message_text.assert_any_call(
+            chat_id=900,
+            message_id=1,
+            text="done",
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+        )
+
+    asyncio.run(_run())
+
+
+def test_handle_prompt_queues_follow_up_for_same_session():
+    async def _run():
+        first_started = asyncio.Event()
+        first_release = asyncio.Event()
+        calls: list[str] = []
+
+        class _QueuedAgent:
+            def __init__(self, session_id: str) -> None:
+                self.session_id = session_id
+                self.execution_context = {}
+
+            async def run(self, **kwargs):
+                calls.append(kwargs["user_input"])
+                if len(calls) == 1:
+                    first_started.set()
+                    await first_release.wait()
+                return f"reply {len(calls)}"
+
+        bot = _make_bot_for_typing(agent_factory=_QueuedAgent)
+
+        await bot.handle_prompt(901, 1, "first")
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+        await bot.handle_prompt(901, 1, "second")
+
+        session = bot._session_manager.get_current_session(901)
+        assert session is not None
+        worker = session.worker_task
+        assert worker is not None
+        assert len(session.queue) == 1
+        assert bot._application.bot.send_message.call_args_list[1].kwargs["text"] == (
+            "Session busy. Queued at position 1."
+        )
+
+        first_release.set()
+        await worker
+
+        assert calls == ["first", "second"]
+        bot._application.bot.edit_message_text.assert_any_call(
+            chat_id=901,
+            message_id=2,
+            text="reply 2",
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+        )
 
     asyncio.run(_run())
 
