@@ -65,6 +65,7 @@ def test_default_chat_uses_gmi_without_api_key():
     assert cfg.active_provider == "gmi"
     assert cfg.base_url == "https://api.gmi-serving.com/v1"
     assert cfg.model == "openai/gpt-5.5"
+    assert cfg.api_type == "gmi"
     assert cfg.api_key is None
     assert "gmi" in cfg.providers
     assert cfg.providers["gmi"].api_key is None
@@ -118,6 +119,28 @@ def test_decode_chat_active_provider_applies_profile():
     assert "model" not in encoded
     assert "api_type" not in encoded
     assert "model_config" not in encoded
+
+
+def test_active_provider_reuses_key_for_same_base_url():
+    cfg = config_module._decode_chat(
+        {
+            "active_provider": "second-model",
+            "providers": {
+                "credential-source": {
+                    "base_url": "https://provider.example/v1",
+                    "model": "first-model",
+                    "api_key": "shared-key",
+                },
+                "second-model": {
+                    "base_url": "https://provider.example/v1",
+                    "model": "second-model",
+                },
+            },
+        }
+    )
+
+    assert cfg is not None
+    assert cfg.api_key == "shared-key"
 
 
 def test_decode_encode_server_config_roundtrip():

@@ -42,8 +42,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from openai import OpenAI
-
 if TYPE_CHECKING:
     from .config import ModelConfig
 
@@ -397,7 +395,7 @@ class SmartCompactor:
 
     def __init__(
         self,
-        client: OpenAI,
+        client: Any,
         model: str,
         config: CompactionConfig | None = None,
         model_config: ModelConfig | None = None,
@@ -405,7 +403,7 @@ class SmartCompactor:
         """Initialize the smart compactor.
 
         Args:
-            client: OpenAI client for generating summaries
+            client: AMCP LLM client for generating summaries
             model: Model name for context window detection
             config: Optional compaction configuration
             model_config: Optional ModelConfig with explicit user overrides
@@ -602,8 +600,7 @@ class SmartCompactor:
         )
 
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
+            resp = self.client.chat(
                 messages=[
                     {
                         "role": "system",
@@ -614,7 +611,7 @@ class SmartCompactor:
                 max_tokens=min(4000, self.target_tokens),
                 temperature=0.3,  # Lower temperature for consistent summaries
             )
-            summary = resp.choices[0].message.content or ""
+            summary = resp.content or ""
         except Exception as e:
             logger.warning(f"LLM summarization failed: {e}, falling back to truncation")
             return self._truncate(messages)
@@ -708,8 +705,7 @@ class SmartCompactor:
         # Summarize removed messages
         try:
             context = _messages_to_text(removed)
-            resp = self.client.chat.completions.create(
-                model=self.model,
+            resp = self.client.chat(
                 messages=[
                     {"role": "system", "content": "Summarize this conversation context in 2-3 paragraphs."},
                     {"role": "user", "content": context[:10000]},  # Limit input
@@ -717,7 +713,7 @@ class SmartCompactor:
                 max_tokens=500,
                 temperature=0.3,
             )
-            summary = resp.choices[0].message.content or ""
+            summary = resp.content or ""
         except Exception:
             summary = f"[{len(removed)} older messages summarized]"
 
@@ -762,7 +758,7 @@ Compactor = SmartCompactor
 
 
 def create_compactor(
-    client: OpenAI,
+    client: Any,
     model: str,
     strategy: str = "summary",
     threshold_ratio: float = 0.7,
@@ -772,7 +768,7 @@ def create_compactor(
     """Create a smart compactor with custom settings.
 
     Args:
-        client: OpenAI client
+        client: AMCP LLM client
         model: Model name
         strategy: Compaction strategy ("summary", "truncate", "sliding_window", "hybrid")
         threshold_ratio: When to trigger compaction (ratio of context window)

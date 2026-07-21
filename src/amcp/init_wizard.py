@@ -141,6 +141,18 @@ def prompt_api_key(provider_name: str, env_vars: list[str]) -> str:
     return console.input("API Key: ").strip()
 
 
+def _resolve_api_type(provider_id: str, is_custom: bool) -> str:
+    """Use a native any-llm provider when available, otherwise OpenAI compatibility."""
+    if is_custom:
+        return "openai"
+
+    from any_llm import AnyLLM
+
+    if provider_id in AnyLLM.get_supported_providers():
+        return provider_id
+    return "openai"
+
+
 def download_models_database() -> ModelsDatabase | None:
     """Download models database from models.dev with progress indicator."""
     console.print("\n[bold]Downloading model database from models.dev...[/bold]")
@@ -555,12 +567,13 @@ def run_init_wizard() -> Path:
         output_limit=output_limit,
         is_custom=is_custom,
     )
+    api_type = _resolve_api_type(provider_id, is_custom)
 
     chat_config = ChatConfig(
         base_url=base_url,
         model=model_id,
         api_key=api_key if api_key else None,
-        api_type="openai",
+        api_type=api_type,
         model_config=model_config,
         active_provider=provider_id,
         providers={
@@ -568,7 +581,7 @@ def run_init_wizard() -> Path:
                 base_url=base_url,
                 model=model_id,
                 api_key=api_key if api_key else None,
-                api_type="openai",
+                api_type=api_type,
                 model_config=model_config,
             )
         },

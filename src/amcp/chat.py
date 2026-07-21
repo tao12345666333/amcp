@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import os
 
-from rich.console import Console
-
 from .config import ChatConfig
-from .llm import AMCP_USER_AGENT
-
-console = Console()
+from .llm import AnyLLMClient
 
 
 def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
@@ -34,14 +30,17 @@ def _resolve_api_key(cli_key: str | None, cfg: ChatConfig | None) -> str | None:
     return os.environ.get("OPENAI_API_KEY")
 
 
-def _make_client(base_url: str, api_key: str | None):
-    try:
-        from openai import OpenAI
-    except ImportError:  # pragma: no cover
-        console.print("[red]openai package not installed. Please install dependencies.[/red]")
-        raise
-    return OpenAI(
+def _make_client(
+    base_url: str,
+    api_key: str | None,
+    *,
+    provider: str = "openai",
+    model: str = "gpt-4o",
+) -> AnyLLMClient:
+    """Create the shared any-llm completion client."""
+    return AnyLLMClient(
+        provider=provider,
         base_url=base_url,
-        api_key=api_key or "",
-        default_headers={"User-Agent": AMCP_USER_AGENT},
+        api_key=api_key,
+        model=model,
     )

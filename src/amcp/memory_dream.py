@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .config import load_config
+from .llm import create_llm_client
 from .memory import MemoryStore, get_memory_manager
 
 logger = logging.getLogger(__name__)
@@ -149,9 +149,7 @@ class MemoryDreamer:
 
     def _make_client(self) -> Any:
         cfg = load_config()
-        base_url = _resolve_base_url(None, cfg.chat)
-        api_key = _resolve_api_key(None, cfg.chat)
-        return _make_client(base_url, api_key)
+        return create_llm_client(cfg.chat)
 
     def _resolve_model(self) -> str:
         cfg = load_config()

@@ -212,13 +212,12 @@ class TestSmartCompactor:
 
     @pytest.fixture
     def mock_client(self):
-        """Create a mock OpenAI client."""
+        """Create a mock AMCP LLM client."""
         client = MagicMock()
         # Mock successful completion response
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Compacted summary of the conversation."
-        client.chat.completions.create.return_value = mock_response
+        mock_response.content = "Compacted summary of the conversation."
+        client.chat.return_value = mock_response
         return client
 
     def test_init_calculates_thresholds(self, mock_client):

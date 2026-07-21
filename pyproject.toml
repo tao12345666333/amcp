@@ -39,7 +39,7 @@ dependencies = [
   "pydantic>=2.7",
   "fastmcp>=2.0.0,<3",
   "tomli-w>=1.0.0",
-  "openai>=1.52.0",
+  "any-llm-sdk>=1.21.0,<2",
   "pyyaml>=6.0",
   "prompt-toolkit>=3.0.0",
   "agent-client-protocol>=0.7.0",
@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=0.40.0"]
+anthropic = []
 telegram = [
   "python-telegram-bot>=21.0",
   "requests>=2.31.0",
@@ -65,7 +65,6 @@ dev = [
   "ruff>=0.3.0",
   "mypy>=1.8.0",
   "types-PyYAML>=6.0.0",
-  "anthropic>=0.40.0",
   "telegramify-markdown>=1.0.0,<2",
 ]
 
