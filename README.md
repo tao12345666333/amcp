@@ -49,7 +49,7 @@ uvx amcp-agent --once "summarize this repository and suggest the next test to ru
 | **Coding loop** | `read_file`, `grep`, `apply_patch`, `write_file`, `bash`, `think`, `todo`, `task` |
 | **Research** | Web search/fetch tools plus MCP server integration over stdio or HTTP/SSE |
 | **Agent orchestration** | Primary/subagent architecture with `coder`, `explorer`, `planner`, and `focused_coder` types |
-| **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive tool/skill loading, MEMORY.md/HISTORY.md |
+| **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive loading, searchable memory and session history |
 | **Interfaces** | CLI, ACP for IDEs, FastAPI HTTP/WebSocket server, Telegram bot |
 | **Customization** | TOML config, YAML agent specs, slash commands, reusable skills, hooks, event bus |
 | **Model support** | OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and OpenAI-compatible endpoints |
@@ -87,13 +87,13 @@ pip install amcp-agent[telegram]
 git clone https://github.com/tao12345666333/amcp.git
 cd amcp
 
-# using uv (recommended)
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+# Using uv (recommended); includes dependencies needed by the full test suite
+uv sync --extra dev --extra telegram
+source .venv/bin/activate
 
-# or with pip
+# Or with pip in an activated virtual environment
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install -e ".[dev,telegram]"
 ```
 
 ## Usage
@@ -150,6 +150,7 @@ amcp telegram setup                     # interactive setup
 | **web_search** | Search the web for information without configuring a search API key |
 | **web_fetch** | Fetch and extract content from web pages without configuring a search API key |
 | **memory** | Store and retrieve persistent cross-session memories |
+| **session_search** | Search persisted conversation history across sessions |
 
 ## Multi-Agent System
 
@@ -274,15 +275,20 @@ Configure via `amcp telegram setup` or in `config.toml` under `[telegram]`.
 
 ## Memory System
 
-AMCP maintains persistent cross-session memory using a two-layer approach:
-- **MEMORY.md**: Long-term facts, preferences, and knowledge (curated, compact)
-- **HISTORY.md**: Append-only searchable log of past activities
+AMCP maintains persistent cross-session context using complementary memory layers:
+- **MEMORY.md**: Curated long-term facts, preferences, and knowledge
+- **HISTORY.md**: Append-only activity and decision history
+- **memory.db**: Durable facts and episodic events with SQLite FTS5 search
+- **SOUL.md / IDENTITY.md**: Optional global persona and identity guidance
 
 Memory is stored at:
 - User-level: `~/.config/amcp/memory/`
 - Project-level: `.amcp/memory/` (project-specific knowledge)
+- Global persona: `~/.config/amcp/SOUL.md` and `~/.config/amcp/IDENTITY.md`
 
-The agent uses the `memory` tool to store and retrieve memories, enabling self-evolution by accumulating knowledge over time.
+The `memory` tool manages durable knowledge, while `session_search` searches persisted
+conversation history. User and project memory are merged for context; persona files remain
+global so the agent keeps one identity across interfaces and projects.
 
 ## Hooks System
 
@@ -327,7 +333,9 @@ mcp_tools_enabled = true
 write_tool_enabled = true
 edit_tool_enabled = true
 tool_loop_limit = 300
+bash_tool_limit = 100
 default_max_lines = 400
+read_roots = ["."]                # optional: restrict read_file to these roots
 default_agent = "coder"        # optional: coder, explorer, planner, focused_coder
 max_queue_size = 100
 
@@ -414,7 +422,14 @@ The Telegram runtime also supports group-specific and topic-specific policy over
 ### Setup
 
 ```bash
-pip install -e ".[dev]"
+uv sync --extra dev --extra telegram
+source .venv/bin/activate
+uv tool install pre-commit
+pre-commit install
+
+# Or use pip in an activated virtual environment
+python -m pip install -e ".[dev,telegram]"
+python -m pip install pre-commit
 pre-commit install
 ```
 
@@ -423,7 +438,8 @@ pre-commit install
 ```bash
 make test          # run all tests
 make test-cov      # run with coverage
-pytest tests/test_tools.py -v  # specific test
+python -m pytest -q -m "not llm"  # CI-equivalent suite without live provider calls
+python -m pytest tests/test_tools.py -v  # specific test
 ```
 
 ### Code Quality
@@ -434,6 +450,9 @@ make format        # ruff format
 make type-check    # mypy
 ```
 
+CI runs Ruff and the non-`llm` test suite on Python 3.11, 3.12, and 3.13. Tests marked `llm`
+call live model providers and require credentials.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
 
 ## Notes
@@ -441,7 +460,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
 - `rg` (ripgrep) must be installed and on PATH for the grep tool.
 - MCP servers must be installed separately and runnable (stdio transport).
 - The agent does not add an application-level retry around model provider failures; provider client behavior applies.
-- Tool-call guardrails include per-request `bash` limits, output truncation for `bash`, and session-level `read_file` limits.
+- Tool-call guardrails include per-request `bash` limits, output truncation for `bash`, and
+  per-conversation plus per-session `read_file` limits.
 
 ## License
 

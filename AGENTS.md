@@ -23,6 +23,8 @@ progressive context management.
 - Configuration is TOML and is loaded through `src/amcp/config.py`.
 - Project rules are loaded from `AGENTS.md` through `src/amcp/project_rules.py`.
 - HTTP/WebSocket server code lives under `src/amcp/server/`.
+- Client transports live under `src/amcp/client/`; ACP conversion code lives under
+  `src/amcp/protocol/`.
 - Telegram command handling is split between `src/amcp/telegram/bot.py` and
   `src/amcp/telegram/handlers.py`.
 - Keep shared slash-command behavior in `src/amcp/interaction.py` when possible so CLI,
@@ -60,9 +62,13 @@ src/amcp/
 ├── cli.py                # Typer CLI commands
 ├── config.py             # TOML configuration handling
 ├── compaction.py         # Smart context compaction
+├── hooks.py              # Extensibility hooks
 ├── interaction.py        # Shared slash-command routing
+├── memory.py             # Memory orchestration
 ├── models_db.py          # Model metadata lookup
 ├── project_rules.py      # AGENTS.md loading
+├── client/               # Embedded, HTTP, and WebSocket clients
+├── protocol/             # ACP protocol adapters and converters
 ├── server/               # HTTP/WebSocket server
 ├── telegram/             # Telegram integration
 └── progressive/          # Progressive context views
@@ -76,7 +82,9 @@ src/amcp/
 - `httpx` for HTTP clients.
 - `fastapi` and `uvicorn` for the server.
 - `openai` for OpenAI-compatible providers.
-- Optional extras provide Anthropic, Telegram, and development dependencies.
+- `fastmcp` for MCP integration and `agent-client-protocol` for ACP support.
+- Optional extras provide Anthropic, Telegram, and development dependencies. Install the
+  `dev` and `telegram` extras when running the complete test suite locally.
 
 ## GitHub Safety
 
@@ -94,8 +102,12 @@ Before committing code, run the checks that match the change. For normal code ch
 ```bash
 ruff format src tests
 ruff check src tests
+mypy src/amcp --ignore-missing-imports
 python -m pytest -q
 ```
+
+Tests that make live model calls are marked `llm`; exclude them for the normal local/CI-equivalent
+suite with `python -m pytest -q -m "not llm"`.
 
 For docs-only changes, run at least a targeted grep/lint sanity check and inspect the diff.
 
@@ -123,7 +135,7 @@ ruff check src tests
 python -m pytest -q
 ```
 
-Commit, create an annotated tag, and push the branch plus tags:
+Only when the user explicitly requests a release, commit and create an annotated tag:
 
 ```bash
 git add -A
@@ -132,10 +144,10 @@ git commit -m "chore: bump version to X.Y.Z
 Changes in this release:
 - <notable changes>"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin main --tags
 ```
 
-After publishing, verify the installed version reports `X.Y.Z`.
+Pushing commits or tags and publishing packages are separate shared actions and require explicit
+user approval. After publishing, verify the installed version reports `X.Y.Z`.
 
 ### Version Numbering
 
