@@ -33,17 +33,17 @@ class TestModelInfo:
     def test_from_api_data(self):
         """Test creating from API data."""
         api_data = {
-            "name": "GPT-4 Turbo",
-            "family": "GPT-4",
+            "name": "GPT-5.5",
+            "family": "GPT-5",
             "limit": {"context": 128000, "output": 4096},
             "tool_call": True,
             "reasoning": False,
             "cost": {"input": 10.0, "output": 30.0},
         }
-        model = ModelInfo.from_api_data("gpt-4-turbo", api_data, "openai")
+        model = ModelInfo.from_api_data("gpt-5.5", api_data, "openai")
 
-        assert model.id == "gpt-4-turbo"
-        assert model.name == "GPT-4 Turbo"
+        assert model.id == "gpt-5.5"
+        assert model.name == "GPT-5.5"
         assert model.context_window == 128000
         assert model.output_limit == 4096
         assert model.tool_call is True
@@ -67,8 +67,8 @@ class TestProviderInfo:
             "api": "https://api.openai.com/v1",
             "env": ["OPENAI_API_KEY"],
             "models": {
-                "gpt-4o": {
-                    "name": "GPT-4o",
+                "gpt-5.5": {
+                    "name": "GPT-5.5",
                     "limit": {"context": 128000},
                 }
             },
@@ -79,7 +79,7 @@ class TestProviderInfo:
         assert provider.name == "OpenAI"
         assert provider.api_url == "https://api.openai.com/v1"
         assert "OPENAI_API_KEY" in provider.env_vars
-        assert "gpt-4o" in provider.models
+        assert "gpt-5.5" in provider.models
 
 
 class TestModelsDatabase:
@@ -111,16 +111,16 @@ class TestModelsDatabase:
 
     def test_find_model_by_name(self):
         """Test finding a model by name."""
-        model = ModelInfo(id="gpt-4o", name="GPT-4o")
-        provider = ProviderInfo(id="openai", name="OpenAI", models={"gpt-4o": model})
+        model = ModelInfo(id="gpt-5.5", name="GPT-5.5")
+        provider = ProviderInfo(id="openai", name="OpenAI", models={"gpt-5.5": model})
         db = ModelsDatabase(providers={"openai": provider})
 
-        found_model, found_provider = db.find_model_by_name("gpt-4o")
+        found_model, found_provider = db.find_model_by_name("gpt-5.5")
         assert found_model == model
         assert found_provider == provider
 
         # Test partial matching
-        found_model, found_provider = db.find_model_by_name("gpt-4")
+        found_model, found_provider = db.find_model_by_name("gpt-5.5")
         assert found_model == model
 
     def test_to_dict_and_from_dict(self):

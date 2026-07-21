@@ -23,7 +23,7 @@ class TestModelFamily:
 
     def test_openai_detection(self):
         """Test GPT model detection."""
-        ctx = PromptContext.from_environment(model_name="gpt-4o")
+        ctx = PromptContext.from_environment(model_name="gpt-5.5")
         assert ctx.model_family == ModelFamily.OPENAI
 
         ctx = PromptContext.from_environment(model_name="o1-preview")
@@ -57,7 +57,7 @@ class TestPromptContext:
         """Test creating context from environment."""
         ctx = PromptContext.from_environment(
             working_dir="/tmp/test",
-            model_name="gpt-4o",
+            model_name="gpt-5.5",
             available_tools=["read_file", "grep"],
         )
         assert ctx.working_dir == "/tmp/test"

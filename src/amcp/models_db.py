@@ -390,6 +390,7 @@ BUILTIN_MODELS: dict[str, int] = {
     # OpenAI
     "gpt-5.1-codex": 400_000,
     "gpt-5.2": 400_000,
+    "gpt-5.5": 400_000,
     # Anthropic
     "claude-4.5-sonnet": 200_000,
     "claude-4.5-opus": 200_000,

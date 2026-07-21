@@ -35,7 +35,7 @@ def _make_client(
     api_key: str | None,
     *,
     provider: str = "openai",
-    model: str = "gpt-4o",
+    model: str = "gpt-5.5",
 ) -> AnyLLMClient:
     """Create the shared any-llm completion client."""
     return AnyLLMClient(

@@ -470,7 +470,7 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
     - "openai_responses": OpenAI Responses API
     """
     api_type = (cfg.api_type if cfg else None) or os.environ.get("AMCP_API_TYPE", "openai")
-    model = (cfg.model if cfg else None) or "gpt-4o"
+    model = (cfg.model if cfg else None) or "gpt-5.5"
 
     if api_type == "openai_responses":
         responses_base_url = (cfg.base_url if cfg else None) or os.environ.get(

@@ -48,7 +48,7 @@ class ModelConfig:
 
     # Model identification
     provider_id: str | None = None  # Provider ID from models.dev (e.g., "openai", "anthropic")
-    model_id: str | None = None  # Model ID (e.g., "gpt-4o", "claude-3.5-sonnet")
+    model_id: str | None = None  # Model ID (e.g., "gpt-5.5", "claude-4.5-sonnet")
 
     # Custom settings (override database values)
     context_window: int | None = None  # Override context window size

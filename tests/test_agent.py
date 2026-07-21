@@ -489,11 +489,11 @@ class TestAgentContextBudget:
                     tools=[],
                     exclude_tools=[],
                     max_steps=20,
-                    model="gpt-4o",
+                    model="gpt-5.5",
                     base_url="",
                 )
                 agent = Agent(agent_spec=spec)
-                assert agent._resolve_model_name() == "gpt-4o"
+                assert agent._resolve_model_name() == "gpt-5.5"
 
     def test_resolve_model_name_fallback(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home:

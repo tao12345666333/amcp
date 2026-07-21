@@ -34,17 +34,17 @@ class TestCreateLLMClient:
     """Tests for create_llm_client factory."""
 
     def test_default_creates_openai_client(self):
-        cfg = ChatConfig(model="gpt-4o", api_key="test-key")
+        cfg = ChatConfig(model="gpt-5.5", api_key="test-key")
         client = create_llm_client(cfg)
         assert isinstance(client, OpenAIClient)
 
     def test_openai_type_creates_openai_client(self):
-        cfg = ChatConfig(api_type="openai", model="gpt-4o", api_key="test-key")
+        cfg = ChatConfig(api_type="openai", model="gpt-5.5", api_key="test-key")
         client = create_llm_client(cfg)
         assert isinstance(client, OpenAIClient)
 
     def test_openai_responses_type(self):
-        cfg = ChatConfig(api_type="openai_responses", model="gpt-4o", api_key="test-key")
+        cfg = ChatConfig(api_type="openai_responses", model="gpt-5.5", api_key="test-key")
         client = create_llm_client(cfg)
         assert isinstance(client, OpenAIResponsesClient)
 
@@ -69,11 +69,11 @@ class TestCreateLLMClient:
 
 class TestOpenAIClient:
     def test_client_creation(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
-        assert client.model == "gpt-4o"
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
+        assert client.model == "gpt-5.5"
 
     def test_chat_captures_provider_usage(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -99,7 +99,7 @@ class TestOpenAIClient:
         assert response.usage.cached_input_tokens == 40
 
     def test_chat_uses_reasoning_as_content_when_content_missing(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -120,7 +120,7 @@ class TestOpenAIClient:
         assert response.thinking is None
 
     def test_chat_keeps_reasoning_hidden_when_content_present(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -141,7 +141,7 @@ class TestOpenAIClient:
         assert response.thinking == "Hidden reasoning"
 
     def test_streaming_chat_uses_reasoning_as_content_when_content_missing(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: iter(
             [
                 SimpleNamespace(
@@ -184,7 +184,7 @@ class TestOpenAIClient:
         assert response.thinking is None
 
     def test_chat_raises_clear_error_when_choices_missing(self):
-        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: SimpleNamespace(
             choices=None,
             usage=None,
@@ -196,11 +196,11 @@ class TestOpenAIClient:
 
 class TestOpenAIResponsesClient:
     def test_client_creation(self):
-        client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
-        assert client.model == "gpt-4o"
+        client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
+        assert client.model == "gpt-5.5"
 
     def test_responses_captures_provider_usage(self):
-        client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-4o")
+        client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.responses = lambda **_kwargs: SimpleNamespace(
             output=[],
             stop_reason="stop",
@@ -252,7 +252,7 @@ class TestOpenAIResponsesClient:
 
     def test_responses_streams_and_forwards_options(self):
         client = OpenAIResponsesClient.__new__(OpenAIResponsesClient)
-        client.model = "gpt-4o"
+        client.model = "gpt-5.5"
         captured = {}
         completed = SimpleNamespace(output=[], status="completed", usage=None)
 

@@ -14,7 +14,7 @@ Key Features:
 - Configurable safety margins
 
 Built-in Fallback Models (when models.dev unavailable):
-- OpenAI: GPT-5.1 Codex (400K), GPT-5.2 (400K)
+- OpenAI: GPT-5.1 Codex (400K), GPT-5.2 (400K), GPT-5.5 (400K)
 - Anthropic: Claude 4.5 Sonnet (200K), Claude 4.5 Opus (200K)
 - Google: Gemini 3 Pro (1M)
 - ZAI/GLM: GLM-4.6 (204K), GLM-4.7 (204K)
@@ -24,10 +24,10 @@ Example:
     from amcp.compaction import SmartCompactor, get_model_context_window
 
     # Get context window for model
-    ctx_window = get_model_context_window("gpt-4-turbo")  # 128000
+    ctx_window = get_model_context_window("gpt-5.5")  # 400000
 
     # Create compactor
-    compactor = SmartCompactor(client, model="gpt-4-turbo")
+    compactor = SmartCompactor(client, model="gpt-5.5")
 
     # Check if compaction needed
     if compactor.should_compact(messages):
@@ -54,6 +54,7 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     # OpenAI
     "gpt-5.1-codex": 400_000,
     "gpt-5.2": 400_000,
+    "gpt-5.5": 400_000,
     # Anthropic
     "claude-4.5-sonnet": 200_000,
     "claude-4.5-opus": 200_000,
@@ -236,7 +237,7 @@ def get_model_context_window(
     if model in MODEL_CONTEXT_WINDOWS:
         return MODEL_CONTEXT_WINDOWS[model]
 
-    # Try partial matching (e.g., "gpt-4-turbo-2024-01-25" -> "gpt-4-turbo")
+    # Try partial matching (e.g., "gpt-5.5-2026-05-13" -> "gpt-5.5")
     # Sort by length (longest first) to prefer more specific matches
     model_lower = model.lower()
     sorted_models = sorted(MODEL_CONTEXT_WINDOWS.keys(), key=len, reverse=True)
@@ -245,12 +246,8 @@ def get_model_context_window(
             return MODEL_CONTEXT_WINDOWS[known_model]
 
     # Check for common patterns
-    if "gpt-4" in model_lower:
-        if "turbo" in model_lower or "4o" in model_lower:
-            return 128_000
-        if "32k" in model_lower:
-            return 32_768
-        return 8_192
+    if "gpt-5" in model_lower:
+        return 400_000
 
     if "claude" in model_lower:
         return 200_000
@@ -288,7 +285,7 @@ def estimate_tokens(messages: list[dict[str, Any]], use_tiktoken: bool = True) -
         try:
             import tiktoken
 
-            # Use cl100k_base encoding (GPT-4, Claude compatible)
+            # Use cl100k_base encoding (OpenAI/Claude compatible)
             enc = tiktoken.get_encoding("cl100k_base")
             total = 0
             for msg in messages:
@@ -383,7 +380,7 @@ class SmartCompactor:
     preventing overflow.
 
     Example:
-        compactor = SmartCompactor(client, model="gpt-4-turbo")
+        compactor = SmartCompactor(client, model="gpt-5.5")
 
         # Automatic threshold calculation
         print(f"Using threshold: {compactor.threshold_tokens} tokens")

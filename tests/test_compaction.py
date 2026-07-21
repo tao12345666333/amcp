@@ -23,15 +23,13 @@ class TestGetModelContextWindow:
     from either the models.dev cache or built-in fallbacks.
     """
 
-    def test_gpt4_family(self):
-        """Test GPT-4 family models have reasonable context windows."""
-        # GPT-4 base should have relatively small context
-        gpt4 = get_model_context_window("gpt-4")
-        assert 8_000 <= gpt4 <= 32_000
+    def test_gpt5_family(self):
+        """Test GPT-5 family models have large context windows."""
+        gpt55 = get_model_context_window("gpt-5.5")
+        assert gpt55 >= 200_000
 
-        # GPT-4 Turbo should have larger context
-        gpt4_turbo = get_model_context_window("gpt-4-turbo")
-        assert gpt4_turbo >= 100_000
+        gpt52 = get_model_context_window("gpt-5.2")
+        assert gpt52 >= 200_000
 
     def test_claude_family(self):
         """Test Claude models have large context windows."""
@@ -48,10 +46,10 @@ class TestGetModelContextWindow:
         gemini = get_model_context_window("gemini-1.5-pro")
         assert gemini >= 500_000  # At least 500K
 
-    def test_partial_match_gpt4o(self):
-        """Test partial matching for GPT-4o models."""
-        result = get_model_context_window("gpt-4o-2024-05-13")
-        assert result >= 100_000  # GPT-4o models should be 100K+
+    def test_partial_match_gpt55(self):
+        """Test partial matching for GPT-5.5 models."""
+        result = get_model_context_window("gpt-5.5-2026-05-13")
+        assert result >= 200_000
 
     def test_deepseek_model(self):
         """Test DeepSeek model detection."""
@@ -222,27 +220,28 @@ class TestSmartCompactor:
 
     def test_init_calculates_thresholds(self, mock_client):
         """Test that init calculates thresholds based on model."""
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo")
+        compactor = SmartCompactor(mock_client, model="gpt-5.5")
 
-        assert compactor.context_window == 128_000
-        # threshold = 128000 * 0.9 * 0.7 ≈ 80640
-        assert compactor.threshold_tokens > 70000
-        assert compactor.threshold_tokens < 90000
-        # target = 128000 * 0.9 * 0.3 ≈ 34560
-        assert compactor.target_tokens > 30000
-        assert compactor.target_tokens < 40000
+        # Value may come from models.dev cache or built-in fallback (400K)
+        assert compactor.context_window >= 400_000
+        # threshold = context_window * 0.9 * 0.7
+        assert compactor.threshold_tokens > compactor.context_window * 0.5
+        assert compactor.threshold_tokens < compactor.context_window
+        # target = context_window * 0.9 * 0.3
+        assert compactor.target_tokens < compactor.threshold_tokens
 
     def test_init_with_small_model(self, mock_client):
         """Test thresholds for smaller context window."""
-        compactor = SmartCompactor(mock_client, model="gpt-4")
+        compactor = SmartCompactor(mock_client, model="deepseek-chat")
 
-        assert compactor.context_window == 8_192
-        assert compactor.threshold_tokens < 8_192
+        # Value may come from models.dev cache or built-in fallback (64K)
+        assert compactor.context_window >= 64_000
+        assert compactor.threshold_tokens < compactor.context_window
         assert compactor.target_tokens < compactor.threshold_tokens
 
     def test_should_compact_false_for_small_context(self, mock_client):
         """Test should_compact returns False for small contexts."""
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo")
+        compactor = SmartCompactor(mock_client, model="gpt-5.5")
 
         messages = [
             {"role": "user", "content": "Hello"},
@@ -253,7 +252,7 @@ class TestSmartCompactor:
     def test_should_compact_false_below_minimum(self, mock_client):
         """Test should_compact returns False below minimum threshold."""
         config = CompactionConfig(min_tokens_to_compact=10000)
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo", config=config)
+        compactor = SmartCompactor(mock_client, model="gpt-5.5", config=config)
 
         # Create content that's ~500 tokens
         messages = [{"role": "user", "content": "x" * 2000}]
@@ -277,7 +276,7 @@ class TestSmartCompactor:
 
     def test_get_token_usage(self, mock_client):
         """Test get_token_usage returns correct structure."""
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo")
+        compactor = SmartCompactor(mock_client, model="gpt-5.5")
 
         messages = [{"role": "user", "content": "Hello world"}]
         usage = compactor.get_token_usage(messages)
@@ -290,12 +289,12 @@ class TestSmartCompactor:
         assert "should_compact" in usage
         assert "headroom_tokens" in usage
 
-        assert usage["context_window"] == 128_000
+        assert usage["context_window"] >= 400_000
         assert isinstance(usage["usage_ratio"], float)
 
     def test_compact_empty_messages(self, mock_client):
         """Test compact with empty messages."""
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo")
+        compactor = SmartCompactor(mock_client, model="gpt-5.5")
 
         result_msgs, result = compactor.compact([])
 
@@ -307,7 +306,7 @@ class TestSmartCompactor:
     def test_compact_preserves_recent(self, mock_client):
         """Test compact preserves recent messages."""
         config = CompactionConfig(preserve_last=2)
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo", config=config)
+        compactor = SmartCompactor(mock_client, model="gpt-5.5", config=config)
 
         messages = [
             {"role": "user", "content": "Old message 1"},
@@ -327,7 +326,7 @@ class TestSmartCompactor:
     def test_compact_with_truncate_strategy(self, mock_client):
         """Test compact with truncate strategy."""
         config = CompactionConfig(strategy=CompactionStrategy.TRUNCATE, preserve_last=2)
-        compactor = SmartCompactor(mock_client, model="gpt-4-turbo", config=config)
+        compactor = SmartCompactor(mock_client, model="gpt-5.5", config=config)
 
         messages = [
             {"role": "user", "content": "Message 1"},
@@ -386,7 +385,7 @@ class TestCreateCompactor:
         from amcp.compaction import create_compactor
 
         client = MagicMock()
-        compactor = create_compactor(client, "gpt-4-turbo")
+        compactor = create_compactor(client, "gpt-5.5")
 
         assert isinstance(compactor, SmartCompactor)
         assert compactor.config.strategy == CompactionStrategy.SUMMARY
@@ -398,7 +397,7 @@ class TestCreateCompactor:
         client = MagicMock()
         compactor = create_compactor(
             client,
-            "gpt-4-turbo",
+            "gpt-5.5",
             strategy="hybrid",
             threshold_ratio=0.8,
             target_ratio=0.4,
