@@ -1,21 +1,18 @@
-"""LLM client abstraction supporting OpenAI, OpenAI Responses, and Anthropic APIs."""
+"""Unified LLM client abstraction built on any-llm."""
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from .config import ChatConfig
 
 # Type aliases for commonly used complex types
 ToolCall = dict[str, Any]
 Message = dict[str, Any]
-
-AMCP_USER_AGENT = "AMCPAgent"
 
 
 def _extract_think_tags(content: str) -> tuple[str | None, str]:
@@ -67,6 +64,19 @@ def _split_response_content(
         return reasoning_content, content
 
     return thinking_from_content, content
+
+
+def _reasoning_content(value: Any) -> str | None:
+    """Read normalized any-llm reasoning, with legacy provider fallback."""
+    reasoning = _response_field(value, "reasoning")
+    if isinstance(reasoning, str):
+        return reasoning
+    if reasoning is not None:
+        content = _response_field(reasoning, "content")
+        if content:
+            return str(content)
+    legacy = _response_field(value, "reasoning_content")
+    return str(legacy) if legacy else None
 
 
 @dataclass
@@ -146,23 +156,6 @@ def _responses_usage(usage: Any) -> TokenUsage | None:
     )
 
 
-def _anthropic_usage(usage: Any) -> TokenUsage | None:
-    """Normalize Anthropic usage, including prompt-cache tokens."""
-    if usage is None:
-        return None
-    uncached_input = _usage_value(usage, "input_tokens")
-    cache_creation = _usage_value(usage, "cache_creation_input_tokens")
-    cache_read = _usage_value(usage, "cache_read_input_tokens")
-    output_tokens = _usage_value(usage, "output_tokens")
-    return TokenUsage(
-        input_tokens=uncached_input,
-        output_tokens=output_tokens,
-        total_tokens=uncached_input + cache_creation + cache_read + output_tokens,
-        cached_input_tokens=cache_read,
-        cache_write_input_tokens=cache_creation,
-    )
-
-
 class BaseLLMClient(ABC):
     """Base class for LLM clients."""
 
@@ -180,17 +173,20 @@ class BaseLLMClient(ABC):
         pass
 
 
-class OpenAIClient(BaseLLMClient):
-    """OpenAI Chat Completions API client."""
+class AnyLLMClient(BaseLLMClient):
+    """Completion client for any provider supported by any-llm."""
 
-    def __init__(self, base_url: str, api_key: str | None, model: str):
-        from openai import OpenAI
+    def __init__(
+        self,
+        provider: str,
+        base_url: str | None,
+        api_key: str | None,
+        model: str,
+    ):
+        from any_llm import AnyLLM
 
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key or "",
-            default_headers={"User-Agent": AMCP_USER_AGENT},
-        )
+        self.client = AnyLLM.create(provider, api_key=api_key, api_base=base_url)
+        self.provider = provider
         self.model = model
 
     def chat(
@@ -200,21 +196,22 @@ class OpenAIClient(BaseLLMClient):
         stream_callback: Any | None = None,
         **kwargs,
     ) -> LLMResponse:
-        params: dict[str, Any] = {"model": self.model, "messages": messages, "stream": bool(stream_callback), **kwargs}
+        model = kwargs.pop("model", self.model)
+        callback = stream_callback
+        stream = callback is not None
+        params: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "allow_running_loop": True,
+            **kwargs,
+        }
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
-            # When tools are present, we usually don't stream content to avoid complications,
-            # or we need to handle tool call streaming separately.
-            # For simplicity, if tools are present, we disable streaming unless specifically handled.
-            # However, user wants streaming prompt responses.
-            # OpenAI supports streaming tool calls, but it's complex.
-            # Let's support streaming content only if tools are NOT likely to be called immediately
-            # or accept that we might stream mixed content.
-            # For now, let's keep streaming enabled if requested, but handle tool chunks carefully.
-            # Note: The 'stream' param in params dict controls API behavior.
 
-        if stream_callback:
+        if stream:
+            assert callback is not None
             # Streaming mode
             accumulated_content = []
             accumulated_reasoning = []
@@ -222,40 +219,49 @@ class OpenAIClient(BaseLLMClient):
             finish_reason = None
             usage = None
 
-            response = self.client.chat.completions.create(**params)
+            response = self.client.completion(**params)
 
             for chunk in response:
-                if getattr(chunk, "usage", None) is not None:
-                    usage = _openai_chat_usage(chunk.usage)
+                chunk_usage = _response_field(chunk, "usage")
+                if chunk_usage is not None:
+                    usage = _openai_chat_usage(chunk_usage)
                 # Some APIs (e.g., DeepSeek) may return chunks with empty choices
-                if not chunk.choices:
+                choices = _response_field(chunk, "choices")
+                if not choices:
                     continue
-                delta = chunk.choices[0].delta
-                finish_reason = chunk.choices[0].finish_reason
+                delta = _response_field(choices[0], "delta")
+                finish_reason = _response_field(choices[0], "finish_reason")
 
                 # Handle content
-                if delta.content:
-                    stream_callback(delta.content)
-                    accumulated_content.append(delta.content)
+                delta_content = _response_field(delta, "content")
+                if delta_content:
+                    callback(delta_content)
+                    accumulated_content.append(delta_content)
 
                 # Handle thinking (if present in specific fields)
-                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                    accumulated_reasoning.append(delta.reasoning_content)
+                delta_reasoning = _reasoning_content(delta)
+                if delta_reasoning:
+                    accumulated_reasoning.append(delta_reasoning)
 
                 # Handle tool calls (accumulate them)
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
+                delta_tool_calls = _response_field(delta, "tool_calls")
+                if delta_tool_calls:
+                    for tc in delta_tool_calls:
+                        idx = _response_field(tc, "index", 0)
                         if idx not in tool_calls_chunks:
                             tool_calls_chunks[idx] = {"id": "", "name": "", "arguments": ""}
 
-                        if tc.id:
-                            tool_calls_chunks[idx]["id"] += tc.id
-                        if tc.function:
-                            if tc.function.name:
-                                tool_calls_chunks[idx]["name"] += tc.function.name
-                            if tc.function.arguments:
-                                tool_calls_chunks[idx]["arguments"] += tc.function.arguments
+                        tool_call_id = _response_field(tc, "id")
+                        if tool_call_id:
+                            tool_calls_chunks[idx]["id"] += tool_call_id
+                        function = _response_field(tc, "function")
+                        if function:
+                            name = _response_field(function, "name")
+                            arguments = _response_field(function, "arguments")
+                            if name:
+                                tool_calls_chunks[idx]["name"] += name
+                            if arguments:
+                                tool_calls_chunks[idx]["arguments"] += arguments
 
             # Reconstruct full response
             content = "".join(accumulated_content) if accumulated_content else None
@@ -268,7 +274,7 @@ class OpenAIClient(BaseLLMClient):
                     tool_calls.append({"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]})
 
             if reasoning_text and not content and not tool_calls:
-                stream_callback(reasoning_text)
+                callback(reasoning_text)
 
             thinking, content = _split_response_content(
                 content,
@@ -285,23 +291,28 @@ class OpenAIClient(BaseLLMClient):
             )
 
         else:
-            # Non-streaming mode (existing logic)
-            resp = self.client.chat.completions.create(**params)
+            resp = self.client.completion(**params)
             first_choice = _first_chat_choice(resp)
             msg = _response_field(first_choice, "message")
             if msg is None:
                 raise ValueError("Provider returned a chat completion choice without a message.")
 
             tool_calls = None
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
+            message_tool_calls = _response_field(msg, "tool_calls")
+            if message_tool_calls:
                 tool_calls = [
-                    {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments} for tc in msg.tool_calls
+                    {
+                        "id": _response_field(tc, "id"),
+                        "name": _response_field(_response_field(tc, "function"), "name"),
+                        "arguments": _response_field(_response_field(tc, "function"), "arguments", "{}"),
+                    }
+                    for tc in message_tool_calls
                 ]
 
             # Extract thinking content
             thinking, content = _split_response_content(
                 _response_field(msg, "content"),
-                _response_field(msg, "reasoning_content"),
+                _reasoning_content(msg),
                 allow_reasoning_as_content=tool_calls is None,
             )
 
@@ -310,21 +321,31 @@ class OpenAIClient(BaseLLMClient):
                 tool_calls=tool_calls,
                 stop_reason=_response_field(first_choice, "finish_reason"),
                 thinking=thinking,
-                usage=_openai_chat_usage(getattr(resp, "usage", None)),
+                usage=_openai_chat_usage(_response_field(resp, "usage")),
             )
 
 
-class OpenAIResponsesClient(BaseLLMClient):
-    """OpenAI Responses API client."""
+class OpenAIClient(AnyLLMClient):
+    """Backward-compatible OpenAI completion client."""
 
     def __init__(self, base_url: str, api_key: str | None, model: str):
-        from openai import OpenAI
+        super().__init__("openai", base_url, api_key, model)
 
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key or "",
-            default_headers={"User-Agent": AMCP_USER_AGENT},
-        )
+
+class AnthropicClient(AnyLLMClient):
+    """Backward-compatible Anthropic completion client."""
+
+    def __init__(self, api_key: str | None, model: str, base_url: str | None = None):
+        super().__init__("anthropic", base_url, api_key, model)
+
+
+class OpenAIResponsesClient(BaseLLMClient):
+    """OpenAI Responses API client backed by any-llm."""
+
+    def __init__(self, base_url: str, api_key: str | None, model: str):
+        from any_llm import AnyLLM
+
+        self.client = AnyLLM.create("openai", api_key=api_key, api_base=base_url)
         self.model = model
 
     def chat(
@@ -347,160 +368,142 @@ class OpenAIResponsesClient(BaseLLMClient):
                 for t in tools
             ]
 
-        params = {"model": self.model, "input": messages}
-        if resp_tools:
-            params["tools"] = resp_tools
+        model = kwargs.pop("model", self.model)
+        max_tokens = kwargs.pop("max_tokens", None)
+        params: dict[str, Any] = {
+            "model": model,
+            "input_data": cast(Any, self._convert_messages(messages)),
+            "tools": resp_tools,
+            "allow_running_loop": True,
+            **kwargs,
+        }
+        if max_tokens is not None:
+            params["max_output_tokens"] = max_tokens
 
-        resp = self.client.responses.create(**params)  # type: ignore[call-overload]
+        if stream_callback:
+            completed_response = None
+            for event in self.client.responses(stream=True, **params):
+                event_type = _response_field(event, "type")
+                if event_type == "response.output_text.delta":
+                    delta = _response_field(event, "delta")
+                    if delta:
+                        stream_callback(delta)
+                elif event_type == "response.completed":
+                    completed_response = _response_field(event, "response")
+            if completed_response is None:
+                raise ValueError("Provider response stream ended without a completed response.")
+            return self._parse_response(completed_response)
+
+        resp = self.client.responses(**params)
+        return self._parse_response(resp)
+
+    @staticmethod
+    def _convert_messages(messages: list[Message]) -> list[Message]:
+        """Convert AMCP Chat Completions history to Responses input items."""
+        converted: list[Message] = []
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                converted.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": message.get("tool_call_id"),
+                        "output": message.get("content", ""),
+                    }
+                )
+                continue
+
+            message_tool_calls = message.get("tool_calls")
+            if role == "assistant" and message_tool_calls:
+                if message.get("content"):
+                    converted.append({"role": "assistant", "content": message["content"]})
+                for tool_call in message_tool_calls:
+                    function = tool_call.get("function", {})
+                    converted.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tool_call.get("id"),
+                            "name": function.get("name"),
+                            "arguments": function.get("arguments", "{}"),
+                        }
+                    )
+                continue
+
+            converted.append({"role": role, "content": message.get("content", "")})
+        return converted
+
+    @staticmethod
+    def _parse_response(resp: Any) -> LLMResponse:
+        """Normalize an any-llm Responses result."""
 
         # Parse response
         content_parts = []
         tool_calls = []
 
-        for item in resp.output:
-            if item.type == "message":
-                for block in item.content:
-                    if block.type == "output_text":
-                        content_parts.append(block.text)
-            elif item.type == "function_call":
-                tool_calls.append({"id": item.call_id, "name": item.name, "arguments": item.arguments})
-
-        return LLMResponse(
-            content="\n".join(content_parts) if content_parts else None,
-            tool_calls=tool_calls if tool_calls else None,
-            stop_reason=resp.stop_reason,
-            usage=_responses_usage(getattr(resp, "usage", None)),
-        )
-
-
-class AnthropicClient(BaseLLMClient):
-    """Anthropic Claude API client."""
-
-    def __init__(self, api_key: str | None, model: str, base_url: str | None = None):
-        try:
-            from anthropic import Anthropic
-        except ImportError:
-            raise ImportError("anthropic package not installed. Run: pip install anthropic") from None
-
-        kwargs: dict[str, Any] = {"api_key": api_key or os.environ.get("ANTHROPIC_API_KEY", "")}
-        if base_url:
-            kwargs["base_url"] = base_url
-        self.client = Anthropic(**kwargs)  # type: ignore[arg-type]
-        self.model = model
-
-    def chat(
-        self,
-        messages: list[Message],
-        tools: list[Message] | None = None,
-        stream_callback: Any | None = None,
-        **kwargs,
-    ) -> LLMResponse:
-        # Convert OpenAI format to Anthropic format
-        system_prompt = None
-        anthropic_messages = []
-
-        for msg in messages:
-            role = msg["role"]
-            content = msg.get("content", "")
-
-            if role == "system":
-                system_prompt = content
-            elif role == "user":
-                anthropic_messages.append({"role": "user", "content": content})
-            elif role == "assistant":
-                if msg.get("tool_calls"):
-                    blocks = []
-                    if content:
-                        blocks.append({"type": "text", "text": content})
-                    for tc in msg["tool_calls"]:
-                        blocks.append(
-                            {
-                                "type": "tool_use",
-                                "id": tc["id"],
-                                "name": tc["function"]["name"],
-                                "input": json.loads(tc["function"]["arguments"] or "{}"),
-                            }
-                        )
-                    anthropic_messages.append({"role": "assistant", "content": blocks})
-                else:
-                    anthropic_messages.append({"role": "assistant", "content": content})
-            elif role == "tool":
-                anthropic_messages.append(
+        for item in _response_field(resp, "output", []):
+            if _response_field(item, "type") == "message":
+                for block in _response_field(item, "content", []):
+                    if _response_field(block, "type") == "output_text":
+                        content_parts.append(_response_field(block, "text", ""))
+            elif _response_field(item, "type") == "function_call":
+                tool_calls.append(
                     {
-                        "role": "user",
-                        "content": [
-                            {"type": "tool_result", "tool_use_id": msg.get("tool_call_id"), "content": content}
-                        ],
+                        "id": _response_field(item, "call_id"),
+                        "name": _response_field(item, "name"),
+                        "arguments": _response_field(item, "arguments", "{}"),
                     }
                 )
 
-        # Convert tools to Anthropic format
-        anthropic_tools = None
-        if tools:
-            anthropic_tools = [
-                {
-                    "name": t["function"]["name"],
-                    "description": t["function"].get("description", ""),
-                    "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}}),
-                }
-                for t in tools
-            ]
-
-        params = {"model": self.model, "messages": anthropic_messages, "max_tokens": kwargs.get("max_tokens", 4096)}
-        if system_prompt:
-            params["system"] = system_prompt
-        if anthropic_tools:
-            params["tools"] = anthropic_tools
-
-        resp = self.client.messages.create(**params)
-
-        content_parts = []
-        tool_calls = []
-        thinking_parts = []
-
-        for block in resp.content:
-            if block.type == "text":
-                content_parts.append(block.text)
-            elif block.type == "thinking":
-                # Anthropic extended thinking block
-                thinking_parts.append(getattr(block, "thinking", ""))
-            elif block.type == "tool_use":
-                tool_calls.append({"id": block.id, "name": block.name, "arguments": json.dumps(block.input)})
-
         return LLMResponse(
             content="\n".join(content_parts) if content_parts else None,
             tool_calls=tool_calls if tool_calls else None,
-            stop_reason=resp.stop_reason,
-            thinking="\n".join(thinking_parts) if thinking_parts else None,
-            usage=_anthropic_usage(getattr(resp, "usage", None)),
+            stop_reason=_response_field(resp, "stop_reason") or _response_field(resp, "status"),
+            usage=_responses_usage(_response_field(resp, "usage")),
         )
 
 
 def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
-    """Create appropriate LLM client based on config.
+    """Create an any-llm client based on config.
 
     api_type options:
-    - "openai" (default): OpenAI Chat Completions API
+    - Any any-llm provider ID, such as "openai", "anthropic", or "gmi"
     - "openai_responses": OpenAI Responses API
-    - "anthropic": Anthropic Claude API
     """
     api_type = (cfg.api_type if cfg else None) or os.environ.get("AMCP_API_TYPE", "openai")
     model = (cfg.model if cfg else None) or "gpt-4o"
 
-    if api_type == "anthropic":
-        api_key = (cfg.api_key if cfg else None) or os.environ.get("ANTHROPIC_API_KEY")
-        base_url = cfg.base_url if cfg else None
-        return AnthropicClient(api_key=api_key, model=model, base_url=base_url)
-    elif api_type == "openai_responses":
-        base_url = (cfg.base_url if cfg else None) or os.environ.get("AMCP_OPENAI_BASE", "https://api.openai.com/v1")
+    if api_type == "openai_responses":
+        responses_base_url = (cfg.base_url if cfg else None) or os.environ.get(
+            "AMCP_OPENAI_BASE", "https://api.openai.com/v1"
+        )
+        if not responses_base_url.endswith("/v1"):
+            responses_base_url = responses_base_url.rstrip("/") + "/v1"
+        api_key = (cfg.api_key if cfg else None) or os.environ.get("OPENAI_API_KEY")
+        return OpenAIResponsesClient(
+            base_url=responses_base_url,
+            api_key=api_key,
+            model=model,
+        )
+
+    base_url: str | None = cfg.base_url if cfg else None
+    if api_type == "openai":
+        base_url = base_url or os.environ.get("AMCP_OPENAI_BASE", "https://api.openai.com/v1")
         if not base_url.endswith("/v1"):
             base_url = base_url.rstrip("/") + "/v1"
-        api_key = (cfg.api_key if cfg else None) or os.environ.get("OPENAI_API_KEY")
-        return OpenAIResponsesClient(base_url=base_url, api_key=api_key, model=model)
-    else:
-        # Default: OpenAI Chat Completions
-        base_url = (cfg.base_url if cfg else None) or os.environ.get("AMCP_OPENAI_BASE", "https://api.openai.com/v1")
-        if not base_url.endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
-        api_key = (cfg.api_key if cfg else None) or os.environ.get("OPENAI_API_KEY")
+    api_key = cfg.api_key if cfg else None
+    if api_type == "openai":
+        api_key = api_key or os.environ.get("OPENAI_API_KEY")
+    elif api_type == "gmi":
+        api_key = api_key or os.environ.get("GMI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
+    if api_type == "openai":
+        assert base_url is not None
         return OpenAIClient(base_url=base_url, api_key=api_key, model=model)
+    if api_type == "anthropic":
+        return AnthropicClient(base_url=base_url, api_key=api_key, model=model)
+    return AnyLLMClient(
+        provider=api_type,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+    )

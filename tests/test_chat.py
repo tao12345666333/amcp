@@ -41,12 +41,16 @@ class TestResolveApiKey:
 
 class TestMakeClient:
     def test_creates_client(self):
-        with patch("builtins.__import__") as mock_import:
-            mock_openai = MagicMock()
-            mock_import.return_value = MagicMock(OpenAI=mock_openai)
-            _make_client("https://api.example.com/v1", "test-key")
-            mock_openai.assert_called_once_with(
+        with patch("amcp.chat.AnyLLMClient") as client_cls:
+            _make_client(
                 base_url="https://api.example.com/v1",
                 api_key="test-key",
-                default_headers={"User-Agent": "AMCPAgent"},
+                provider="gmi",
+                model="test-model",
+            )
+            client_cls.assert_called_once_with(
+                provider="gmi",
+                base_url="https://api.example.com/v1",
+                api_key="test-key",
+                model="test-model",
             )

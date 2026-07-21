@@ -65,7 +65,7 @@ class ChatProviderConfig:
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
-    api_type: str | None = None  # "openai" (default), "openai_responses", or "anthropic"
+    api_type: str | None = None  # any-llm provider ID, or "openai_responses"
     model_config: ModelConfig | None = None
 
 
@@ -74,7 +74,7 @@ class ChatConfig:
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
-    api_type: str | None = None  # "openai" (default) or "anthropic"
+    api_type: str | None = None  # any-llm provider ID, or "openai_responses"
 
     # Model configuration (from models.dev or custom)
     model_config: ModelConfig | None = None
@@ -227,7 +227,7 @@ _DEFAULT = {
             "gmi": {
                 "base_url": "https://api.gmi-serving.com/v1",
                 "model": "openai/gpt-5.5",
-                "api_type": "openai",
+                "api_type": "gmi",
                 "model_config": {
                     "provider_id": "gmi",
                     "model_id": "openai/gpt-5.5",
@@ -367,6 +367,15 @@ def _apply_active_provider(chat: ChatConfig) -> ChatConfig:
     chat.base_url = provider.base_url
     chat.model = provider.model
     chat.api_key = provider.api_key
+    if chat.api_key is None and provider.base_url:
+        chat.api_key = next(
+            (
+                candidate.api_key
+                for candidate in chat.providers.values()
+                if candidate.base_url == provider.base_url and candidate.api_key
+            ),
+            None,
+        )
     chat.api_type = provider.api_type
     chat.model_config = provider.model_config
     return chat

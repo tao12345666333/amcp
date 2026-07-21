@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,6 @@ from rich.status import Status
 from rich.text import Text
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
-from .chat import _make_client, _resolve_api_key, _resolve_base_url
 from .compaction import (
     CompactionConfig,
     SmartCompactor,
@@ -26,7 +26,7 @@ from .compaction import (
     estimate_tokens,
     get_model_context_window,
 )
-from .config import AMCPConfig, ContextConfig, ModelConfig, load_config
+from .config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig, load_config
 from .hooks import (
     HookDecision,
     run_post_tool_use_hooks,
@@ -767,10 +767,15 @@ class Agent:
 
                 # Apply compaction if context is too large
                 cfg = load_config()
-                base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
-                api_key = _resolve_api_key(None, cfg.chat)
-                client = _make_client(base_url, api_key)
                 model = self._resolve_model_name(cfg)
+                compaction_chat = replace(cfg.chat) if cfg.chat else ChatConfig()
+                compaction_chat.model = model
+                if self.agent_spec.base_url:
+                    compaction_chat.base_url = self.agent_spec.base_url
+
+                from .llm import create_llm_client
+
+                client = create_llm_client(compaction_chat)
                 compactor = SmartCompactor(
                     client,
                     model,
@@ -878,10 +883,15 @@ class Agent:
         """
         try:
             cfg = load_config()
-            base_url = _resolve_base_url(self.agent_spec.base_url or None, cfg.chat)
-            api_key = _resolve_api_key(None, cfg.chat)
-            client = _make_client(base_url, api_key)
             model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+            memory_chat = replace(cfg.chat) if cfg.chat else ChatConfig()
+            memory_chat.model = model
+            if self.agent_spec.base_url:
+                memory_chat.base_url = self.agent_spec.base_url
+
+            from .llm import create_llm_client
+
+            client = create_llm_client(memory_chat)
 
             # Build memory-only tool list from the global registry
             from .tools import get_tool_registry
