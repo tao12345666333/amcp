@@ -1113,7 +1113,11 @@ Example for fixing a bug:
 +    return a - b
 *** End Patch"""
 
-    def execute(self, patch: str) -> ToolResult:  # type: ignore[override]
+    def execute(
+        self,
+        patch: str,
+        _workspace_root: Path | None = None,
+    ) -> ToolResult:  # type: ignore[override]
         """Execute the apply patch tool.
 
         Args:
@@ -1124,7 +1128,7 @@ Example for fixing a bug:
         from .apply_patch import PatchApplyError, PatchParseError, apply_patch_text
 
         try:
-            changes = apply_patch_text(patch, Path.cwd())
+            changes = apply_patch_text(patch, (_workspace_root or Path.cwd()).resolve())
 
             if not changes:
                 return ToolResult(

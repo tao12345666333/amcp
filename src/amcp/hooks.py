@@ -86,9 +86,6 @@ class HookDecision(Enum):
     DENY = "deny"
     """Deny the tool execution."""
 
-    ASK = "ask"
-    """Ask the user for confirmation."""
-
     CONTINUE = "continue"
     """Continue with normal processing (default)."""
 
@@ -240,8 +237,21 @@ class HookOutput:
 
             if hook_event == "PreToolUse":
                 decision_str = hook_output.get("permissionDecision", "continue")
-                self.decision = HookDecision(decision_str.lower())
                 self.decision_reason = hook_output.get("permissionDecisionReason")
+                normalized_decision = str(decision_str).lower()
+                if normalized_decision == "ask":
+                    self.decision = HookDecision.DENY
+                    self.decision_reason = (
+                        self.decision_reason or "Hook approval requests are unsupported; the tool was denied"
+                    )
+                else:
+                    try:
+                        self.decision = HookDecision(normalized_decision)
+                    except ValueError:
+                        self.decision = HookDecision.DENY
+                        self.decision_reason = (
+                            self.decision_reason or f"Unknown hook permission decision: {decision_str}"
+                        )
                 if "updatedInput" in hook_output:
                     self.updated_input = hook_output["updatedInput"]
 

@@ -94,7 +94,7 @@ class TestAgentSpec:
             system_prompt="Test",
         )
         assert spec.description == ""
-        assert spec.tools == []
+        assert spec.tools is None
         assert spec.exclude_tools == []
         assert spec.max_steps == 20
         assert spec.model == ""

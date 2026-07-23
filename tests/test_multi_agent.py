@@ -64,7 +64,7 @@ class TestAgentConfig:
             description="Test",
             system_prompt="Test prompt",
         )
-        assert config.tools == []
+        assert config.tools is None
         assert config.excluded_tools == []
         assert config.max_steps == 100
         assert config.parent_agent is None
@@ -89,7 +89,7 @@ class TestAgentConfig:
             mode=AgentMode.PRIMARY,
             description="Test",
             system_prompt="Test",
-            tools=[],  # Empty means all
+            tools=None,
             excluded_tools=["bash", "write_file"],
         )
         available = ["read_file", "grep", "bash", "write_file"]
@@ -124,7 +124,7 @@ class TestBuiltinAgents:
         assert coder.mode == AgentMode.PRIMARY
         assert coder.can_delegate is True
         assert coder.max_steps == 300
-        assert coder.tools == []  # All tools available
+        assert coder.tools is None
 
     def test_explorer_agent(self):
         """Test explorer agent configuration."""

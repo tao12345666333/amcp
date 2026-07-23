@@ -334,7 +334,11 @@ class PatchApplier:
         while clean_path.startswith("./"):
             clean_path = clean_path[2:]
 
-        return self.base_dir / clean_path
+        resolved = (self.base_dir / clean_path).resolve()
+        base_dir = self.base_dir.resolve()
+        if not resolved.is_relative_to(base_dir):
+            raise PatchApplyError(f"Path escapes workspace: {path}")
+        return resolved
 
     def _apply_add_file(self, op: FileOperation) -> None:
         """Apply an Add File operation."""

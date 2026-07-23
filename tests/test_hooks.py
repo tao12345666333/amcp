@@ -150,6 +150,19 @@ class TestHookOutput:
         assert output.decision == HookDecision.DENY
         assert output.decision_reason == "File is in blocklist"
 
+    def test_legacy_ask_decision_is_denied(self):
+        json_output = json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                }
+            }
+        )
+        output = HookOutput.from_exit_code(0, json_output, "")
+        assert output.decision == HookDecision.DENY
+        assert "unsupported" in output.decision_reason
+
 
 class TestHooksManager:
     """Tests for HooksManager."""

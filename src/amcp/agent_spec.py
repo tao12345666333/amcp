@@ -27,7 +27,10 @@ class AgentSpec(BaseModel):
     system_prompt: str = Field(description="System prompt for the agent")
     system_prompt_template: str = Field(default="", description="System prompt template with variables")
     system_prompt_vars: dict[str, str] = Field(default_factory=dict, description="Variables for system prompt template")
-    tools: list[str] = Field(default_factory=list, description="Available tools")
+    tools: list[str] | None = Field(
+        default=None,
+        description="Available tools; omitted inherits defaults and an empty list denies all tools",
+    )
     exclude_tools: list[str] = Field(default_factory=list, description="Tools to exclude")
     max_steps: int = Field(default=20, description="Maximum tool execution steps")
     model: str = Field(default="", description="Preferred model name")
@@ -46,7 +49,7 @@ class ResolvedAgentSpec:
     description: str
     mode: AgentMode
     system_prompt: str
-    tools: list[str]
+    tools: list[str] | None
     exclude_tools: list[str]
     max_steps: int
     model: str
@@ -109,7 +112,7 @@ def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
         description=spec.description,
         mode=mode,
         system_prompt=system_prompt,
-        tools=spec.tools or [],
+        tools=spec.tools,
         exclude_tools=spec.exclude_tools or [],
         max_steps=spec.max_steps,
         model=spec.model or default_model,
@@ -157,7 +160,7 @@ def get_default_agent_spec(
         description="Default AMCP agent with template-based prompts",
         mode=AgentMode.PRIMARY,
         system_prompt=system_prompt,
-        tools=[],
+        tools=None,
         exclude_tools=[],
         max_steps=1000,
         model="",
@@ -212,7 +215,7 @@ def get_subagent_spec(
         description=f"AMCP {template_name} subagent",
         mode=AgentMode.SUBAGENT,
         system_prompt=system_prompt,
-        tools=available_tools or [],
+        tools=available_tools,
         exclude_tools=[],
         max_steps=50,
         model="",

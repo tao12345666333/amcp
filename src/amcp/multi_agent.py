@@ -53,7 +53,7 @@ class AgentConfig:
     mode: AgentMode
     description: str
     system_prompt: str
-    tools: list[str] = field(default_factory=list)
+    tools: list[str] | None = None
     excluded_tools: list[str] = field(default_factory=list)
     max_steps: int = 100
     can_delegate: bool = True
@@ -75,7 +75,11 @@ class AgentConfig:
             List of tool names this agent can use
         """
         # Use explicit whitelist or all available tools
-        effective = [t for t in self.tools if t in available_tools] if self.tools else list(available_tools)
+        effective = (
+            list(available_tools) if self.tools is None else [tool for tool in self.tools if tool in available_tools]
+        )
+        if not self.can_delegate:
+            effective = [tool for tool in effective if tool != "task"]
 
         # Apply exclusions
         return [t for t in effective if t not in self.excluded_tools]
@@ -146,7 +150,7 @@ BUILTIN_AGENTS: dict[str, AgentConfig] = {
         mode=AgentMode.PRIMARY,
         description="Main coding agent with full capabilities",
         system_prompt=PRIMARY_SYSTEM_PROMPT,
-        tools=[],  # Empty means all available tools
+        tools=None,
         excluded_tools=[],
         max_steps=300,
         can_delegate=True,
@@ -291,7 +295,7 @@ class AgentRegistry:
                     mode=mode,
                     description=agent_data.get("description", ""),
                     system_prompt=agent_data.get("system_prompt", PRIMARY_SYSTEM_PROMPT),
-                    tools=agent_data.get("tools", []),
+                    tools=agent_data.get("tools"),
                     excluded_tools=agent_data.get("excluded_tools", []),
                     max_steps=agent_data.get("max_steps", 100),
                     can_delegate=agent_data.get("can_delegate", mode == AgentMode.PRIMARY),
@@ -370,7 +374,7 @@ Task: {task_description}
         mode=AgentMode.SUBAGENT,
         description=task_description,
         system_prompt=system_prompt,
-        tools=tools or ["read_file", "grep", "write_file", "apply_patch", "think"],
+        tools=tools if tools is not None else ["read_file", "grep", "write_file", "apply_patch", "think"],
         excluded_tools=[],
         max_steps=50,
         can_delegate=False,
