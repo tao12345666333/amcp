@@ -15,6 +15,7 @@ Two-layer memory strategy:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -120,7 +121,11 @@ async def run_memory_review(
 
     try:
         for _ in range(5):
-            resp = client.chat(messages=messages, tools=tools)
+            async_chat = getattr(client, "achat", None)
+            if callable(async_chat):
+                resp = await async_chat(messages=messages, tools=tools)
+            else:
+                resp = await asyncio.to_thread(client.chat, messages=messages, tools=tools)
 
             if not resp.tool_calls:
                 return resp.content or ""

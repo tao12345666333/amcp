@@ -63,10 +63,10 @@ class ManagedSession:
         self.status = SessionStatus.IDLE
         self.message_count = 0
         self.token_usage = TokenUsage()
-        self._lock = asyncio.Lock()
 
     def to_session(self) -> Session:
         """Convert to Session model."""
+        self.status = SessionStatus(self.agent.get_queue_status()["status"])
         return Session(
             id=self.id,
             created_at=self.created_at,
@@ -255,8 +255,38 @@ class SessionManager:
             if session_id not in self._sessions:
                 raise SessionNotFoundError(session_id)
 
-            del self._sessions[session_id]
+            session = self._sessions.pop(session_id)
+            await session.agent.close()
             self._emit_event("session.deleted", {"session_id": session_id})
+
+    async def submit_prompt(
+        self,
+        session_id: str,
+        content: str,
+        work_dir: Path | None = None,
+        stream: bool = True,
+        priority: str = "normal",
+        *,
+        reject_if_busy: bool = False,
+    ):
+        """Submit a prompt through the session's sole runtime owner."""
+        session = await self.get_session(session_id)
+        from ..message_queue import MessagePriority as QueuePriority
+
+        priority_map = {
+            "low": QueuePriority.LOW,
+            "normal": QueuePriority.NORMAL,
+            "high": QueuePriority.HIGH,
+            "urgent": QueuePriority.URGENT,
+        }
+        return await session.agent.submit(
+            content,
+            work_dir=work_dir or Path(session.cwd),
+            stream=stream,
+            show_progress=False,
+            priority=priority_map.get(priority, QueuePriority.NORMAL),
+            reject_if_busy=reject_if_busy,
+        )
 
     async def prompt_session(
         self,
@@ -282,59 +312,37 @@ class SessionManager:
             SessionNotFoundError: If session is not found.
         """
         session = await self.get_session(session_id)
-
-        async with session._lock:
-            # Update status
-            session.update_status(SessionStatus.BUSY)
+        handle = await self.submit_prompt(
+            session_id,
+            content,
+            work_dir=work_dir,
+            stream=stream,
+            priority=priority,
+        )
+        session.update_status(SessionStatus.BUSY)
+        self._emit_event(
+            "session.status_changed",
+            {"session_id": session_id, "status": SessionStatus.BUSY.value},
+        )
+        try:
+            yield await handle.wait()
+            session.message_count += 1
+            session.update_status(SessionStatus.IDLE)
+        except asyncio.CancelledError:
+            session.update_status(SessionStatus.CANCELLED)
+            raise
+        except Exception as e:
+            session.update_status(SessionStatus.ERROR)
+            self._emit_event(
+                "session.error",
+                {"session_id": session_id, "error": str(e)},
+            )
+            raise
+        finally:
             self._emit_event(
                 "session.status_changed",
-                {"session_id": session_id, "status": SessionStatus.BUSY.value},
+                {"session_id": session_id, "status": session.status.value},
             )
-
-            try:
-                # Resolve work directory
-                effective_work_dir = work_dir or Path(session.cwd)
-
-                # Map priority string to enum
-                from ..message_queue import MessagePriority as MQPriority
-
-                priority_map = {
-                    "low": MQPriority.LOW,
-                    "normal": MQPriority.NORMAL,
-                    "high": MQPriority.HIGH,
-                    "urgent": MQPriority.URGENT,
-                }
-                mq_priority = priority_map.get(priority, MQPriority.NORMAL)
-
-                # Run the agent
-                # Note: Agent.run returns a string, not an async generator.
-                # For streaming support, the agent emits 'message.chunk' events via callbacks
-                # which are captured and forwarded by the EventBridge.
-                result = await session.agent.run(
-                    user_input=content,
-                    work_dir=effective_work_dir,
-                    stream=stream,
-                    show_progress=False,  # Server doesn't show progress
-                    priority=mq_priority,
-                )
-                yield result
-
-                session.message_count += 1
-                session.update_status(SessionStatus.IDLE)
-
-            except Exception as e:
-                session.update_status(SessionStatus.ERROR)
-                self._emit_event(
-                    "session.error",
-                    {"session_id": session_id, "error": str(e)},
-                )
-                raise
-
-            finally:
-                self._emit_event(
-                    "session.status_changed",
-                    {"session_id": session_id, "status": session.status.value},
-                )
 
     async def cancel_session(self, session_id: str, force: bool = False) -> None:
         """Cancel the current operation in a session.
@@ -347,8 +355,8 @@ class SessionManager:
             SessionNotFoundError: If session is not found.
         """
         session = await self.get_session(session_id)
+        await session.agent.cancel(clear_queue=force)
         session.update_status(SessionStatus.CANCELLED)
-        await session.agent.clear_queue()
 
         self._emit_event(
             "session.cancelled",
@@ -466,9 +474,10 @@ class SessionManager:
                 system_prompt=agent_config.system_prompt,
                 max_steps=agent_config.max_steps,
                 tools=agent_config.tools,
-                exclude_tools=[],
+                exclude_tools=agent_config.excluded_tools,
                 model="",
                 base_url="",
+                can_delegate=agent_config.can_delegate,
             )
 
         # Fall back to default

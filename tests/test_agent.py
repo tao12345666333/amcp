@@ -15,6 +15,8 @@ from amcp.hooks import HookOutput
 from amcp.llm import LLMResponse, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
+from amcp.session_store import SessionLoadError
+from amcp.tools import create_default_tool_registry
 
 
 class TestAgentInit:
@@ -71,16 +73,16 @@ class TestAgentInit:
                 assert agent.total_llm_calls == 1
 
     def test_load_history_handles_corrupted_file(self, tmp_path):
-        session_file = tmp_path / "test-session.json"
+        session_file = tmp_path / ".config" / "amcp" / "sessions" / "test-session.json"
+        session_file.parent.mkdir(parents=True)
         session_file.write_text("not json")
 
         with patch("amcp.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
             with patch("amcp.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
-                agent = Agent(session_id="test-session")
-                assert agent.conversation_history == []
-                assert agent.total_llm_calls == 0
+                with pytest.raises(SessionLoadError, match="Could not load session"):
+                    Agent(session_id="test-session")
 
 
 class TestAgentToolLimits:
@@ -188,7 +190,7 @@ class TestAgentToolLimits:
 
                 tool_messages = [m for m in messages if m.get("role") == "tool"]
                 assert tool_messages
-                assert str(tmp_path) in tool_messages[-1]["content"]
+                assert str(tmp_path.resolve()) in tool_messages[-1]["content"]
                 return SimpleNamespace(content="done", tool_calls=None)
 
         with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
@@ -199,7 +201,7 @@ class TestAgentToolLimits:
         result = await agent._enhanced_chat_with_tools(
             llm_client=FakeLLM(),
             messages=[{"role": "user", "content": "pwd"}],
-            tools=[],
+            tools=[create_default_tool_registry(enable_task=False).get_tool("bash").get_spec()],
             tool_registry={},
             stream=False,
             status=MagicMock(),
@@ -642,3 +644,27 @@ def test_process_message_wraps_markup_like_exceptions(tmp_path):
                 await agent._process_message("search e2b persistence", tmp_path, stream=False, show_progress=False)
 
     asyncio.run(_run())
+
+
+@pytest.mark.asyncio
+async def test_process_message_preserves_max_steps_exception(tmp_path):
+    cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+    with patch("amcp.agent.Path.home", return_value=tmp_path), patch("amcp.agent.load_config", return_value=cfg):
+        agent = Agent(session_id="max-steps")
+    prompt_hook_output = SimpleNamespace(
+        continue_execution=True,
+        feedback=None,
+        stop_reason=None,
+    )
+    status = SimpleNamespace(update=lambda *args, **kwargs: None)
+    with (
+        patch("amcp.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
+        patch.object(agent, "_create_progress_context") as progress,
+        patch.object(agent, "_get_system_prompt", return_value="system"),
+        patch.object(agent, "_build_tools_and_registry", return_value=([], {})),
+        patch.object(agent, "_run_with_tools", side_effect=MaxStepsReached(1)),
+    ):
+        progress.return_value.__enter__.return_value = status
+        progress.return_value.__exit__.return_value = False
+        with pytest.raises(MaxStepsReached):
+            await agent._process_message("test", tmp_path, stream=False, show_progress=False)

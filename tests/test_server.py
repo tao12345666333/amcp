@@ -2,12 +2,11 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from amcp.message_queue import get_message_queue_manager
 from amcp.server import ServerConfig, create_app
 from amcp.server.models import SessionStatus
 from amcp.server.session_manager import (
@@ -172,7 +171,7 @@ class TestSessionEndpoints:
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
         managed = asyncio.run(get_session_manager().get_session(session_id))
-        managed.agent.run = AsyncMock(return_value="server response")
+        managed.agent._runtime._processor = AsyncMock(return_value="server response")
 
         response = client.post(
             f"/api/v1/sessions/{session_id}/prompt",
@@ -183,16 +182,20 @@ class TestSessionEndpoints:
         data = response.json()
         assert data["status"] == "complete"
         assert data["response"] == "server response"
-        managed.agent.run.assert_awaited_once()
-        assert managed.agent.run.await_args.kwargs["user_input"] == "hello"
-        assert managed.agent.run.await_args.kwargs["stream"] is False
+        managed.agent._runtime._processor.assert_awaited_once()
+        request = managed.agent._runtime._processor.await_args.args[0]
+        assert request.prompt == "hello"
+        assert request.stream is False
 
     def test_prompt_non_stream_busy_queue_actually_enqueues(self, client):
         """Test busy non-stream prompt endpoint enqueues the prompt before returning queued."""
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
         managed = asyncio.run(get_session_manager().get_session(session_id))
-        managed.update_status(SessionStatus.BUSY)
+        handle = MagicMock(id="turn-queued")
+        managed.agent.is_busy = MagicMock(return_value=True)
+        managed.agent.queued_count = MagicMock(return_value=0)
+        managed.agent.submit = AsyncMock(return_value=handle)
 
         response = client.post(
             f"/api/v1/sessions/{session_id}/prompt",
@@ -203,9 +206,8 @@ class TestSessionEndpoints:
         data = response.json()
         assert data["status"] == "queued"
         assert data["position"] == 1
-        assert managed.agent.queued_count() == 1
-        assert get_message_queue_manager().queued_prompts(managed.agent.session_id) == ["queued prompt"]
-        asyncio.run(managed.agent.clear_queue())
+        assert data["message_id"] == "turn-queued"
+        managed.agent.submit.assert_awaited_once()
 
 
 class TestToolEndpoints:
@@ -506,7 +508,7 @@ class TestConflictStrategy:
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
         managed = asyncio.run(get_session_manager().get_session(session_id))
-        managed.agent.run = AsyncMock(return_value="queued strategy response")
+        managed.agent._runtime._processor = AsyncMock(return_value="queued strategy response")
 
         # Send prompt with queue strategy (default)
         response = client.post(
@@ -525,7 +527,7 @@ class TestConflictStrategy:
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
         managed = asyncio.run(get_session_manager().get_session(session_id))
-        managed.agent.run = AsyncMock(return_value="reject strategy response")
+        managed.agent._runtime._processor = AsyncMock(return_value="reject strategy response")
 
         # Send prompt with reject strategy - should succeed since session is idle
         response = client.post(

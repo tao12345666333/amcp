@@ -12,6 +12,7 @@ This module implements a full ACP-compliant agent with support for:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from datetime import datetime
@@ -61,6 +62,14 @@ from .llm import create_llm_client
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .memory import get_memory_manager
 from .memory_review import MEMORY_GUIDANCE
+from .runtime import SessionRuntime, TurnRequest
+from .session_store import SessionLoadError, SessionSaveError, SessionStore
+from .tool_execution import (
+    ToolCapability,
+    ToolExecutionContext,
+    ToolExecutor,
+    normalize_tool_calls,
+)
 from .tools import ToolResult, get_tool_registry
 
 # Session modes - single full permission mode
@@ -96,6 +105,7 @@ class ACPSession:
         self.created_at = datetime.now().isoformat()
         self.current_mode_id = "full"
         self.plan_entries: list[dict[str, Any]] = []
+        self.runtime: SessionRuntime | None = None
 
     def add_user_message(self, content: str) -> None:
         self.conversation_history.append({"role": "user", "content": content})
@@ -161,7 +171,9 @@ class AMCPAgent(Agent):
     ) -> NewSessionResponse:
         """Create a new conversation session."""
         session_id = uuid4().hex
-        self._sessions[session_id] = ACPSession(session_id, cwd)
+        session = ACPSession(session_id, cwd)
+        self._attach_runtime(session)
+        self._sessions[session_id] = session
 
         # Send available commands after session creation
         if self._conn:
@@ -197,21 +209,25 @@ class AMCPAgent(Agent):
     ) -> LoadSessionResponse | None:
         """Load an existing session."""
         if session_id not in self._sessions:
-            session_file = Path.home() / ".config" / "amcp" / "acp_sessions" / f"{session_id}.json"
-            if session_file.exists():
+            store = SessionStore(Path.home() / ".config" / "amcp" / "acp_sessions", session_id)
+            if store.path.exists():
                 try:
-                    data = json.loads(session_file.read_text(encoding="utf-8"))
+                    data = store.load()
+                    assert data is not None
                     session = ACPSession(session_id, cwd)
                     session.conversation_history = data.get("conversation_history", [])
                     session.tool_calls_history = data.get("tool_calls_history", [])
                     session.current_mode_id = data.get("current_mode_id", "full")
+                    self._attach_runtime(session)
                     self._sessions[session_id] = session
-                except Exception:
+                except SessionLoadError:
                     return None
             else:
                 return None
 
         session = self._sessions[session_id]
+        if session.runtime is None:
+            self._attach_runtime(session)
         session.cwd = cwd
 
         # Replay conversation history
@@ -261,12 +277,15 @@ class AMCPAgent(Agent):
         if user_text.startswith("/"):
             return await self._handle_slash_command(session, user_text)
 
-        session.add_user_message(user_text)
-
         try:
-            response = await self._process_prompt(session, user_text)
-            session.add_assistant_message(response)
-            self._save_session(session)
+            assert session.runtime is not None
+            handle = await session.runtime.submit(
+                user_text,
+                work_dir=Path(session.cwd),
+                stream=False,
+                show_progress=False,
+            )
+            await handle.wait()
             return PromptResponse(stop_reason="end_turn")
         except asyncio.CancelledError:
             return PromptResponse(stop_reason="cancelled")
@@ -405,6 +424,26 @@ class AMCPAgent(Agent):
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Cancel ongoing operations for a session."""
         self._cancelled_sessions.add(session_id)
+        session = self._sessions.get(session_id)
+        if session and session.runtime:
+            await session.runtime.cancel_active()
+
+    def _attach_runtime(self, session: ACPSession) -> None:
+        """Attach the shared session runtime contract to an ACP session."""
+
+        async def process(request: TurnRequest) -> str:
+            session.add_user_message(request.prompt)
+            try:
+                response = await self._process_prompt(session, request.prompt)
+            except BaseException:
+                if session.conversation_history[-1:] == [{"role": "user", "content": request.prompt}]:
+                    session.conversation_history.pop()
+                raise
+            session.add_assistant_message(response)
+            self._save_session(session)
+            return response
+
+        session.runtime = SessionRuntime(session.session_id, process)
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
         """Handle authentication (not required for AMCP)."""
@@ -481,13 +520,38 @@ class AMCPAgent(Agent):
 
         tools = await self._build_tools(session)
         tool_registry = await self._build_tool_registry()
+        exposed_tools = {name for tool in tools if (name := tool.get("function", {}).get("name"))}
+        executor = ToolExecutor(
+            context=ToolExecutionContext(
+                session_id=session.session_id,
+                workspace_root=Path(session.cwd),
+                turn_id=session.runtime.active_turn.id if session.runtime and session.runtime.active_turn else "acp",
+            ),
+            capability=ToolCapability.from_spec(
+                self.agent_spec.tools,
+                self.agent_spec.exclude_tools,
+                self.agent_spec.can_delegate,
+            ),
+            exposed_tools=exposed_tools,
+            registry=get_tool_registry(),
+            mcp_registry=tool_registry,
+            config=cfg,
+        )
 
         max_steps = self.agent_spec.max_steps
         for _step in range(max_steps):
             if session.session_id in self._cancelled_sessions:
                 raise asyncio.CancelledError()
 
-            resp = llm_client.chat(messages=messages, tools=tools if tools else None)
+            async_chat = getattr(llm_client, "achat", None)
+            if callable(async_chat):
+                resp = await async_chat(messages=messages, tools=tools if tools else None)
+            else:
+                resp = await asyncio.to_thread(
+                    llm_client.chat,
+                    messages=messages,
+                    tools=tools if tools else None,
+                )
 
             # Send thinking content if available
             if resp.thinking and self._conn:
@@ -505,12 +569,28 @@ class AMCPAgent(Agent):
                     )
                 return final_text
 
-            for tc in resp.tool_calls:
-                tool_name = tc["name"]
-                args = json.loads(tc["arguments"] or "{}")
-                tool_call_id = f"call_{uuid4().hex[:8]}"
-
-                # Full permission mode - no permission request needed
+            tool_calls = normalize_tool_calls(resp.tool_calls)
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content or "",
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": call.raw_arguments,
+                            },
+                        }
+                        for call in tool_calls
+                    ],
+                }
+            )
+            for call in tool_calls:
+                tool_name = call.name
+                tool_call_id = call.id
+                args = call.arguments or {}
 
                 if self._conn:
                     await self._conn.session_update(
@@ -522,33 +602,33 @@ class AMCPAgent(Agent):
                         ),
                     )
 
-                result = await self._execute_tool(tool_name, args, tool_registry, cfg, session)
-                session.add_tool_call(tool_name, args, result)
+                if call.argument_error:
+                    result = f"Tool argument error: {call.argument_error}"
+                    success = False
+                else:
+                    tool_result = await executor.execute(tool_name, args)
+                    success = tool_result.success
+                    result = tool_result.content if tool_result.success else f"Error: {tool_result.error}"
+                    session.add_tool_call(tool_name, args, result)
 
                 if self._conn:
                     await self._conn.session_update(
                         session_id=session.session_id,
                         update=update_tool_call(
                             tool_call_id=tool_call_id,
-                            status="completed",
+                            status="completed" if success else "failed",
                             content=[{"type": "content", "content": text_block(result[:2000])}],  # type: ignore[list-item]
                         ),
                     )
 
                 messages.append(
                     {
-                        "role": "assistant",
-                        "content": resp.content or "",
-                        "tool_calls": [
-                            {
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {"name": tool_name, "arguments": tc["arguments"] or "{}"},
-                            }
-                        ],  # type: ignore[dict-item]
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": tool_name,
+                        "content": result[:8000],
                     }
                 )
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "name": tool_name, "content": result[:8000]})
 
         return "Maximum steps reached. Please try a simpler request."
 
@@ -609,15 +689,17 @@ class AMCPAgent(Agent):
         return "\n\n".join(parts)
 
     async def _build_tools(self, session: ACPSession) -> list[dict[str, Any]]:
-        """Build list of available tools (full access - no restrictions)."""
+        """Build tools from the same capability used for execution."""
         tools = []
-
-        # Full permission mode - no tool restrictions
-        allowed = None
+        capability = ToolCapability.from_spec(
+            self.agent_spec.tools,
+            self.agent_spec.exclude_tools,
+            self.agent_spec.can_delegate,
+        )
 
         registry = get_tool_registry()
         for tool_name in registry.list_tools():
-            if allowed and tool_name not in allowed:
+            if not capability.allows(tool_name):
                 continue
             tool = registry.get_tool(tool_name)
             if tool and hasattr(tool, "get_spec"):
@@ -640,6 +722,8 @@ class AMCPAgent(Agent):
                 for info in info_list:
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
+                    if not capability.allows(oname):
+                        continue
                     params = info.get("inputSchema") or {"type": "object"}
                     tools.append(
                         {
@@ -763,21 +847,19 @@ class AMCPAgent(Agent):
 
     def _save_session(self, session: ACPSession) -> None:
         """Save session to file."""
-        try:
-            sessions_dir = Path.home() / ".config" / "amcp" / "acp_sessions"
-            sessions_dir.mkdir(parents=True, exist_ok=True)
-            session_file = sessions_dir / f"{session.session_id}.json"
-            data = {
-                "session_id": session.session_id,
-                "cwd": session.cwd,
-                "created_at": session.created_at,
-                "current_mode_id": session.current_mode_id,
-                "conversation_history": session.conversation_history,
-                "tool_calls_history": session.tool_calls_history,
-            }
-            session_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        with contextlib.suppress(SessionSaveError):
+            SessionStore(
+                Path.home() / ".config" / "amcp" / "acp_sessions",
+                session.session_id,
+            ).save(
+                {
+                    "cwd": session.cwd,
+                    "created_at": session.created_at,
+                    "current_mode_id": session.current_mode_id,
+                    "conversation_history": session.conversation_history,
+                    "tool_calls_history": session.tool_calls_history,
+                }
+            )
 
 
 async def run_acp_agent(agent_spec: ResolvedAgentSpec | None = None) -> None:

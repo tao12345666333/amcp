@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from abc import ABC, abstractmethod
@@ -172,6 +173,22 @@ class BaseLLMClient(ABC):
         """Send chat request and return response."""
         pass
 
+    async def achat(
+        self,
+        messages: list[Message],
+        tools: list[Message] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Send chat asynchronously, adapting legacy synchronous clients."""
+        return await asyncio.to_thread(
+            self.chat,
+            messages,
+            tools,
+            stream_callback,
+            **kwargs,
+        )
+
 
 class AnyLLMClient(BaseLLMClient):
     """Completion client for any provider supported by any-llm."""
@@ -324,6 +341,111 @@ class AnyLLMClient(BaseLLMClient):
                 usage=_openai_chat_usage(_response_field(resp, "usage")),
             )
 
+    async def achat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Send a cancellable asynchronous completion request."""
+        model = kwargs.pop("model", self.model)
+        params: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": stream_callback is not None,
+            **kwargs,
+        }
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = "auto"
+
+        if stream_callback is None:
+            response = await self.client.acompletion(**params)
+            first_choice = _first_chat_choice(response)
+            message = _response_field(first_choice, "message")
+            if message is None:
+                raise ValueError("Provider returned a chat completion choice without a message.")
+            message_tool_calls = _response_field(message, "tool_calls")
+            tool_calls = None
+            if message_tool_calls:
+                tool_calls = [
+                    {
+                        "id": _response_field(call, "id"),
+                        "name": _response_field(_response_field(call, "function"), "name"),
+                        "arguments": _response_field(
+                            _response_field(call, "function"),
+                            "arguments",
+                            "{}",
+                        ),
+                    }
+                    for call in message_tool_calls
+                ]
+            thinking, content = _split_response_content(
+                _response_field(message, "content"),
+                _reasoning_content(message),
+                allow_reasoning_as_content=tool_calls is None,
+            )
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls,
+                stop_reason=_response_field(first_choice, "finish_reason"),
+                thinking=thinking,
+                usage=_openai_chat_usage(_response_field(response, "usage")),
+            )
+
+        accumulated_content: list[str] = []
+        accumulated_reasoning: list[str] = []
+        tool_call_chunks: dict[int, dict[str, str]] = {}
+        finish_reason = None
+        usage = None
+        response_stream = await self.client.acompletion(**params)
+        async for chunk in response_stream:
+            chunk_usage = _response_field(chunk, "usage")
+            if chunk_usage is not None:
+                usage = _openai_chat_usage(chunk_usage)
+            choices = _response_field(chunk, "choices")
+            if not choices:
+                continue
+            delta = _response_field(choices[0], "delta")
+            finish_reason = _response_field(choices[0], "finish_reason")
+            content = _response_field(delta, "content")
+            if content:
+                stream_callback(content)
+                accumulated_content.append(content)
+            reasoning = _reasoning_content(delta)
+            if reasoning:
+                accumulated_reasoning.append(reasoning)
+            for call in _response_field(delta, "tool_calls", []) or []:
+                index = _response_field(call, "index", 0)
+                current = tool_call_chunks.setdefault(
+                    index,
+                    {"id": "", "name": "", "arguments": ""},
+                )
+                current["id"] += _response_field(call, "id", "") or ""
+                function = _response_field(call, "function")
+                if function:
+                    current["name"] += _response_field(function, "name", "") or ""
+                    current["arguments"] += _response_field(function, "arguments", "") or ""
+
+        content_text = "".join(accumulated_content) or None
+        reasoning_text = "".join(accumulated_reasoning) or None
+        tool_calls = [tool_call_chunks[index] for index in sorted(tool_call_chunks)] or None
+        if reasoning_text and not content_text and not tool_calls:
+            stream_callback(reasoning_text)
+        thinking, content_text = _split_response_content(
+            content_text,
+            reasoning_text,
+            allow_reasoning_as_content=tool_calls is None,
+        )
+        return LLMResponse(
+            content=content_text,
+            tool_calls=tool_calls,
+            stop_reason=finish_reason,
+            thinking=thinking,
+            usage=usage,
+        )
+
 
 class OpenAIClient(AnyLLMClient):
     """Backward-compatible OpenAI completion client."""
@@ -396,6 +518,53 @@ class OpenAIResponsesClient(BaseLLMClient):
 
         resp = self.client.responses(**params)
         return self._parse_response(resp)
+
+    async def achat(
+        self,
+        messages: list[Message],
+        tools: list[Message] | None = None,
+        stream_callback: Any | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Send a cancellable asynchronous Responses API request."""
+        response_tools = None
+        if tools:
+            response_tools = [
+                {
+                    "type": "function",
+                    "name": tool["function"]["name"],
+                    "description": tool["function"].get("description", ""),
+                    "parameters": tool["function"].get("parameters", {}),
+                }
+                for tool in tools
+            ]
+        model = kwargs.pop("model", self.model)
+        max_tokens = kwargs.pop("max_tokens", None)
+        params: dict[str, Any] = {
+            "model": model,
+            "input_data": cast(Any, self._convert_messages(messages)),
+            "tools": response_tools,
+            **kwargs,
+        }
+        if max_tokens is not None:
+            params["max_output_tokens"] = max_tokens
+
+        if stream_callback is None:
+            return self._parse_response(await self.client.aresponses(**params))
+
+        completed_response = None
+        events = await self.client.aresponses(stream=True, **params)
+        async for event in events:
+            event_type = _response_field(event, "type")
+            if event_type == "response.output_text.delta":
+                delta = _response_field(event, "delta")
+                if delta:
+                    stream_callback(delta)
+            elif event_type == "response.completed":
+                completed_response = _response_field(event, "response")
+        if completed_response is None:
+            raise ValueError("Provider response stream ended without a completed response.")
+        return self._parse_response(completed_response)
 
     @staticmethod
     def _convert_messages(messages: list[Message]) -> list[Message]:

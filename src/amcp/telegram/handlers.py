@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections import deque
 from collections.abc import Callable
@@ -28,9 +29,7 @@ class TelegramSession:
     last_used: datetime = field(default_factory=datetime.now)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     queue_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    queue: deque[TelegramQueuedMessage] = field(default_factory=deque)
     current_task: asyncio.Task | None = None
-    worker_task: asyncio.Task | None = None
     generation: int = 0
 
 
@@ -438,12 +437,11 @@ class SessionManager:
             return False, 0
 
         session.generation += 1
-        cancelled = False
-        if session.current_task and not session.current_task.done():
-            session.current_task.cancel()
-            cancelled = True
-        queued = len(session.queue)
-        session.queue.clear()
+        cancelled = session.agent.is_busy()
+        queued = session.agent.queued_count()
+        if cancelled or queued:
+            with contextlib.suppress(RuntimeError):
+                asyncio.get_running_loop().create_task(session.agent.cancel(clear_queue=True))
         return cancelled, queued
 
     def create_session(self, chat_id: int, *, abandon_current: bool = False) -> TelegramSession:
@@ -581,8 +579,8 @@ class TelegramHandlers:
         sessions = self._session_manager.list_sessions(chat_id)
         current = self._session_manager.get_current_session_id(chat_id)
         current_session = self._session_manager.get_current_session(chat_id)
-        queued = len(current_session.queue) if current_session else 0
-        active = bool(current_session and current_session.current_task and not current_session.current_task.done())
+        queued = current_session.agent.queued_count() if current_session else 0
+        active = bool(current_session and current_session.agent.is_busy())
         policy = self._describe_chat_policy(update.message)
         lines = [
             f"Sessions: {len(sessions)}",

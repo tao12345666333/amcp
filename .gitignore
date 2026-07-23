@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Plan files (not tracked)
+plan.md
+
 # C extensions
 *.so
 

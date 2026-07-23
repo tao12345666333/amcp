@@ -33,10 +33,10 @@ from .hooks import (
     run_pre_tool_use_hooks,
     run_user_prompt_hooks,
 )
-from .mcp_client import call_mcp_tool, list_mcp_tools
+from .mcp_client import list_mcp_tools
 from .memory import get_memory_manager
 from .memory_review import MEMORY_GUIDANCE, run_memory_review
-from .message_queue import MessagePriority, get_message_queue_manager
+from .message_queue import MessagePriority
 from .multi_agent import AgentConfig
 from .progressive.context_budget import ContextBudget, ContextBudgetManager, estimate_text_tokens
 from .progressive.relevance import RelevanceScorer
@@ -44,8 +44,17 @@ from .progressive.skill_view import ProgressiveSkillView
 from .progressive.tool_view import ProgressiveToolView
 from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
+from .runtime import SessionRuntime, TurnHandle, TurnRequest
 from .session_search import get_transcript_store
+from .session_store import SessionSaveError, SessionStore, SessionStoreError
 from .skills import get_skill_manager
+from .tool_execution import (
+    ToolCallProtocolError,
+    ToolCapability,
+    ToolExecutionContext,
+    ToolExecutor,
+    normalize_tool_calls,
+)
 from .tools import ToolRegistry
 from .ui import LiveUI
 
@@ -100,7 +109,11 @@ class Agent:
         # Conversation history management
         self.session_id = session_id or self._generate_session_id()
         self.conversation_history: list[dict[str, Any]] = []
-        self.session_file = Path.home() / ".config" / "amcp" / "sessions" / f"{self.session_id}.json"
+        self._session_store = SessionStore(
+            Path.home() / ".config" / "amcp" / "sessions",
+            self.session_id,
+        )
+        self.session_file = self._session_store.path
 
         # Tool call tracking for per-conversation and per-session limits
         self.current_conversation_tool_calls: list[dict[str, Any]] = []
@@ -137,6 +150,11 @@ class Agent:
         self._relevance_scorer = RelevanceScorer()
         self._progressive_tool_view = ProgressiveToolView(self._relevance_scorer)
         self._progressive_skill_view = ProgressiveSkillView(self._relevance_scorer)
+        self._runtime = SessionRuntime(
+            self.session_id,
+            self._process_turn_request,
+            self._on_runtime_event,
+        )
 
         # Load existing conversation history if available
         self._load_conversation_history()
@@ -151,67 +169,59 @@ class Agent:
 
     def _ensure_sessions_dir(self) -> None:
         """Ensure sessions directory exists."""
-        sessions_dir = self.session_file.parent
-        sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._session_store.root.mkdir(parents=True, exist_ok=True)
 
     def _load_conversation_history(self) -> None:
         """Load conversation history from session file."""
-        try:
-            if self.session_file.exists():
-                self._ensure_sessions_dir()
-                with open(self.session_file, encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.conversation_history = data.get("conversation_history", [])
-                    self.tool_calls_history = data.get("tool_calls_history", [])
-                    self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
-                    self.total_llm_calls = data.get("total_llm_calls", 0)
-                    self.total_input_tokens = data.get("total_input_tokens", 0)
-                    self.total_output_tokens = data.get("total_output_tokens", 0)
-                    self.total_cached_input_tokens = data.get("total_cached_input_tokens", 0)
-                    self.total_cache_write_input_tokens = data.get("total_cache_write_input_tokens", 0)
-                    self.usage_reported_llm_calls = data.get("usage_reported_llm_calls", 0)
-                    self.estimated_input_llm_calls = data.get("estimated_input_llm_calls", 0)
-                    self.last_context_tokens = data.get("last_context_tokens", 0)
-                    self.last_context_window = data.get("last_context_window", 0)
-                    self.last_output_tokens = data.get("last_output_tokens")
-                    self.last_usage_from_api = data.get("last_usage_from_api", False)
-                    self._last_memory_review_turn_count = data.get("last_memory_review_turn_count", 0)
-                    self.console.print(
-                        f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, {len(self.tool_calls_history)} total tool calls[/dim]"
-                    )
-        except (OSError, json.JSONDecodeError) as e:
-            self.console.print(f"[yellow]Warning: Could not load conversation history: {e}[/yellow]")
-            self.conversation_history = []
-            self.tool_calls_history = []
-            self.total_llm_calls = 0
+        data = self._session_store.load()
+        if data is None:
+            return
+        self.conversation_history = data.get("conversation_history", [])
+        self.tool_calls_history = data.get("tool_calls_history", [])
+        self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
+        self.total_llm_calls = data.get("total_llm_calls", 0)
+        self.total_input_tokens = data.get("total_input_tokens", 0)
+        self.total_output_tokens = data.get("total_output_tokens", 0)
+        self.total_cached_input_tokens = data.get("total_cached_input_tokens", 0)
+        self.total_cache_write_input_tokens = data.get("total_cache_write_input_tokens", 0)
+        self.usage_reported_llm_calls = data.get("usage_reported_llm_calls", 0)
+        self.estimated_input_llm_calls = data.get("estimated_input_llm_calls", 0)
+        self.last_context_tokens = data.get("last_context_tokens", 0)
+        self.last_context_window = data.get("last_context_window", 0)
+        self.last_output_tokens = data.get("last_output_tokens")
+        self.last_usage_from_api = data.get("last_usage_from_api", False)
+        self._last_memory_review_turn_count = data.get("last_memory_review_turn_count", 0)
+        self.console.print(
+            f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, "
+            f"{len(self.tool_calls_history)} total tool calls[/dim]"
+        )
 
     def _save_conversation_history(self) -> None:
         """Save conversation history to session file."""
         try:
-            self._ensure_sessions_dir()
-            data = {
-                "session_id": self.session_id,
-                "agent_name": self.name,
-                "created_at": datetime.now().isoformat(),
-                "conversation_history": self.conversation_history,
-                "tool_calls_history": self.tool_calls_history,
-                "current_conversation_tool_calls": self.current_conversation_tool_calls,
-                "total_llm_calls": self.total_llm_calls,
-                "total_input_tokens": self.total_input_tokens,
-                "total_output_tokens": self.total_output_tokens,
-                "total_cached_input_tokens": self.total_cached_input_tokens,
-                "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
-                "usage_reported_llm_calls": self.usage_reported_llm_calls,
-                "estimated_input_llm_calls": self.estimated_input_llm_calls,
-                "last_context_tokens": self.last_context_tokens,
-                "last_context_window": self.last_context_window,
-                "last_output_tokens": self.last_output_tokens,
-                "last_usage_from_api": self.last_usage_from_api,
-                "last_memory_review_turn_count": self._last_memory_review_turn_count,
-            }
-            with open(self.session_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except OSError as e:
+            self._session_store.save(
+                {
+                    "session_id": self.session_id,
+                    "agent_name": self.name,
+                    "created_at": datetime.now().isoformat(),
+                    "conversation_history": self.conversation_history,
+                    "tool_calls_history": self.tool_calls_history,
+                    "current_conversation_tool_calls": self.current_conversation_tool_calls,
+                    "total_llm_calls": self.total_llm_calls,
+                    "total_input_tokens": self.total_input_tokens,
+                    "total_output_tokens": self.total_output_tokens,
+                    "total_cached_input_tokens": self.total_cached_input_tokens,
+                    "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
+                    "usage_reported_llm_calls": self.usage_reported_llm_calls,
+                    "estimated_input_llm_calls": self.estimated_input_llm_calls,
+                    "last_context_tokens": self.last_context_tokens,
+                    "last_context_window": self.last_context_window,
+                    "last_output_tokens": self.last_output_tokens,
+                    "last_usage_from_api": self.last_usage_from_api,
+                    "last_memory_review_turn_count": self._last_memory_review_turn_count,
+                }
+            )
+        except SessionSaveError as e:
             self.console.print(f"[yellow]Warning: Could not save conversation history: {e}[/yellow]")
 
     def clear_conversation_history(self) -> None:
@@ -234,9 +244,8 @@ class Agent:
         self.current_request_llm_calls = 0
         self.current_request_tool_calls = 0
         try:
-            if self.session_file.exists():
-                self.session_file.unlink()
-        except OSError as e:
+            self._session_store.delete()
+        except SessionStoreError as e:
             self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
         self.reset_memory_context_snapshot()
 
@@ -656,66 +665,54 @@ class Agent:
             MaxStepsReached: If max steps exceeded
             BusyError: If session is busy and queue_if_busy is False
         """
-        queue_manager = get_message_queue_manager()
+        handle = await self.submit(
+            user_input,
+            work_dir=work_dir,
+            stream=stream,
+            show_progress=show_progress,
+            priority=priority,
+            reject_if_busy=not queue_if_busy,
+        )
+        return await handle.wait()
 
-        # Check if session is busy
-        if queue_manager.is_busy(self.session_id):
-            if queue_if_busy:
-                # Queue the message for later processing
-                await queue_manager.enqueue(
-                    session_id=self.session_id,
-                    prompt=user_input,
-                    priority=priority,
-                    work_dir=str(work_dir) if work_dir else None,
-                    stream=stream,
-                    show_progress=show_progress,
-                )
-                self.console.print(
-                    f"[dim]Message queued ({queue_manager.queued_count(self.session_id)} in queue)[/dim]"
-                )
-                return "[Message queued for later processing]"
-            else:
-                raise BusyError(f"Session {self.session_id} is busy processing another request")
+    async def submit(
+        self,
+        user_input: str,
+        *,
+        work_dir: Path | None = None,
+        stream: bool = True,
+        show_progress: bool = True,
+        priority: MessagePriority = MessagePriority.NORMAL,
+        reject_if_busy: bool = False,
+    ) -> TurnHandle:
+        """Submit a turn and return a handle that owns its eventual result."""
+        if reject_if_busy and self._runtime.is_busy:
+            raise BusyError(f"Session {self.session_id} is busy processing another request")
+        return await self._runtime.submit(
+            user_input,
+            work_dir=work_dir,
+            stream=stream,
+            show_progress=show_progress,
+            priority=priority,
+        )
 
-        # Acquire session lock
-        acquired = await queue_manager.acquire(self.session_id)
-        if not acquired:
-            # Race condition - queue it
-            if queue_if_busy:
-                await queue_manager.enqueue(
-                    session_id=self.session_id,
-                    prompt=user_input,
-                    priority=priority,
-                )
-                return "[Message queued for later processing]"
-            else:
-                raise BusyError(f"Session {self.session_id} is busy processing another request")
+    async def _process_turn_request(self, request: TurnRequest) -> str:
+        self.execution_context["turn_id"] = request.id
+        return await self._process_message(
+            request.prompt,
+            request.work_dir,
+            request.stream,
+            request.show_progress,
+        )
 
-        try:
-            # Process the current message
-            result = await self._process_message(user_input, work_dir, stream, show_progress)
-
-            # Process any queued messages
-            while True:
-                next_msg = await queue_manager.dequeue(self.session_id)
-                if not next_msg:
-                    break
-
-                # Process queued message
-                self.console.print("[dim]Processing queued message...[/dim]")
-                queued_work_dir = Path(next_msg.metadata["work_dir"]) if next_msg.metadata.get("work_dir") else work_dir
-                await self._process_message(
-                    next_msg.prompt,
-                    queued_work_dir,
-                    next_msg.metadata.get("stream", stream),
-                    next_msg.metadata.get("show_progress", show_progress),
-                )
-
-            return result
-
-        finally:
-            # Always release the session lock
-            queue_manager.release(self.session_id)
+    def _on_runtime_event(self, event: str, handle: TurnHandle) -> None:
+        self._emit_event(
+            event,
+            {
+                "turn_id": handle.id,
+                "turn_status": handle.status.value,
+            },
+        )
 
     async def _process_message(self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool) -> str:
         """
@@ -799,7 +796,10 @@ class Agent:
                     self._last_memory_review_turn_count = self._conversation_turn_count(history_to_add)
 
                     status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
-                    history_to_add, _ = compactor.compact(history_to_add)
+                    history_to_add, _ = await asyncio.to_thread(
+                        compactor.compact,
+                        history_to_add,
+                    )
                     self.reset_memory_context_snapshot()
                     self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
@@ -854,14 +854,17 @@ class Agent:
 
                 return result
 
-        except AgentExecutionError:
+        except asyncio.CancelledError:
+            if self.conversation_history and self.conversation_history[-1] == {
+                "role": "user",
+                "content": user_input,
+            }:
+                self.conversation_history.pop()
+            self._save_conversation_history()
+            raise
+        except (AgentExecutionError, MaxStepsReached, ToolCallProtocolError):
             raise
         except Exception as e:
-            # Save error information to conversation history to maintain context
-            error_msg = f"Agent execution failed: {e}"
-            self.conversation_history.append({"role": "assistant", "content": f"[Error] {error_msg}"})
-
-            # Save conversation history even on failure to preserve context
             self._save_conversation_history()
 
             self.console.print(Text.assemble(("Agent execution failed: ", "red"), str(e)))
@@ -1002,23 +1005,49 @@ class Agent:
 
     def is_busy(self) -> bool:
         """Check if this agent's session is currently busy."""
-        return get_message_queue_manager().is_busy(self.session_id)
+        return self._runtime.is_busy
 
     def queued_count(self) -> int:
         """Get the number of queued messages for this session."""
-        return get_message_queue_manager().queued_count(self.session_id)
+        return self._runtime.queued_count
 
     def queued_prompts(self) -> list[str]:
         """Get list of queued prompts for this session."""
-        return get_message_queue_manager().queued_prompts(self.session_id)
+        return self._runtime.queued_prompts()
 
     async def clear_queue(self) -> int:
         """Clear all queued messages for this session."""
-        return await get_message_queue_manager().clear_queue(self.session_id)
+        return await self._runtime.clear_queue()
+
+    async def cancel(self, *, clear_queue: bool = False) -> bool:
+        """Cancel the active turn and optionally all queued turns."""
+        cancelled = await self._runtime.cancel_active(clear_queue=clear_queue)
+        for task in list(self._pending_memory_review_tasks):
+            task.cancel()
+        from .task import get_task_manager
+
+        await get_task_manager().cancel_for_session(self.session_id)
+        return cancelled
+
+    async def close(self) -> None:
+        """Cancel runtime work and release session-owned resources."""
+        await self._runtime.close()
 
     def get_queue_status(self) -> dict[str, Any]:
         """Get queue status for this session."""
-        return get_message_queue_manager().get_queue_status(self.session_id)
+        active = self._runtime.active_turn
+        return {
+            "session_id": self.session_id,
+            "status": self._runtime.status.value,
+            "is_busy": self._runtime.is_busy,
+            "active_turn_id": active.id if active else None,
+            "queued_count": self._runtime.queued_count,
+            "queued_prompts": self._runtime.queued_prompts(),
+        }
+
+    def get_turn(self, turn_id: str) -> TurnHandle | None:
+        """Return a turn handle owned by this session."""
+        return self._runtime.get_turn(turn_id)
 
     async def _build_tools_and_registry(
         self,
@@ -1039,14 +1068,15 @@ class Agent:
         # Add all built-in tools from registry
         from .tools import get_tool_registry
 
-        allowed_tools = set(self.agent_spec.tools) if self.agent_spec.tools else None
-        excluded_tools = set(self.agent_spec.exclude_tools or [])
+        capability = ToolCapability.from_spec(
+            self.agent_spec.tools,
+            self.agent_spec.exclude_tools,
+            self.agent_spec.can_delegate,
+        )
 
         tool_registry = get_tool_registry()
         for tool_name in tool_registry.list_tools():
-            if allowed_tools is not None and tool_name not in allowed_tools:
-                continue
-            if tool_name in excluded_tools:
+            if not capability.allows(tool_name):
                 continue
             tool = tool_registry.get_tool(tool_name)
             if tool and hasattr(tool, "get_spec"):
@@ -1072,9 +1102,7 @@ class Agent:
                 for info in info_list:
                     tname = info.get("name") or "tool"
                     oname = f"mcp.{name}.{tname}"
-                    if allowed_tools is not None and oname not in allowed_tools:
-                        continue
-                    if oname in excluded_tools:
+                    if not capability.allows(oname):
                         continue
                     params = info.get("inputSchema") or {"type": "object"}
                     tools.append(
@@ -1220,6 +1248,27 @@ class Agent:
         cfg = load_config()
         model_config = cfg.chat.model_config if cfg.chat else None
         model = getattr(llm_client, "model", None) or self._resolve_model_name(cfg)
+        workspace_root = (work_dir or Path.cwd()).resolve()
+        exposed_tools = {name for tool in tools if (name := tool.get("function", {}).get("name"))}
+        capability = ToolCapability.from_spec(
+            self.agent_spec.tools,
+            self.agent_spec.exclude_tools,
+            self.agent_spec.can_delegate,
+        )
+        from .tools import get_tool_registry
+
+        executor = ToolExecutor(
+            context=ToolExecutionContext(
+                session_id=self.session_id,
+                workspace_root=workspace_root,
+                turn_id=str(self.execution_context.get("turn_id", "direct")),
+            ),
+            capability=capability,
+            exposed_tools=exposed_tools,
+            registry=get_tool_registry(),
+            mcp_registry=tool_registry,
+            config=cfg,
+        )
         compaction_config = CompactionConfig()
         context_window = get_model_context_window(model, model_config=model_config)
         input_token_budget = int(
@@ -1244,18 +1293,23 @@ class Agent:
 
             messages = self._fit_tool_context(messages, tools, input_token_budget)
             estimated_input_tokens = estimate_request_tokens(messages, tools)
-            resp = llm_client.chat(messages=messages, tools=tools, stream_callback=stream_callback)
+            resp = await self._call_llm(
+                llm_client,
+                messages=messages,
+                tools=tools,
+                stream_callback=stream_callback,
+            )
             self._record_llm_usage(resp, estimated_input_tokens, context_window)
 
             if resp.tool_calls:
-                tool_calls = resp.tool_calls
+                tool_calls = normalize_tool_calls(resp.tool_calls)
                 used_tools = True
                 status.update(f"[bold]Agent {self.name}[/bold] - Executing {len(tool_calls)} tool(s)...")
 
                 # Check if any tool should be limited before processing
                 limited_tools = []
                 for tc in tool_calls:
-                    tool_name = tc["name"]
+                    tool_name = tc.name
                     if self._should_limit_tool_calls(tool_name):
                         limited_tools.append(tool_name)
 
@@ -1277,14 +1331,14 @@ class Agent:
                         self.total_llm_calls += 1
                         messages = self._fit_tool_context(messages, [], input_token_budget)
                         estimated_input_tokens = estimate_request_tokens(messages)
-                        final_resp = llm_client.chat(messages=messages)
+                        final_resp = await self._call_llm(llm_client, messages=messages)
                         self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
                         return final_text
                     except Exception as e:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
-                        return f"Error: Could not get final response: {e}"
+                        raise AgentExecutionError(f"Could not get final response: {e}") from e
 
                 messages.append(
                     {
@@ -1292,11 +1346,11 @@ class Agent:
                         "content": resp.content or "",
                         "tool_calls": [
                             {
-                                "id": tc["id"],
+                                "id": tc.id,
                                 "type": "function",
                                 "function": {
-                                    "name": tc["name"],
-                                    "arguments": tc["arguments"] or "{}",
+                                    "name": tc.name,
+                                    "arguments": tc.raw_arguments,
                                 },
                             }
                             for tc in tool_calls
@@ -1307,9 +1361,45 @@ class Agent:
                 # Process tool calls with Live UI
                 with LiveUI() as live_ui:
                     for tc in tool_calls:
-                        tool_name = tc["name"]
-                        tool_id = tc["id"]
-                        args = json.loads(tc["arguments"] or "{}")
+                        tool_name = tc.name
+                        tool_id = tc.id
+                        if tc.argument_error:
+                            tool_result_text = f"Tool argument error: {tc.argument_error}"
+                            block = live_ui.add_tool(tool_name, {})
+                            live_ui.finish_tool(block, success=False, result=tool_result_text)
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name,
+                                    "content": tool_result_text,
+                                }
+                            )
+                            continue
+                        assert tc.arguments is not None
+                        args = tc.arguments
+
+                        if tool_name not in exposed_tools or not capability.allows(tool_name):
+                            tool_result_text = f"Tool permission denied: '{tool_name}' is not authorized"
+                            block = live_ui.add_tool(tool_name, args)
+                            live_ui.finish_tool(block, success=False, result=tool_result_text)
+                            self._emit_event(
+                                "tool.call_denied",
+                                {
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "reason": tool_result_text,
+                                },
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name,
+                                    "content": tool_result_text,
+                                }
+                            )
+                            continue
 
                         # Run PreToolUse hooks
                         pre_hook_output = await run_pre_tool_use_hooks(
@@ -1317,6 +1407,7 @@ class Agent:
                             tool_name=tool_name,
                             tool_input=args,
                             tool_use_id=tool_id,
+                            project_dir=workspace_root,
                         )
 
                         # Check hook decision
@@ -1341,14 +1432,11 @@ class Agent:
                         if pre_hook_output.updated_input:
                             args = {**args, **pre_hook_output.updated_input}
 
-                        if tool_name == "bash" and work_dir is not None and "cwd" not in args:
-                            args = {**args, "cwd": str(work_dir)}
-
                         # Record tool call
                         tool_call_record = {
                             "step": self.step_count,
                             "tool": tool_name,
-                            "args": tc["arguments"],
+                            "args": tc.raw_arguments,
                             "timestamp": datetime.now().isoformat(),
                         }
                         self.tool_calls_history.append(tool_call_record)
@@ -1374,54 +1462,21 @@ class Agent:
 
                         # Execute tool
                         try:
-                            cfg = load_config()
-                            tool_response_data = {}  # For hook output
-
-                            if tool_name.startswith("mcp."):
-                                # Handle MCP tools
-                                server_name, inner_name = tool_registry.get(tool_name, (None, None))
-                                if server_name and inner_name:
-                                    server = cfg.servers.get(server_name)
-                                    if server:
-                                        mcp_resp = await call_mcp_tool(server, inner_name, args)
-                                        tool_response_data = mcp_resp
-                                        parts = []
-                                        for c in mcp_resp.get("content", []) or []:
-                                            if c.get("type") == "text":
-                                                parts.append(c.get("text", ""))
-                                        tool_result_text = "\n\n".join(parts) or json.dumps(
-                                            mcp_resp, ensure_ascii=False
-                                        )
-                                        live_ui.finish_tool(block, success=True, result=tool_result_text)
-                                    else:
-                                        tool_result_text = f"Error: Unknown MCP server {server_name}"
-                                        tool_response_data = {"error": tool_result_text}
-                                        live_ui.finish_tool(block, success=False, result=tool_result_text)
-                                else:
-                                    tool_result_text = f"Error: Unknown MCP tool {tool_name}"
-                                    tool_response_data = {"error": tool_result_text}
-                                    live_ui.finish_tool(block, success=False, result=tool_result_text)
+                            tool_result = await executor.execute(tool_name, args)
+                            if tool_result.success:
+                                tool_result_text = tool_result.content
+                                tool_response_data = {
+                                    "success": True,
+                                    "content": tool_result_text,
+                                }
+                                live_ui.finish_tool(block, success=True, result=tool_result_text)
                             else:
-                                # Handle built-in tools
-                                from .tools import get_tool_registry
-
-                                registry = get_tool_registry()
-                                exec_args = args
-                                if tool_name == "memory":
-                                    exec_args = {
-                                        **args,
-                                        "project_root": str(self._resolve_memory_project_root(work_dir)),
-                                    }
-                                tool_result = registry.execute_tool(tool_name, **exec_args)
-
-                                if tool_result.success:
-                                    tool_result_text = tool_result.content
-                                    tool_response_data = {"success": True, "content": tool_result_text}
-                                    live_ui.finish_tool(block, success=True, result=tool_result_text)
-                                else:
-                                    tool_result_text = f"Error: {tool_result.error}"
-                                    tool_response_data = {"success": False, "error": tool_result.error}
-                                    live_ui.finish_tool(block, success=False, result=tool_result_text)
+                                tool_result_text = f"Error: {tool_result.error}"
+                                tool_response_data = {
+                                    "success": False,
+                                    "error": tool_result.error,
+                                }
+                                live_ui.finish_tool(block, success=False, result=tool_result_text)
 
                             # Run PostToolUse hooks
                             post_hook_output = await run_post_tool_use_hooks(
@@ -1430,6 +1485,7 @@ class Agent:
                                 tool_input=args,
                                 tool_response=tool_response_data,
                                 tool_use_id=tool_id,
+                                project_dir=workspace_root,
                             )
 
                             # Apply any response updates from hooks
@@ -1517,6 +1573,29 @@ class Agent:
         # Max steps reached
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
         raise MaxStepsReached(self.max_steps)
+
+    @staticmethod
+    async def _call_llm(
+        llm_client: Any,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        stream_callback: Any | None = None,
+    ) -> Any:
+        """Call native async providers and adapt legacy synchronous test clients."""
+        async_chat = getattr(llm_client, "achat", None)
+        if callable(async_chat):
+            return await async_chat(
+                messages=messages,
+                tools=tools,
+                stream_callback=stream_callback,
+            )
+        return await asyncio.to_thread(
+            llm_client.chat,
+            messages=messages,
+            tools=tools,
+            stream_callback=stream_callback,
+        )
 
     def _record_llm_usage(
         self,

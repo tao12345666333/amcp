@@ -444,6 +444,20 @@ class TaskManager:
 
         return False
 
+    async def cancel_for_session(self, session_id: str) -> int:
+        """Cancel all pending or running tasks owned by a parent session."""
+        cancelled = 0
+        for task in list(self._tasks.values()):
+            if task.parent_session_id != session_id or task.is_done:
+                continue
+            if task.state == TaskState.PENDING:
+                self._mark_cancelled(task, "Parent session was cancelled")
+                self._cancel_future(task)
+                cancelled += 1
+            elif await self.cancel_task(task.id):
+                cancelled += 1
+        return cancelled
+
     async def wait_for_task(self, task_id: str, timeout: float | None = None) -> Task:
         """Wait for a task to complete.
 

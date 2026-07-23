@@ -821,7 +821,7 @@ def main(
                 console.print(f"   Name: {spec.name}")
                 console.print(f"   Mode: {spec.mode.value}")
                 console.print(f"   Description: {spec.description}")
-                console.print(f"   Tools: {len(spec.tools)}")
+                console.print(f"   Tools: {'all' if spec.tools is None else len(spec.tools)}")
                 console.print()
             except Exception as e:
                 console.print(f"❌ {agent_file_path.name}: {e}")
@@ -832,7 +832,7 @@ def main(
         console.print(f"   Name: {default_spec.name}")
         console.print(f"   Mode: {default_spec.mode.value}")
         console.print(f"   Description: {default_spec.description}")
-        console.print(f"   Tools: {len(default_spec.tools)}")
+        console.print(f"   Tools: {'all' if default_spec.tools is None else len(default_spec.tools)}")
         return
 
     # Load configuration

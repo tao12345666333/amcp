@@ -320,12 +320,10 @@ class TelegramBot:
 
     def cancel_session(self, chat_id: int) -> tuple[bool, bool]:
         session = self._session_manager.get_or_create_session(chat_id)
-        cancelled = False
-        if session.current_task and not session.current_task.done():
-            session.current_task.cancel()
-            cancelled = True
-        queued = len(session.queue) > 0
-        session.queue.clear()
+        cancelled = session.agent.is_busy()
+        queued = session.agent.queued_count() > 0
+        if cancelled or queued:
+            asyncio.create_task(session.agent.cancel(clear_queue=True))
         return cancelled, queued
 
     def _get_session_boundary_lock(self, chat_id: int) -> asyncio.Lock:
@@ -529,7 +527,7 @@ class TelegramBot:
         max_queue_size = self._config.max_queue_size
         if max_queue_size <= 0:
             return False
-        return len(session.queue) >= max_queue_size
+        return session.agent.queued_count() >= max_queue_size
 
     async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
         session = self._session_manager.get_or_create_session(chat_id)
@@ -550,27 +548,32 @@ class TelegramBot:
     async def _enqueue_message(self, session: Any, message: TelegramQueuedMessage) -> None:
         queue_lock = self._get_session_queue_lock(session)
         async with queue_lock:
-            active = self._session_worker_active(session)
+            active = session.agent.is_busy()
             if active and self._is_queue_full(session):
                 await self.send_text(message.chat_id, "Session queue is full. Please try again later.")
                 return
 
             status_text = (
-                f"Session busy. Queued at position {len(session.queue) + 1}."
+                f"Session busy. Queued at position {session.agent.queued_count() + 1}."
                 if active
                 else "Started processing your request..."
             )
             status_message = await self.send_text(message.chat_id, status_text)
             message.status_message_id = self._get_telegram_message_id(status_message)
-            session.queue.append(message)
-
-            if not active:
-                generation = getattr(session, "generation", 0)
-                worker = asyncio.create_task(self._drain_session_queue(session, generation))
-                session.worker_task = worker
-                worker.add_done_callback(
-                    lambda task, bound_session=session: self._on_session_worker_done(bound_session, task)
-                )
+            self._bind_session_memory(message.chat_id, session)
+            handle = await session.agent.submit(
+                message.text,
+                work_dir=self._work_dir,
+                stream=False,
+                show_progress=False,
+            )
+            task = asyncio.create_task(self._process_message(session, message, handle=handle))
+            turn_tasks = getattr(session, "turn_tasks", None)
+            if turn_tasks is None:
+                turn_tasks = set()
+                session.turn_tasks = turn_tasks
+            turn_tasks.add(task)
+            task.add_done_callback(turn_tasks.discard)
 
     @staticmethod
     def _get_session_queue_lock(session: Any) -> asyncio.Lock:
@@ -582,38 +585,12 @@ class TelegramBot:
 
     @staticmethod
     def _session_worker_active(session: Any) -> bool:
-        worker = getattr(session, "worker_task", None)
-        if worker and not worker.done():
-            return True
-        current = getattr(session, "current_task", None)
-        return bool(current and not current.done())
+        return bool(session.agent.is_busy())
 
     @staticmethod
     def _get_telegram_message_id(message: Any) -> int | None:
         message_id = getattr(message, "message_id", None)
         return int(message_id) if message_id is not None else None
-
-    async def _drain_session_queue(self, session: Any, generation: int) -> None:
-        while getattr(session, "generation", 0) == generation:
-            queue_lock = self._get_session_queue_lock(session)
-            async with queue_lock:
-                if not session.queue:
-                    break
-                message = session.queue.popleft()
-
-            if message.status_message_id is not None:
-                await self._edit_text(message.chat_id, message.status_message_id, "Processing...")
-            await self._process_message(session, message)
-
-    def _on_session_worker_done(self, session: Any, task: asyncio.Task[None]) -> None:
-        if getattr(session, "worker_task", None) is task:
-            session.worker_task = None
-        if task.cancelled():
-            return
-        try:
-            task.result()
-        except Exception:
-            logger.exception("Telegram session worker failed.")
 
     async def send_text(self, chat_id: int, text: str) -> Any:
         return await self._application.bot.send_message(chat_id=chat_id, text=text)
@@ -663,22 +640,31 @@ class TelegramBot:
         for user_id in sorted(self._auth.allowed_users):
             await self.send_text(user_id, text)
 
-    async def _process_message(self, session: Any, message: TelegramQueuedMessage) -> None:
+    async def _process_message(
+        self,
+        session: Any,
+        message: TelegramQueuedMessage,
+        *,
+        handle: Any | None = None,
+    ) -> None:
         generation = getattr(session, "generation", 0)
         task: asyncio.Task | None = None
         status_message_id = message.status_message_id
         self._bind_session_memory(message.chat_id, session)
         async with self._typing_session(message.chat_id):
             try:
-                task = asyncio.create_task(
-                    session.agent.run(
-                        user_input=message.text,
-                        work_dir=self._work_dir,
-                        stream=False,
-                        show_progress=False,
-                        queue_if_busy=False,
+                if handle is None:
+                    task = asyncio.create_task(
+                        session.agent.run(
+                            user_input=message.text,
+                            work_dir=self._work_dir,
+                            stream=False,
+                            show_progress=False,
+                            queue_if_busy=False,
+                        )
                     )
-                )
+                else:
+                    task = asyncio.create_task(handle.wait())
                 session.current_task = task
                 response = await task
             except asyncio.CancelledError:
@@ -692,19 +678,11 @@ class TelegramBot:
             except BusyError:
                 if getattr(session, "generation", 0) != generation:
                     return
-                if self._is_queue_full(session):
-                    await self._deliver_status_or_text(
-                        message.chat_id,
-                        status_message_id,
-                        "Session queue is full. Please try again later.",
-                    )
-                else:
-                    session.queue.appendleft(message)
-                    await self._deliver_status_or_text(
-                        message.chat_id,
-                        status_message_id,
-                        "Session busy. Your message was queued.",
-                    )
+                await self._deliver_status_or_text(
+                    message.chat_id,
+                    status_message_id,
+                    "Session busy. Please try again.",
+                )
                 return
             except Exception as exc:
                 logger.exception("Failed to process Telegram message.")

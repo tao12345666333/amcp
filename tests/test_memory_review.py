@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,7 +63,7 @@ class TestRunMemoryReview:
     def test_review_with_no_tool_calls(self):
         """Review returns content when LLM doesn't call tools."""
         mock_client = MagicMock()
-        mock_client.chat.return_value = MagicMock(content="Nothing to save.", tool_calls=None)
+        mock_client.achat = AsyncMock(return_value=MagicMock(content="Nothing to save.", tool_calls=None))
 
         result = asyncio.run(
             run_memory_review(
@@ -77,7 +77,7 @@ class TestRunMemoryReview:
         )
 
         assert result == "Nothing to save."
-        mock_client.chat.assert_called_once()
+        mock_client.achat.assert_called_once()
 
     def test_review_with_tool_call(self):
         """Review executes memory tool calls and loops."""
@@ -86,19 +86,21 @@ class TestRunMemoryReview:
 
         # First call returns tool_call, second returns final text
         mock_client = MagicMock()
-        mock_client.chat.side_effect = [
-            MagicMock(
-                content=None,
-                tool_calls=[
-                    {
-                        "name": "memory",
-                        "id": "tc1",
-                        "arguments": '{"action": "upsert_fact", "key": "test", "content": "value"}',
-                    }
-                ],
-            ),
-            MagicMock(content="Saved user preference.", tool_calls=None),
-        ]
+        mock_client.achat = AsyncMock(
+            side_effect=[
+                MagicMock(
+                    content=None,
+                    tool_calls=[
+                        {
+                            "name": "memory",
+                            "id": "tc1",
+                            "arguments": '{"action": "upsert_fact", "key": "test", "content": "value"}',
+                        }
+                    ],
+                ),
+                MagicMock(content="Saved user preference.", tool_calls=None),
+            ]
+        )
 
         result = asyncio.run(
             run_memory_review(
@@ -112,13 +114,13 @@ class TestRunMemoryReview:
         )
 
         assert result == "Saved user preference."
-        assert mock_client.chat.call_count == 2
+        assert mock_client.achat.call_count == 2
         mock_registry.execute_tool.assert_called_once_with("memory", action="upsert_fact", key="test", content="value")
 
     def test_review_handles_errors_gracefully(self):
         """Review returns empty string on failure."""
         mock_client = MagicMock()
-        mock_client.chat.side_effect = RuntimeError("API error")
+        mock_client.achat = AsyncMock(side_effect=RuntimeError("API error"))
 
         result = asyncio.run(
             run_memory_review(

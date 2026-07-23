@@ -20,6 +20,7 @@ from .models import EventType
 from .session_manager import SessionNotFoundError, get_session_manager
 
 router = APIRouter()
+_prompt_tasks: set[asyncio.Task[None]] = set()
 
 
 class ConnectionManager:
@@ -197,8 +198,9 @@ async def websocket_endpoint(
                 )
 
             elif action == "prompt":
-                # Handle prompt
-                await handle_prompt(websocket, msg_id, payload)
+                task = asyncio.create_task(handle_prompt(websocket, msg_id, payload))
+                _prompt_tasks.add(task)
+                task.add_done_callback(_prompt_tasks.discard)
 
             elif action == "cancel":
                 # Handle cancel

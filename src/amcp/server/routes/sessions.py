@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import uuid
 from collections.abc import AsyncGenerator, Coroutine
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -49,21 +50,17 @@ def _queue_priority(priority: str):
     return priority_map.get(priority, QueuePriority.NORMAL)
 
 
-async def _enqueue_agent_prompt(session: Any, content: str, request: PromptRequest) -> int:
-    """Enqueue a prompt directly into the agent session queue and return its position."""
-    from ...message_queue import get_message_queue_manager
-
+async def _enqueue_agent_prompt(session: Any, content: str, request: PromptRequest):
+    """Submit a queued prompt and return its owned turn handle and position."""
     position = session.agent.queued_count() + 1
-    queue_manager = get_message_queue_manager()
-    await queue_manager.enqueue(
-        session_id=session.agent.session_id,
-        prompt=content,
-        priority=_queue_priority(request.priority.value),
-        work_dir=session.cwd,
+    handle = await session.agent.submit(
+        content,
+        work_dir=Path(session.cwd),
         stream=request.stream,
         show_progress=False,
+        priority=_queue_priority(request.priority.value),
     )
-    return position
+    return handle, position
 
 
 @router.post("", response_model=Session)
@@ -200,20 +197,20 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
 
         if is_busy:
             # Default: queue the message
-            position = await _enqueue_agent_prompt(session, routed.content, request)
+            handle, position = await _enqueue_agent_prompt(session, routed.content, request)
 
             # Notify about queuing
             await _safe_emit(
                 bridge.emit_prompt_queued(
                     session_id=session_id,
-                    message_id=message_id,
+                    message_id=handle.id,
                     position=position,
                 )
             )
 
             return PromptResponse(
                 session_id=session_id,
-                message_id=message_id,
+                message_id=handle.id,
                 status="queued",
                 position=position,
             )
@@ -226,21 +223,18 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
             )
         )
 
-        response_text = ""
-        async for chunk in session_manager.prompt_session(
+        handle = await session_manager.submit_prompt(
             session_id=session_id,
             content=routed.content,
             stream=False,
             priority=request.priority.value,
-        ):
-            if isinstance(chunk, str):
-                response_text += chunk
-            elif hasattr(chunk, "content"):
-                response_text += str(chunk.content)
+        )
+        response_text = await handle.wait()
+        session.message_count += 1
 
         return PromptResponse(
             session_id=session_id,
-            message_id=message_id,
+            message_id=handle.id,
             status="complete",
             response=response_text,
         )
@@ -316,6 +310,15 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
         import json
 
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
+        handle = None
+        if routed.action == "prompt":
+            handle = await session_manager.submit_prompt(
+                session_id=session_id,
+                content=routed.content,
+                stream=True,
+                priority=request.priority.value,
+            )
+            message_id = handle.id
 
         # Send start event
         yield (
@@ -330,33 +333,10 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
         )
 
         try:
-            if routed.action == "prompt":
-                async for chunk in session_manager.prompt_session(
-                    session_id=session_id,
-                    content=routed.content,
-                    stream=True,
-                    priority=request.priority.value,
-                ):
-                    if isinstance(chunk, str):
-                        yield (
-                            json.dumps(
-                                {
-                                    "type": "chunk",
-                                    "content": chunk,
-                                }
-                            )
-                            + "\n"
-                        )
-                    elif hasattr(chunk, "content"):
-                        yield (
-                            json.dumps(
-                                {
-                                    "type": "chunk",
-                                    "content": chunk.content,
-                                }
-                            )
-                            + "\n"
-                        )
+            if handle is not None:
+                chunk = await handle.wait()
+                session.message_count += 1
+                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
             else:
                 async for event in apply_interaction_result(session_manager, session_id, routed):
                     yield json.dumps(event) + "\n"
@@ -408,6 +388,27 @@ async def cancel_session(session_id: str, request: CancelRequest | None = None) 
             status_code=404,
             detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
         ) from None
+
+
+@router.get("/{session_id}/turns/{turn_id}")
+async def get_turn(session_id: str, turn_id: str) -> dict[str, Any]:
+    """Return the current or terminal state of one submitted turn."""
+    session_manager = get_session_manager()
+    try:
+        session = await session_manager.get_session(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND"}) from None
+    handle = session.agent.get_turn(turn_id)
+    if handle is None:
+        raise HTTPException(status_code=404, detail={"code": "TURN_NOT_FOUND"})
+    outcome = handle.outcome
+    return {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "status": handle.status.value,
+        "response": outcome.value if outcome else None,
+        "error": str(outcome.error) if outcome and outcome.error else None,
+    }
 
 
 @router.get("/{session_id}/history")

@@ -43,13 +43,14 @@ class EmbeddedSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
+        status = self.agent.get_queue_status()["status"]
         return {
             "id": self.id,
             "cwd": self.cwd,
             "agent_name": self.agent_name,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "status": "idle",
+            "status": status,
             "message_count": self.message_count,
         }
 
@@ -83,6 +84,8 @@ class EmbeddedClient(BaseClient):
 
     async def close(self) -> None:
         """Cleanup resources."""
+        for session in self._sessions.values():
+            await session.agent.close()
         self._sessions.clear()
         self._connected = False
 
@@ -226,7 +229,8 @@ class EmbeddedClient(BaseClient):
         """
         if session_id not in self._sessions:
             raise SessionNotFoundError(session_id)
-        del self._sessions[session_id]
+        session = self._sessions.pop(session_id)
+        await session.agent.close()
 
     # =========================================================================
     # Prompt Operations
@@ -311,26 +315,17 @@ class EmbeddedClient(BaseClient):
         try:
             work_dir = Path(session.cwd) if session.cwd else None
 
-            # Use streaming mode
-            async for chunk in session.agent.run(
+            response = await session.agent.run(
                 user_input=content,
                 work_dir=work_dir,
                 stream=True,
                 show_progress=False,
-            ):
-                if isinstance(chunk, str):
-                    yield ResponseChunk(
-                        content=chunk,
-                        chunk_type="text",
-                        done=False,
-                    )
-                else:
-                    # Handle other chunk types
-                    yield ResponseChunk(
-                        content=str(chunk),
-                        chunk_type="text",
-                        done=False,
-                    )
+            )
+            yield ResponseChunk(
+                content=response,
+                chunk_type="text",
+                done=False,
+            )
 
             # Final completion chunk
             yield ResponseChunk(
@@ -358,8 +353,7 @@ class EmbeddedClient(BaseClient):
         """
         if session_id not in self._sessions:
             raise SessionNotFoundError(session_id)
-        # In embedded mode, cancellation is not directly supported
-        # The agent would need to check for a cancellation flag
+        await self._sessions[session_id].agent.cancel(clear_queue=force)
 
     # =========================================================================
     # Tools & Agents
