@@ -12,18 +12,19 @@ class TestResolveBaseUrl:
     def test_config_used_when_no_cli(self):
         cfg = MagicMock()
         cfg.base_url = "https://cfg.com"
-        assert _resolve_base_url(None, cfg) == "https://cfg.com/v1"
+        assert _resolve_base_url(None, cfg) == "https://cfg.com"
 
     def test_env_used_when_no_config(self, monkeypatch):
         monkeypatch.setenv("AMCP_OPENAI_BASE", "https://env.com")
-        assert _resolve_base_url(None, None) == "https://env.com/v1"
+        assert _resolve_base_url(None, None) == "https://env.com"
 
     def test_default_fallback(self, monkeypatch):
         monkeypatch.delenv("AMCP_OPENAI_BASE", raising=False)
         assert _resolve_base_url(None, None) == "https://api.gmi-serving.com/v1"
 
-    def test_appends_v1_when_missing(self):
-        assert _resolve_base_url("https://example.com", None) == "https://example.com/v1"
+    def test_preserves_provider_specific_path(self):
+        base_url = "https://api-gateway.example.com/v1/openai"
+        assert _resolve_base_url(base_url, None) == base_url
 
 
 class TestResolveApiKey:

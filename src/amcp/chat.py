@@ -10,15 +10,12 @@ from .llm import AnyLLMClient
 
 def _resolve_base_url(cli_base: str | None, cfg: ChatConfig | None) -> str:
     # CLI > config > env > default
-    base = (
+    return (
         cli_base
         or (cfg.base_url if cfg and cfg.base_url else None)
         or os.environ.get("AMCP_OPENAI_BASE")
         or "https://api.gmi-serving.com/v1"
-    ).rstrip("/")
-    if not base.endswith("/v1"):
-        base = base + "/v1"
-    return base
+    )
 
 
 def _resolve_api_key(cli_key: str | None, cfg: ChatConfig | None) -> str | None:

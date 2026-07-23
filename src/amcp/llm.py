@@ -476,8 +476,6 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
         responses_base_url = (cfg.base_url if cfg else None) or os.environ.get(
             "AMCP_OPENAI_BASE", "https://api.openai.com/v1"
         )
-        if not responses_base_url.endswith("/v1"):
-            responses_base_url = responses_base_url.rstrip("/") + "/v1"
         api_key = (cfg.api_key if cfg else None) or os.environ.get("OPENAI_API_KEY")
         return OpenAIResponsesClient(
             base_url=responses_base_url,
@@ -488,8 +486,6 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
     base_url: str | None = cfg.base_url if cfg else None
     if api_type == "openai":
         base_url = base_url or os.environ.get("AMCP_OPENAI_BASE", "https://api.openai.com/v1")
-        if not base_url.endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
     api_key = cfg.api_key if cfg else None
     if api_type == "openai":
         api_key = api_key or os.environ.get("OPENAI_API_KEY")

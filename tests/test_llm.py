@@ -1,6 +1,7 @@
 """Tests for LLM client abstraction."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from any_llm.types.completion import Reasoning
@@ -58,6 +59,21 @@ class TestCreateLLMClient:
         client = create_llm_client(cfg)
         assert isinstance(client, AnyLLMClient)
         assert client.provider == "gmi"
+
+    @pytest.mark.parametrize("api_type", ["openai", "openai_responses"])
+    def test_openai_preserves_configured_base_url(self, api_type):
+        base_url = "https://api-gateway.example.com/v1/openai"
+        cfg = ChatConfig(
+            api_type=api_type,
+            base_url=base_url,
+            model="test-model",
+            api_key="test-key",
+        )
+
+        with patch("any_llm.AnyLLM.create") as create:
+            create_llm_client(cfg)
+
+        assert create.call_args.kwargs["api_base"] == base_url
 
     def test_none_config_uses_defaults(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
