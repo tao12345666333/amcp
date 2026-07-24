@@ -10,9 +10,7 @@ from amcp.protocol import (
     ErrorCode,
     ProtocolAdapter,
     ProtocolError,
-    acp_event_to_server_event,
     get_protocol_adapter,
-    server_event_to_acp_event,
     server_event_to_ws_message,
     ws_message_to_server_event,
 )
@@ -111,97 +109,6 @@ class TestErrorCodes:
 class TestConverters:
     """Tests for protocol converters."""
 
-    def test_acp_agent_message_to_server_event(self):
-        """Test converting ACP agent_message to ServerEvent."""
-        acp_event = {
-            "session_update": "agent_message",
-            "content": [{"type": "text", "text": "Hello world"}],
-        }
-
-        event = acp_event_to_server_event(acp_event, "session-123")
-
-        assert event.type == EventType.MESSAGE_CHUNK
-        assert event.session_id == "session-123"
-        assert event.payload["content"] == "Hello world"
-        assert event.payload["done"] is False
-
-    def test_acp_agent_response_to_server_event(self):
-        """Test converting ACP agent_response to ServerEvent."""
-        acp_event = {
-            "session_update": "agent_response",
-            "content": [{"type": "text", "text": "Done!"}],
-        }
-
-        event = acp_event_to_server_event(acp_event)
-
-        assert event.type == EventType.MESSAGE_COMPLETE
-        assert event.payload["done"] is True
-
-    def test_acp_tool_call_start_to_server_event(self):
-        """Test converting ACP tool_call_start to ServerEvent."""
-        acp_event = {
-            "session_update": "tool_call_start",
-            "tool_call_id": "call_abc",
-            "title": "Reading file",
-            "kind": "read",
-        }
-
-        event = acp_event_to_server_event(acp_event, "session-123")
-
-        assert event.type == EventType.TOOL_CALL_START
-        assert event.payload["tool_call_id"] == "call_abc"
-        assert event.payload["title"] == "Reading file"
-        assert event.payload["kind"] == "read"
-
-    def test_acp_tool_call_update_to_server_event(self):
-        """Test converting ACP tool_call_update to ServerEvent."""
-        acp_event = {
-            "session_update": "tool_call_update",
-            "tool_call_id": "call_abc",
-            "status": "completed",
-            "content": [{"type": "content", "content": {"type": "text", "text": "file contents"}}],
-        }
-
-        event = acp_event_to_server_event(acp_event)
-
-        assert event.type == EventType.TOOL_CALL_COMPLETE
-        assert event.payload["tool_call_id"] == "call_abc"
-        assert event.payload["status"] == "completed"
-        assert event.payload["result"] == "file contents"
-
-    def test_server_event_to_acp_message(self):
-        """Test converting ServerEvent to ACP format."""
-        event = ServerEvent(
-            type=EventType.MESSAGE_CHUNK,
-            session_id="session-123",
-            payload={"content": "Hello"},
-        )
-
-        acp = server_event_to_acp_event(event)
-
-        assert acp["session_update"] == "agent_message"
-        assert len(acp["content"]) == 1
-        assert acp["content"][0]["type"] == "text"
-        assert acp["content"][0]["text"] == "Hello"
-
-    def test_server_event_to_acp_tool_start(self):
-        """Test converting tool start event to ACP."""
-        event = ServerEvent(
-            type=EventType.TOOL_CALL_START,
-            session_id="session-123",
-            payload={
-                "tool_call_id": "call_abc",
-                "title": "Reading",
-                "kind": "read",
-            },
-        )
-
-        acp = server_event_to_acp_event(event)
-
-        assert acp["session_update"] == "tool_call_start"
-        assert acp["tool_call_id"] == "call_abc"
-        assert acp["kind"] == "read"
-
     def test_server_event_to_ws_message(self):
         """Test converting ServerEvent to WebSocket message."""
         event = ServerEvent(
@@ -287,31 +194,6 @@ class TestProtocolAdapter:
         adapter1 = get_protocol_adapter()
         adapter2 = get_protocol_adapter()
         assert adapter1 is adapter2
-
-    def test_adapter_from_acp_event(self):
-        """Test adapter ACP event conversion."""
-        adapter = ProtocolAdapter()
-        acp_event = {
-            "session_update": "agent_message",
-            "content": [{"type": "text", "text": "Hello"}],
-        }
-
-        event = adapter.from_acp_event(acp_event, "session-123")
-
-        assert event.type == EventType.MESSAGE_CHUNK
-        assert event.session_id == "session-123"
-
-    def test_adapter_to_acp_event(self):
-        """Test adapter to ACP event conversion."""
-        adapter = ProtocolAdapter()
-        event = ServerEvent(
-            type=EventType.MESSAGE_CHUNK,
-            payload={"content": "Hello"},
-        )
-
-        acp = adapter.to_acp_event(event)
-
-        assert acp["session_update"] == "agent_message"
 
     def test_adapter_to_ws_message(self):
         """Test adapter to WebSocket message."""
@@ -482,43 +364,3 @@ class TestProtocolAdapter:
         wrapped = adapter.wrap_error(error, default_code=ErrorCode.VALIDATION_ERROR)
 
         assert wrapped.code == ErrorCode.VALIDATION_ERROR
-
-
-class TestRoundTrip:
-    """Test round-trip conversions."""
-
-    def test_message_roundtrip_acp(self):
-        """Test message event ACP round-trip."""
-        original = ServerEvent(
-            type=EventType.MESSAGE_CHUNK,
-            session_id="session-123",
-            payload={"content": "Hello world"},
-        )
-
-        # To ACP and back
-        acp = server_event_to_acp_event(original)
-        restored = acp_event_to_server_event(acp, "session-123")
-
-        assert restored.type == original.type
-        assert restored.session_id == original.session_id
-        assert restored.payload["content"] == original.payload["content"]
-
-    def test_tool_start_roundtrip_acp(self):
-        """Test tool start event ACP round-trip."""
-        original = ServerEvent(
-            type=EventType.TOOL_CALL_START,
-            session_id="session-123",
-            payload={
-                "tool_call_id": "call_abc",
-                "title": "Reading file",
-                "kind": "read",
-            },
-        )
-
-        # To ACP and back
-        acp = server_event_to_acp_event(original)
-        restored = acp_event_to_server_event(acp, "session-123")
-
-        assert restored.type == original.type
-        assert restored.payload["tool_call_id"] == original.payload["tool_call_id"]
-        assert restored.payload["kind"] == original.payload["kind"]

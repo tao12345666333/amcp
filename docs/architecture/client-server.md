@@ -14,7 +14,7 @@ This document describes the Client-Server (C/S) architecture for AMCP, enabling 
 2. **Enable Remote Access**: Control AMCP from different machines or devices
 3. **Support Multiple Clients**: CLI, Web UI, Desktop App, Mobile App
 4. **Maintain CLI Compatibility**: Existing `amcp` commands continue to work seamlessly
-5. **Leverage Existing Infrastructure**: Build on top of existing ACP support
+5. **Leverage Existing Infrastructure**: Build on the existing agent runtime and event system
 
 ## Architecture Diagram
 
@@ -41,7 +41,6 @@ This document describes the Client-Server (C/S) architecture for AMCP, enabling 
 │                      │  • HTTP REST API (primary)  │                        │
 │                      │  • WebSocket (streaming)    │                        │
 │                      │  • SSE (server events)      │                        │
-│                      │  • ACP (existing, optional) │                        │
 │                      └──────────────┬──────────────┘                        │
 │                                     │                                        │
 │   SERVER                            │                                        │
@@ -492,8 +491,6 @@ class EventType(str, Enum):
    - Convenience classes: `SessionNotFoundError`, `SessionBusyError`, `ToolNotFoundError`, `ValidationError`
 
 3. ✅ Event converters between protocols
-   - `acp_event_to_server_event()` - ACP → ServerEvent
-   - `server_event_to_acp_event()` - ServerEvent → ACP
    - `server_event_to_ws_message()` - ServerEvent → WebSocket
    - `ws_message_to_server_event()` - WebSocket → ServerEvent
 
@@ -502,11 +499,9 @@ class EventType(str, Enum):
    from amcp.protocol import get_protocol_adapter
    
    adapter = get_protocol_adapter()
-   
-   # Convert ACP event
-   server_event = adapter.from_acp_event(acp_event, session_id)
-   
-   # Convert to WebSocket/SSE
+
+   # Create an event and convert it to WebSocket/SSE
+   server_event = adapter.create_message_event(session_id, content)
    ws_message = adapter.to_ws_message(server_event)
    sse_data = adapter.to_sse_data(server_event)
    
@@ -523,7 +518,7 @@ class EventType(str, Enum):
 6. ✅ Comprehensive API documentation
    - `docs/api/README.md` - Full API reference with examples
    - `docs/api/protocol-compatibility.md` - Protocol mapping guide
-   - HTTP REST, WebSocket, SSE, and ACP documentation
+   - HTTP REST, WebSocket, and SSE documentation
    - Error codes and SDK usage examples
 
 **Deliverables**:
@@ -537,10 +532,8 @@ class EventType(str, Enum):
 - ✅ `tests/test_protocol.py` - 35+ tests covering:
   - Error code HTTP status mapping
   - Protocol error conversion (dict, HTTP, WebSocket)
-  - ACP ↔ ServerEvent conversions
   - ServerEvent ↔ WebSocket conversions
   - ProtocolAdapter methods
-  - Round-trip conversion tests
 
 ---
 
@@ -603,7 +596,6 @@ src/amcp/
 ├── __init__.py
 ├── cli.py                     # CLI entry (modified)
 ├── agent.py                   # Agent core (unchanged)
-├── acp_agent.py              # ACP service (unchanged)
 │
 ├── server/                    # NEW: Server module
 │   ├── __init__.py
@@ -696,7 +688,6 @@ client:
 ### Backward Compatibility
 
 - All existing `amcp` commands work unchanged
-- Existing ACP support (`amcp acp serve`) remains functional
 - Configuration files are backward compatible
 
 ### Forward Compatibility
@@ -723,6 +714,5 @@ client:
 ## References
 
 - [OpenCode Architecture](https://github.com/sst/opencode)
-- [ACP Specification](https://github.com/ArcadeAI/arcade-ai)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [WebSocket Best Practices](https://websockets.readthedocs.io/)

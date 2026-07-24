@@ -1,4 +1,4 @@
-"""Protocol Adapter for unifying ACP, HTTP, and WebSocket protocols.
+"""Protocol adapter for unifying HTTP, SSE, and WebSocket protocols.
 
 This module provides the ProtocolAdapter class that serves as a bridge
 between different protocols, ensuring consistent behavior and event handling.
@@ -12,11 +12,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..server.models import EventType, ServerEvent
-from .converters import (
-    acp_event_to_server_event,
-    server_event_to_acp_event,
-    server_event_to_ws_message,
-)
+from .converters import server_event_to_ws_message
 from .error_codes import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:
@@ -29,59 +25,20 @@ class ProtocolAdapter:
     """Adapter for converting between different protocols.
 
     This class provides a unified interface for:
-    - Converting events between ACP, HTTP, and WebSocket formats
+    - Converting events between HTTP, SSE, and WebSocket formats
     - Handling errors consistently across protocols
     - Managing session lifecycles across protocols
 
     Example:
         >>> adapter = ProtocolAdapter()
-        >>>
-        >>> # Convert ACP event to our format
-        >>> acp_event = {"session_update": "agent_message", "content": [...]}
-        >>> server_event = adapter.from_acp_event(acp_event, "session-123")
-        >>>
         >>> # Convert to WebSocket format for clients
+        >>> server_event = adapter.create_message_event("session-123", "Hello")
         >>> ws_message = adapter.to_ws_message(server_event)
     """
 
     def __init__(self):
         """Initialize the protocol adapter."""
         self._event_handlers: dict[EventType, list[Callable[[ServerEvent], None]]] = {}
-
-    # =========================================================================
-    # ACP Protocol Methods
-    # =========================================================================
-
-    def from_acp_event(
-        self,
-        acp_event: dict[str, Any],
-        session_id: str | None = None,
-    ) -> ServerEvent:
-        """Convert an ACP event to a ServerEvent.
-
-        Args:
-            acp_event: The ACP event dictionary.
-            session_id: Optional session ID.
-
-        Returns:
-            Unified ServerEvent.
-        """
-        return acp_event_to_server_event(acp_event, session_id)
-
-    def to_acp_event(self, event: ServerEvent) -> dict[str, Any]:
-        """Convert a ServerEvent to an ACP event.
-
-        Args:
-            event: The ServerEvent to convert.
-
-        Returns:
-            ACP-compatible event dictionary.
-        """
-        return server_event_to_acp_event(event)
-
-    # =========================================================================
-    # WebSocket Protocol Methods
-    # =========================================================================
 
     def to_ws_message(
         self,
@@ -343,7 +300,7 @@ class ProtocolAdapter:
 
         Args:
             source: The source async iterator.
-            protocol: Target protocol ("ws", "sse", "acp").
+            protocol: Target protocol ("ws" or "sse").
             session_id: Optional session ID.
             message_id: Optional message ID.
 
@@ -366,8 +323,6 @@ class ProtocolAdapter:
                 yield self.to_ws_message(event, message_id)
             elif protocol == "sse":
                 yield self.to_sse_data(event)
-            elif protocol == "acp":
-                yield self.to_acp_event(event)
             else:
                 yield event
 

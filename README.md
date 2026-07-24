@@ -8,22 +8,22 @@
 
 New to GMI Cloud? [Create an account with my referral link](https://console.gmicloud.ai/ref/KP3NWZV4).
 
-**An out-of-the-box coding-agent runtime for your terminal, IDE, server, and Telegram.**
+**An out-of-the-box coding-agent runtime for your terminal, server, and Telegram.**
 
 AMCP is built for developers who want a useful agent immediately, not a framework they must
 assemble first. It ships with file editing, shell execution, web access, memory, skills,
-subagents, MCP/ACP integration, hooks, remote server mode, Telegram control, and scheduled
+subagents, MCP integration, hooks, remote server mode, Telegram control, and scheduled
 automation as first-class capabilities.
 
-Use it as a local coding assistant, an IDE agent, a long-running remote worker, or the runtime
-behind your own agent workflows.
+Use it as a local coding assistant, a long-running remote worker, or the runtime behind your own
+agent workflows.
 
 ## Why AMCP
 
 - **Ready on the first run**: read/search/edit files, apply patches, run commands, browse the web,
   keep todos, and remember project context without installing a pile of plugins.
-- **One runtime, many surfaces**: use the same sessions from the CLI, ACP-compatible IDEs such as
-  Zed, an HTTP/WebSocket server, Telegram, or cron/systemd/Kubernetes jobs.
+- **One runtime, many surfaces**: use the same sessions from the CLI, an HTTP/WebSocket server,
+  Telegram, or cron/systemd/Kubernetes jobs.
 - **Autonomous but inspectable**: persistent sessions, request-scoped tool limits, context
   compaction, progress events, and cancellation support make long-running work easier to trust.
 - **Extensible when you need it**: add MCP servers, skills, slash commands, hooks, and custom agent
@@ -50,7 +50,7 @@ uvx amcp-agent --once "summarize this repository and suggest the next test to ru
 | **Research** | Web search/fetch tools plus MCP server integration over stdio or HTTP/SSE |
 | **Agent orchestration** | Primary/subagent architecture with `coder`, `explorer`, `planner`, and `focused_coder` types |
 | **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive loading, searchable memory and session history |
-| **Interfaces** | CLI, ACP for IDEs, FastAPI HTTP/WebSocket server, Telegram bot |
+| **Interfaces** | CLI, FastAPI HTTP/WebSocket server, Telegram bot |
 | **Customization** | TOML config, YAML agent specs, slash commands, reusable skills, hooks, event bus |
 | **Model support** | OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and OpenAI-compatible endpoints |
 
@@ -64,9 +64,6 @@ uvx amcp-agent init
 
 # Run the agent
 uvx amcp-agent
-
-# Run as ACP server (for IDE integration)
-uvx amcp-agent acp serve
 ```
 
 ### From PyPI
@@ -117,10 +114,6 @@ amcp --list-sessions                    # list saved sessions
 # MCP server management
 amcp mcp tools --server custom
 amcp mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
-
-# ACP (IDE integration)
-amcp acp serve                          # start ACP agent server (stdio)
-amcp acp info                           # show ACP configuration info
 
 # HTTP/WebSocket server
 amcp serve                              # start on localhost:4096
@@ -197,41 +190,6 @@ Custom command shortcuts defined as TOML files, invoked with `/command` syntax. 
 2. Project commands: `.amcp/commands/*.toml` (takes precedence)
 
 See [docs/skills-and-commands.md](docs/skills-and-commands.md) for details and [examples/commands/](examples/commands/) for samples.
-
-## ACP (Agent Client Protocol) Support
-
-AMCP fully supports the [Agent Client Protocol](https://agentclientprotocol.com/) for integration with IDEs like Zed.
-
-### Features
-
-- **Session Management**: Create, load, and list sessions
-- **Session Modes**: `ask` (request permission), `architect` (plan only), `code` (full tool access)
-- **Slash Commands**: `/clear`, `/plan`, `/search`, `/help`
-- **Agent Plans**: Visual execution plans for complex tasks
-- **Permission Requests**: User approval for sensitive operations
-- **Client Capabilities**: Use client's filesystem and terminal when available
-
-### Zed Integration
-
-Add to your Zed settings (`~/.config/zed/settings.json`):
-
-```json
-{
-  "agent": {
-    "profiles": {
-      "amcp": {
-        "name": "AMCP",
-        "provider": {
-          "type": "acp",
-          "command": "amcp",
-          "args": ["acp", "serve"]
-        }
-      }
-    },
-    "default_profile": "amcp"
-  }
-}
-```
 
 ## HTTP/WebSocket Server
 

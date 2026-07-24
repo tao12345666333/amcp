@@ -5,7 +5,6 @@ This document describes how AMCP handles different protocols and ensures consist
 - **HTTP REST API** - Primary programmatic interface
 - **WebSocket** - Real-time streaming communication
 - **SSE (Server-Sent Events)** - One-way event streaming
-- **ACP (Agent Client Protocol)** - IDE/editor integration
 
 ## Protocol Overview
 
@@ -18,15 +17,15 @@ This document describes how AMCP handles different protocols and ensures consist
 │   │ ProtocolAdapter│  ← Unified conversion layer                        │
 │   └───────┬────────┘                                                    │
 │           │                                                              │
-│     ┌─────┴─────┬─────────────┬─────────────┐                          │
-│     ▼           ▼             ▼             ▼                          │
-│ ┌──────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐                     │
-│ │ HTTP │   │WebSocket│   │   SSE   │   │   ACP   │                     │
-│ │ REST │   │         │   │         │   │         │                     │
-│ └──────┘   └─────────┘   └─────────┘   └─────────┘                     │
+│     ┌─────┴─────┬─────────────┐                                        │
+│     ▼           ▼             ▼                                        │
+│ ┌──────┐   ┌─────────┐   ┌─────────┐                                   │
+│ │ HTTP │   │WebSocket│   │   SSE   │                                   │
+│ │ REST │   │         │   │         │                                   │
+│ └──────┘   └─────────┘   └─────────┘                                   │
 │                                                                          │
-│   Request/     Bidirectional   Server→Client   IDE Integration          │
-│   Response     Streaming       Events          (Zed, VS Code, etc.)     │
+│   Request/     Bidirectional   Server→Client                            │
+│   Response     Streaming       Events                                  │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -35,14 +34,14 @@ This document describes how AMCP handles different protocols and ensures consist
 
 All protocols use a unified event model defined in `amcp.server.models.EventType`:
 
-| Event Type | HTTP | WebSocket | SSE | ACP |
-|------------|------|-----------|-----|-----|
-| `session.created` | POST /sessions | ✓ | ✓ | new_session |
-| `session.deleted` | DELETE /sessions/{id} | ✓ | ✓ | - |
-| `message.chunk` | (streaming response) | ✓ | ✓ | agent_message |
-| `message.complete` | (response end) | ✓ | ✓ | agent_response |
-| `tool.call_start` | - | ✓ | ✓ | tool_call_start |
-| `tool.call_complete` | - | ✓ | ✓ | tool_call_update |
+| Event Type | HTTP | WebSocket | SSE |
+|------------|------|-----------|-----|
+| `session.created` | POST /sessions | ✓ | ✓ |
+| `session.deleted` | DELETE /sessions/{id} | ✓ | ✓ |
+| `message.chunk` | (streaming response) | ✓ | ✓ |
+| `message.complete` | (response end) | ✓ | ✓ |
+| `tool.call_start` | - | ✓ | ✓ |
+| `tool.call_complete` | - | ✓ | ✓ |
 
 ## ProtocolAdapter
 
@@ -53,18 +52,14 @@ from amcp.protocol import ProtocolAdapter, get_protocol_adapter
 
 adapter = get_protocol_adapter()
 
-# Convert ACP event to unified format
-acp_event = {"session_update": "agent_message", "content": [...]}
-server_event = adapter.from_acp_event(acp_event, session_id)
+# Create a unified event
+server_event = adapter.create_message_event(session_id, "Hello")
 
 # Convert to WebSocket format
 ws_message = adapter.to_ws_message(server_event, message_id)
 
 # Convert to SSE format
 sse_data = adapter.to_sse_data(server_event)
-
-# Convert back to ACP format
-acp_event = adapter.to_acp_event(server_event)
 ```
 
 ## Error Code Mapping
@@ -100,35 +95,6 @@ raise ProtocolError(
     details={"session_id": "session-123"}
 )
 ```
-
-## ACP Protocol Mapping
-
-### Session Updates
-
-| ACP session_update | ServerEvent Type |
-|--------------------|------------------|
-| `agent_message` | `MESSAGE_CHUNK` |
-| `agent_response` | `MESSAGE_COMPLETE` |
-| `agent_thought` | `AGENT_THINKING` |
-| `tool_call_start` | `TOOL_CALL_START` |
-| `tool_call_update` | `TOOL_CALL_COMPLETE` |
-| `current_mode_update` | `SESSION_STATUS_CHANGED` |
-| `plan` | `AGENT_THINKING` |
-
-### ACP Content Blocks
-
-ACP uses content blocks in a specific format:
-
-```json
-{
-  "session_update": "agent_message",
-  "content": [
-    {"type": "text", "text": "Hello, I'll help you..."}
-  ]
-}
-```
-
-The `ProtocolAdapter` extracts text from these blocks and normalizes them to our `ServerEvent.payload.content` format.
 
 ## WebSocket Message Format
 
@@ -236,36 +202,6 @@ event = adapter.create_tool_start_event(
     arguments={"path": "/src/main.py"}
 )
 ```
-
-## Migration Guide
-
-### From ACP-only to Multi-Protocol
-
-1. **Import the adapter**:
-   ```python
-   from amcp.protocol import get_protocol_adapter
-   ```
-
-2. **Replace direct ACP events with unified events**:
-   ```python
-   # Before
-   await conn.session_update(session_id, update=agent_message(...))
-   
-   # After
-   adapter = get_protocol_adapter()
-   event = adapter.create_message_event(session_id, content)
-   # Event can be sent via any protocol
-   ```
-
-3. **Use unified error codes**:
-   ```python
-   # Before
-   raise ValueError("Session not found")
-   
-   # After
-   from amcp.protocol import SessionNotFoundError
-   raise SessionNotFoundError(session_id)
-   ```
 
 ## TypeScript Types
 

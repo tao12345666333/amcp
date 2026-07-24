@@ -94,7 +94,7 @@ amcp/
 │   ├── tools.py         # Built-in tools and registry
 │   ├── client/          # Embedded, HTTP, and WebSocket clients
 │   ├── progressive/     # Progressive context management
-│   ├── protocol/        # ACP adapters and converters
+│   ├── protocol/        # HTTP/WebSocket adapters and converters
 │   ├── server/          # HTTP/WebSocket server
 │   └── telegram/        # Telegram integration
 ├── tests/               # Pytest suite

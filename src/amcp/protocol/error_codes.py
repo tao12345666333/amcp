@@ -1,7 +1,7 @@
-"""Unified error codes across all protocols.
+"""Unified error codes for AMCP HTTP and WebSocket protocols.
 
 This module defines a consistent set of error codes that are used across
-ACP, HTTP REST API, and WebSocket protocols.
+HTTP REST API and WebSocket protocols.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ class ErrorCode(StrEnum):
     These error codes are designed to be consistent across:
     - HTTP responses (mapped to appropriate status codes)
     - WebSocket error messages
-    - ACP protocol errors
     """
 
     # =========================================================================

@@ -98,43 +98,8 @@ def init(
 mcp = typer.Typer(help="MCP utilities (stdio client)")
 app.add_typer(mcp, name="mcp")
 
-acp = typer.Typer(help="ACP (Agent Client Protocol) utilities")
-app.add_typer(acp, name="acp")
-
 telegram = typer.Typer(help="Telegram bot utilities")
 app.add_typer(telegram, name="telegram")
-
-
-@acp.command("serve", help="Run AMCP as an ACP-compliant agent server (stdio transport)")
-def acp_serve(
-    agent_file: Annotated[str | None, typer.Option("--agent", help="Path to agent specification file")] = None,
-) -> None:
-    """Run AMCP as an ACP server for use with ACP clients like Zed editor."""
-    from .acp_agent import run_acp_agent
-    from .agent_spec import load_agent_spec
-
-    agent_spec = None
-    if agent_file:
-        agent_path = Path(agent_file).expanduser()
-        if agent_path.exists():
-            agent_spec = load_agent_spec(agent_path)
-
-    asyncio.run(run_acp_agent(agent_spec))
-
-
-@acp.command("info", help="Show ACP configuration info for use with clients")
-def acp_info() -> None:
-    """Show information for configuring ACP clients."""
-    console.print("[bold]AMCP ACP Server Configuration[/bold]")
-    console.print()
-    console.print("To use AMCP with an ACP client (e.g., Zed editor), configure:")
-    console.print()
-    console.print("[bold]Command:[/bold]")
-    console.print("  amcp acp serve")
-    console.print()
-    console.print("[bold]Zed settings.json example:[/bold]")
-    zed_config = {"agent": {"profiles": {"amcp": {"name": "AMCP Agent", "command": "amcp", "args": ["acp", "serve"]}}}}
-    console.print(JSON.from_data(zed_config))
 
 
 @telegram.command("start", help="Start Telegram bot")

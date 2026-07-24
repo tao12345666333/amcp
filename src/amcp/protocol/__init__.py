@@ -1,7 +1,6 @@
 """Protocol unification module for AMCP.
 
 This module provides adapters and converters between different protocols:
-- ACP (Agent Client Protocol)
 - HTTP REST API
 - WebSocket
 
@@ -12,8 +11,6 @@ from __future__ import annotations
 
 from .adapter import ProtocolAdapter, get_protocol_adapter
 from .converters import (
-    acp_event_to_server_event,
-    server_event_to_acp_event,
     server_event_to_ws_message,
     ws_message_to_server_event,
 )
@@ -24,8 +21,6 @@ __all__ = [
     "get_protocol_adapter",
     "ErrorCode",
     "ProtocolError",
-    "acp_event_to_server_event",
-    "server_event_to_acp_event",
     "server_event_to_ws_message",
     "ws_message_to_server_event",
 ]

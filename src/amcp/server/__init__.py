@@ -4,7 +4,7 @@ This module provides a FastAPI-based server that allows:
 - Remote control of AMCP agents via HTTP REST API
 - Real-time streaming via WebSocket and SSE
 - Multi-client session management
-- Protocol-agnostic access (complements existing ACP support)
+- Protocol-agnostic access
 
 Example usage:
     # Start server

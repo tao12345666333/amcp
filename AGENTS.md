@@ -2,8 +2,8 @@
 
 ## Project Overview
 
-AMCP is a Python coding-agent runtime with a CLI, HTTP/WebSocket server, ACP support,
-Telegram integration, MCP tools, multi-agent delegation, skills, hooks, memory, and
+AMCP is a Python coding-agent runtime with a CLI, HTTP/WebSocket server, Telegram integration,
+MCP tools, multi-agent delegation, skills, hooks, memory, and
 progressive context management.
 
 ## Code Style
@@ -23,7 +23,7 @@ progressive context management.
 - Configuration is TOML and is loaded through `src/amcp/config.py`.
 - Project rules are loaded from `AGENTS.md` through `src/amcp/project_rules.py`.
 - HTTP/WebSocket server code lives under `src/amcp/server/`.
-- Client transports live under `src/amcp/client/`; ACP conversion code lives under
+- Client transports live under `src/amcp/client/`; protocol conversion code lives under
   `src/amcp/protocol/`.
 - Telegram command handling is split between `src/amcp/telegram/bot.py` and
   `src/amcp/telegram/handlers.py`.
@@ -68,7 +68,7 @@ src/amcp/
 ├── models_db.py          # Model metadata lookup
 ├── project_rules.py      # AGENTS.md loading
 ├── client/               # Embedded, HTTP, and WebSocket clients
-├── protocol/             # ACP protocol adapters and converters
+├── protocol/             # HTTP/WebSocket protocol adapters and converters
 ├── server/               # HTTP/WebSocket server
 ├── telegram/             # Telegram integration
 └── progressive/          # Progressive context views
@@ -82,7 +82,7 @@ src/amcp/
 - `httpx` for HTTP clients.
 - `fastapi` and `uvicorn` for the server.
 - `openai` for OpenAI-compatible providers.
-- `fastmcp` for MCP integration and `agent-client-protocol` for ACP support.
+- `fastmcp` for MCP integration.
 - Optional extras provide Anthropic, Telegram, and development dependencies. Install the
   `dev` and `telegram` extras when running the complete test suite locally.
 
@@ -119,12 +119,11 @@ When releasing a new version, update all version references in this order:
 |------|----------|--------|
 | `pyproject.toml` | project metadata | `version = "X.Y.Z"` |
 | `src/amcp/_version.py` | module constant | `__version__ = "X.Y.Z"` |
-| `src/amcp/acp_agent.py` | `initialize()` method | `version="X.Y.Z"` |
 
 Verify the version update with:
 
 ```bash
-grep -rn "X.Y.Z" pyproject.toml src/amcp/_version.py src/amcp/acp_agent.py
+grep -rn "X.Y.Z" pyproject.toml src/amcp/_version.py
 ```
 
 Then run:
