@@ -751,9 +751,11 @@ def main(
             try:
                 with open(session_file, encoding="utf-8") as f:
                     data = json.load(f)
+                    conversation = data.get("conversation", {})
+                    messages = conversation.get("messages", data.get("conversation_history", []))
                     console.print(f"📄 {data.get('session_id', session_file.stem)}")
                     console.print(f"   Agent: {data.get('agent_name', 'Unknown')}")
-                    console.print(f"   Messages: {len(data.get('conversation_history', []))}")
+                    console.print(f"   Messages: {len(messages)}")
                     console.print(f"   Created: {data.get('created_at', 'Unknown')}")
                     console.print(f"   File: {session_file}")
                     console.print()

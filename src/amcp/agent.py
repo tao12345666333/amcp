@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -46,7 +47,8 @@ from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
 from .runtime import SessionRuntime, TurnHandle, TurnRequest
 from .session_search import get_transcript_store
-from .session_store import SessionSaveError, SessionStore, SessionStoreError
+from .session_state import CompactionCheckpoint, SessionState
+from .session_store import SessionStore, SessionStoreError
 from .skills import get_skill_manager
 from .tool_execution import (
     ToolCallProtocolError,
@@ -114,6 +116,10 @@ class Agent:
             self.session_id,
         )
         self.session_file = self._session_store.path
+        self._session_state = SessionState(
+            session_id=self.session_id,
+            agent_name=self.name,
+        )
 
         # Tool call tracking for per-conversation and per-session limits
         self.current_conversation_tool_calls: list[dict[str, Any]] = []
@@ -176,56 +182,80 @@ class Agent:
         data = self._session_store.load()
         if data is None:
             return
-        self.conversation_history = data.get("conversation_history", [])
-        self.tool_calls_history = data.get("tool_calls_history", [])
-        self.current_conversation_tool_calls = data.get("current_conversation_tool_calls", [])
-        self.total_llm_calls = data.get("total_llm_calls", 0)
-        self.total_input_tokens = data.get("total_input_tokens", 0)
-        self.total_output_tokens = data.get("total_output_tokens", 0)
-        self.total_cached_input_tokens = data.get("total_cached_input_tokens", 0)
-        self.total_cache_write_input_tokens = data.get("total_cache_write_input_tokens", 0)
-        self.usage_reported_llm_calls = data.get("usage_reported_llm_calls", 0)
-        self.estimated_input_llm_calls = data.get("estimated_input_llm_calls", 0)
-        self.last_context_tokens = data.get("last_context_tokens", 0)
-        self.last_context_window = data.get("last_context_window", 0)
-        self.last_output_tokens = data.get("last_output_tokens")
-        self.last_usage_from_api = data.get("last_usage_from_api", False)
-        self._last_memory_review_turn_count = data.get("last_memory_review_turn_count", 0)
+        self._session_state = SessionState.from_snapshot(data, self.session_id)
+        self._apply_session_state(self._session_state)
         self.console.print(
             f"[dim]Loaded conversation history: {len(self.conversation_history)} messages, "
             f"{len(self.tool_calls_history)} total tool calls[/dim]"
         )
 
     def _save_conversation_history(self) -> None:
-        """Save conversation history to session file."""
-        try:
-            self._session_store.save(
+        """Save the current canonical state, propagating commit failures."""
+        if self.conversation_history != self._session_state.messages:
+            candidate = SessionState.migrate_legacy(
                 {
-                    "session_id": self.session_id,
                     "agent_name": self.name,
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": self._session_state.created_at,
                     "conversation_history": self.conversation_history,
-                    "tool_calls_history": self.tool_calls_history,
-                    "current_conversation_tool_calls": self.current_conversation_tool_calls,
-                    "total_llm_calls": self.total_llm_calls,
-                    "total_input_tokens": self.total_input_tokens,
-                    "total_output_tokens": self.total_output_tokens,
-                    "total_cached_input_tokens": self.total_cached_input_tokens,
-                    "total_cache_write_input_tokens": self.total_cache_write_input_tokens,
-                    "usage_reported_llm_calls": self.usage_reported_llm_calls,
-                    "estimated_input_llm_calls": self.estimated_input_llm_calls,
-                    "last_context_tokens": self.last_context_tokens,
-                    "last_context_window": self.last_context_window,
-                    "last_output_tokens": self.last_output_tokens,
-                    "last_usage_from_api": self.last_usage_from_api,
-                    "last_memory_review_turn_count": self._last_memory_review_turn_count,
-                }
+                },
+                self.session_id,
             )
-        except SessionSaveError as e:
-            self.console.print(f"[yellow]Warning: Could not save conversation history: {e}[/yellow]")
+        else:
+            candidate = self._session_state.clone()
+        candidate = self._capture_session_state(candidate)
+        self._session_store.save(candidate.to_snapshot())
+        self._session_state = candidate
+        self._apply_session_state(candidate)
+
+    def _capture_session_state(self, state: SessionState) -> SessionState:
+        """Copy compatibility attributes into one candidate session state."""
+        state.messages = deepcopy(self.conversation_history)
+        state.tool_calls_history = deepcopy(self.tool_calls_history)
+        state.current_conversation_tool_calls = deepcopy(self.current_conversation_tool_calls)
+        state.usage.total_llm_calls = self.total_llm_calls
+        state.usage.total_input_tokens = self.total_input_tokens
+        state.usage.total_output_tokens = self.total_output_tokens
+        state.usage.total_cached_input_tokens = self.total_cached_input_tokens
+        state.usage.total_cache_write_input_tokens = self.total_cache_write_input_tokens
+        state.usage.usage_reported_llm_calls = self.usage_reported_llm_calls
+        state.usage.estimated_input_llm_calls = self.estimated_input_llm_calls
+        state.usage.last_context_tokens = self.last_context_tokens
+        state.usage.last_context_window = self.last_context_window
+        state.usage.last_output_tokens = self.last_output_tokens
+        state.usage.last_usage_from_api = self.last_usage_from_api
+        state.last_memory_review_turn_count = self._last_memory_review_turn_count
+        return state
+
+    def _apply_session_state(self, state: SessionState) -> None:
+        """Expose one state through the existing Agent compatibility attributes."""
+        self.conversation_history = state.messages
+        self.tool_calls_history = state.tool_calls_history
+        self.current_conversation_tool_calls = state.current_conversation_tool_calls
+        self.total_llm_calls = state.usage.total_llm_calls
+        self.total_input_tokens = state.usage.total_input_tokens
+        self.total_output_tokens = state.usage.total_output_tokens
+        self.total_cached_input_tokens = state.usage.total_cached_input_tokens
+        self.total_cache_write_input_tokens = state.usage.total_cache_write_input_tokens
+        self.usage_reported_llm_calls = state.usage.usage_reported_llm_calls
+        self.estimated_input_llm_calls = state.usage.estimated_input_llm_calls
+        self.last_context_tokens = state.usage.last_context_tokens
+        self.last_context_window = state.usage.last_context_window
+        self.last_output_tokens = state.usage.last_output_tokens
+        self.last_usage_from_api = state.usage.last_usage_from_api
+        self._last_memory_review_turn_count = state.last_memory_review_turn_count
+
+    def _commit_session_state(self, candidate: SessionState) -> None:
+        """Persist a complete candidate before publishing it in memory."""
+        self._session_store.save(candidate.to_snapshot())
+        self._session_state = candidate
+        self._apply_session_state(candidate)
 
     def clear_conversation_history(self) -> None:
         """Clear conversation history and delete session file."""
+        self._session_state = SessionState(
+            session_id=self.session_id,
+            agent_name=self.name,
+        )
         self.conversation_history = []
         self.tool_calls_history = []
         self.current_conversation_tool_calls = []
@@ -721,30 +751,34 @@ class Agent:
         This is the core message processing logic, extracted from run()
         to support queue-based processing.
         """
-        # Per-conversation tool limits are scoped to one user request. Long-running
-        # Telegram sessions should not carry a repo-analysis read_file burst into
-        # the next unrelated message, while session-level totals still persist.
+        committed_state = self._session_state
+        draft = committed_state.clone()
+        self._apply_session_state(draft)
         self._reset_current_conversation_tool_calls()
 
         # Run UserPromptSubmit hooks
-        prompt_hook_output = await run_user_prompt_hooks(
-            session_id=self.session_id,
-            prompt=user_input,
-            project_dir=work_dir,
-        )
+        try:
+            prompt_hook_output = await run_user_prompt_hooks(
+                session_id=self.session_id,
+                prompt=user_input,
+                project_dir=work_dir,
+            )
+        except BaseException:
+            self._apply_session_state(committed_state)
+            raise
 
         # Check if hook denied the prompt
         if not prompt_hook_output.continue_execution:
             if prompt_hook_output.stop_reason:
                 self.console.print(f"[yellow]Prompt blocked: {prompt_hook_output.stop_reason}[/yellow]")
+            self._apply_session_state(committed_state)
             return prompt_hook_output.stop_reason or "Prompt blocked by hook"
 
         # Show hook feedback if any
         if prompt_hook_output.feedback:
             self.console.print(f"[dim]Hook: {prompt_hook_output.feedback}[/dim]")
 
-        # Save user input to conversation history immediately to preserve context
-        self.conversation_history.append({"role": "user", "content": user_input})
+        turn_messages = [{"role": "user", "content": user_input}]
 
         try:
             with self._create_progress_context(show_progress) as status:
@@ -756,7 +790,7 @@ class Agent:
 
                 # Build tools before compaction so their schemas are included in
                 # the request-size decision.
-                history_to_add = list(self.conversation_history)
+                history_to_add = draft.model_context(turn_messages)
                 tools, tool_registry = await self._build_tools_and_registry(
                     user_input=user_input,
                     conversation_history=history_to_add,
@@ -784,29 +818,47 @@ class Agent:
                     request_tokens > compactor.threshold_tokens
                     and estimate_tokens(history_to_add) >= compactor.config.min_tokens_to_compact
                 ):
-                    # Pre-compaction memory flush: save durable memories before
-                    # context is summarized (inspired by openclaw's memory flush).
-                    status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
-                    await self._run_memory_review(
-                        conversation_snapshot=history_to_add,
-                        system_prompt=system_prompt,
-                        work_dir=work_dir,
-                        status=status,
-                    )
-                    self._last_memory_review_turn_count = self._conversation_turn_count(history_to_add)
-
-                    status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
-                    history_to_add, _ = await asyncio.to_thread(
-                        compactor.compact,
-                        history_to_add,
-                    )
-                    self.reset_memory_context_snapshot()
-                    self.console.print("[dim]Context compacted to reduce token usage[/dim]")
+                    preserve_turns = max(compactor.config.preserve_last // 2, 1)
+                    covered_turn_count = max(len(draft.turns) - preserve_turns, 0)
+                    previous_covered_turns = draft.checkpoint.covered_turn_count if draft.checkpoint is not None else 0
+                    if covered_turn_count > previous_covered_turns:
+                        status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
+                        await self._run_memory_review(
+                            conversation_snapshot=history_to_add,
+                            system_prompt=system_prompt,
+                            work_dir=work_dir,
+                            status=status,
+                        )
+                        self._last_memory_review_turn_count = len(draft.turns) + 1
+                        status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
+                        covered_message_count = draft.turns[covered_turn_count - 1].end_message
+                        previous_message_count = (
+                            draft.checkpoint.covered_message_count if draft.checkpoint is not None else 0
+                        )
+                        checkpoint_input = deepcopy(draft.checkpoint.context) if draft.checkpoint is not None else []
+                        checkpoint_input.extend(deepcopy(draft.messages[previous_message_count:covered_message_count]))
+                        checkpoint_context, compaction_result = await asyncio.to_thread(
+                            compactor.compact_checkpoint,
+                            checkpoint_input,
+                        )
+                        draft.checkpoint = CompactionCheckpoint(
+                            context=checkpoint_context,
+                            covered_message_count=covered_message_count,
+                            covered_turn_count=covered_turn_count,
+                            generation=(draft.checkpoint.generation + 1 if draft.checkpoint is not None else 1),
+                            strategy=compaction_result.strategy_used.value,
+                            strategy_version=1,
+                            original_tokens=compaction_result.original_tokens,
+                            compacted_tokens=compaction_result.compacted_tokens,
+                        )
+                        history_to_add = draft.model_context(turn_messages)
+                        self.reset_memory_context_snapshot()
+                        self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
                 messages.extend(history_to_add)
 
                 # Run chat with tools
-                result = await self._run_with_tools(
+                result, tool_messages = await self._run_with_tools(
                     messages=messages,
                     tools=tools,
                     tool_registry=tool_registry,
@@ -815,11 +867,24 @@ class Agent:
                     work_dir=work_dir,
                 )
 
-                # Save assistant response
-                self.conversation_history.append({"role": "assistant", "content": result})
-
-                # Save to file
-                self._save_conversation_history()
+                turn_messages.extend(tool_messages)
+                turn_messages.append({"role": "assistant", "content": result})
+                self._capture_session_state(draft)
+                draft.commit_turn(
+                    str(self.execution_context.get("turn_id", uuid.uuid4())),
+                    turn_messages,
+                )
+                turn_count = self._conversation_turn_count(draft.messages)
+                periodic_review_due = turn_count - self._last_memory_review_turn_count >= MEMORY_REVIEW_TURN_INTERVAL
+                if periodic_review_due:
+                    draft.last_memory_review_turn_count = turn_count
+                self._commit_session_state(draft)
+                if periodic_review_due:
+                    self._schedule_periodic_memory_review(
+                        conversation_snapshot=draft.messages,
+                        system_prompt=system_prompt,
+                        work_dir=work_dir,
+                    )
 
                 # Log to memory history
                 try:
@@ -831,8 +896,8 @@ class Agent:
                         tags=["conversation"],
                         scope=self._memory_history_scope(work_dir),
                     )
-                except (OSError, ValueError):
-                    pass  # Memory logging is best-effort
+                except Exception as e:
+                    logger.debug(f"Memory history logging failed (non-critical): {e}")
 
                 try:
                     get_transcript_store().append_turn(
@@ -845,28 +910,16 @@ class Agent:
                 except Exception as e:
                     logger.debug(f"Transcript indexing failed (non-critical): {e}")
 
-                await self._maybe_run_periodic_memory_review(
-                    conversation_snapshot=list(self.conversation_history),
-                    system_prompt=system_prompt,
-                    work_dir=work_dir,
-                    status=status,
-                )
-
                 return result
 
         except asyncio.CancelledError:
-            if self.conversation_history and self.conversation_history[-1] == {
-                "role": "user",
-                "content": user_input,
-            }:
-                self.conversation_history.pop()
-            self._save_conversation_history()
+            self._apply_session_state(committed_state)
             raise
         except (AgentExecutionError, MaxStepsReached, ToolCallProtocolError):
+            self._apply_session_state(committed_state)
             raise
         except Exception as e:
-            self._save_conversation_history()
-
+            self._apply_session_state(committed_state)
             self.console.print(Text.assemble(("Agent execution failed: ", "red"), str(e)))
             raise AgentExecutionError(f"Agent execution failed: {e}") from e
 
@@ -962,14 +1015,35 @@ class Agent:
         system_prompt: str,
         work_dir: Path | None,
         status: Any = None,
+        *,
+        persist: bool = True,
     ) -> None:
         """Schedule an isolated memory review every N user turns."""
         turn_count = self._conversation_turn_count(conversation_snapshot)
         if turn_count - self._last_memory_review_turn_count < MEMORY_REVIEW_TURN_INTERVAL:
             return
         self._last_memory_review_turn_count = turn_count
-        self._save_conversation_history()
-        task = asyncio.create_task(
+        if persist:
+            self._save_conversation_history()
+        self._schedule_periodic_memory_review(
+            conversation_snapshot=conversation_snapshot,
+            system_prompt=system_prompt,
+            work_dir=work_dir,
+        )
+
+    def _schedule_periodic_memory_review(
+        self,
+        conversation_snapshot: list[dict[str, Any]],
+        system_prompt: str,
+        work_dir: Path | None,
+    ) -> None:
+        """Schedule a best-effort review after its checkpoint is committed."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            logger.debug(f"Could not schedule periodic memory review: {exc}")
+            return
+        task = loop.create_task(
             self._run_isolated_memory_review(
                 conversation_snapshot=list(conversation_snapshot),
                 system_prompt=system_prompt,
@@ -1199,7 +1273,7 @@ class Agent:
         stream: bool,
         status: Status,
         work_dir: Path | None = None,
-    ) -> str:
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Run chat with tools and enhanced tracking."""
         cfg = load_config()
 
@@ -1213,7 +1287,7 @@ class Agent:
             llm_client.model = self.agent_spec.model
 
         # Override the chat function to add our tracking
-        return await self._enhanced_chat_with_tools(
+        result = await self._enhanced_chat_with_tools(
             llm_client=llm_client,
             messages=messages,
             tools=tools,
@@ -1221,7 +1295,10 @@ class Agent:
             stream=stream,
             status=status,
             work_dir=work_dir,
+            return_message_delta=True,
         )
+        assert isinstance(result, tuple)
+        return result
 
     async def _enhanced_chat_with_tools(
         self,
@@ -1233,7 +1310,9 @@ class Agent:
         status: Status,
         work_dir: Path | None = None,
         max_steps: int | None = None,
-    ) -> str:
+        *,
+        return_message_delta: bool = False,
+    ) -> str | tuple[str, list[dict[str, Any]]]:
         """Enhanced version of _chat_with_tools with better tracking."""
         max_steps = max_steps or self.max_steps
 
@@ -1243,6 +1322,17 @@ class Agent:
 
         # Create a working copy of messages
         messages = [dict(message) for message in messages]
+        message_delta: list[dict[str, Any]] = []
+
+        def append_canonical(message: dict[str, Any]) -> None:
+            messages.append(message)
+            message_delta.append(deepcopy(message))
+
+        def completed(text: str) -> str | tuple[str, list[dict[str, Any]]]:
+            if return_message_delta:
+                return text, message_delta
+            return text
+
         used_tools = False
 
         cfg = load_config()
@@ -1318,6 +1408,34 @@ class Agent:
                         f"[bold]Agent {self.name}[/bold] - Tools {limited_tools} limited, forcing response..."
                     )
                     self.console.print(f"[yellow]Tools {limited_tools} limited, forcing response[/yellow]")
+                    append_canonical(
+                        {
+                            "role": "assistant",
+                            "content": resp.content or "",
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.name,
+                                        "arguments": tc.raw_arguments,
+                                    },
+                                }
+                                for tc in tool_calls
+                            ],
+                        }
+                    )
+                    for tc in tool_calls:
+                        append_canonical(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": tc.name,
+                                "content": (
+                                    "Tool call limited: further calls to this tool are not allowed in this request"
+                                ),
+                            }
+                        )
                     # Add system message to force response
                     messages.append(
                         {
@@ -1335,12 +1453,12 @@ class Agent:
                         self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
-                        return final_text
+                        return completed(final_text)
                     except Exception as e:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
                         raise AgentExecutionError(f"Could not get final response: {e}") from e
 
-                messages.append(
+                append_canonical(
                     {
                         "role": "assistant",
                         "content": resp.content or "",
@@ -1367,7 +1485,7 @@ class Agent:
                             tool_result_text = f"Tool argument error: {tc.argument_error}"
                             block = live_ui.add_tool(tool_name, {})
                             live_ui.finish_tool(block, success=False, result=tool_result_text)
-                            messages.append(
+                            append_canonical(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
@@ -1391,7 +1509,7 @@ class Agent:
                                     "reason": tool_result_text,
                                 },
                             )
-                            messages.append(
+                            append_canonical(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
@@ -1418,7 +1536,7 @@ class Agent:
                             )
                             block = live_ui.add_tool(tool_name, args)
                             live_ui.finish_tool(block, success=False, result=tool_result_text)
-                            messages.append(
+                            append_canonical(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
@@ -1522,7 +1640,7 @@ class Agent:
                             if len(tool_result_text) > MAX_TOOL_RESULT_LEN:
                                 truncated_result = tool_result_text[:MAX_TOOL_RESULT_LEN] + "\n... [truncated]"
 
-                            messages.append(
+                            append_canonical(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
@@ -1550,7 +1668,7 @@ class Agent:
                                 },
                             )
 
-                            messages.append(
+                            append_canonical(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tool_id,
@@ -1568,7 +1686,7 @@ class Agent:
                     pass
 
                 status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
-                return final_text
+                return completed(final_text)
 
         # Max steps reached
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")

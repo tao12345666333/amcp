@@ -338,7 +338,8 @@ class TestAgentHistoryManagement:
                 agent._save_conversation_history()
                 assert agent.session_file.exists()
                 data = json.loads(agent.session_file.read_text())
-                assert data["conversation_history"] == [{"role": "user", "content": "hi"}]
+                assert data["schema_version"] == 2
+                assert data["conversation"]["messages"] == [{"role": "user", "content": "hi"}]
 
 
 class TestAgentContextBudget:

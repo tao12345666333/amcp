@@ -342,6 +342,42 @@ class TestSmartCompactor:
         assert result.strategy_used == CompactionStrategy.TRUNCATE
         assert len(result_msgs) > 0
 
+    def test_checkpoint_compaction_never_splits_tool_protocol(self, mock_client):
+        config = CompactionConfig(
+            strategy=CompactionStrategy.TRUNCATE,
+            preserve_last=2,
+        )
+        compactor = SmartCompactor(mock_client, model="gpt-5.5", config=config)
+        messages = [
+            {"role": "user", "content": "Inspect"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "name": "read_file",
+                "content": "contents",
+            },
+            {"role": "assistant", "content": "Done"},
+            {"role": "user", "content": "Next"},
+            {"role": "assistant", "content": "Answer"},
+        ]
+
+        checkpoint, _ = compactor.compact_checkpoint(messages)
+
+        assert len(checkpoint) == 1
+        assert checkpoint[0]["role"] == "assistant"
+        assert "tool_calls" not in checkpoint[0]
+
 
 class TestCompactionResult:
     """Tests for CompactionResult dataclass."""

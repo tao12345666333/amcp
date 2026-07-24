@@ -541,6 +541,27 @@ class SmartCompactor:
 
         return result_messages, result
 
+    def compact_checkpoint(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], CompactionResult]:
+        """Compact a committed prefix into a protocol-safe checkpoint message."""
+        compacted, result = self.compact(messages)
+        if not compacted:
+            return compacted, result
+
+        if len(compacted) == 1 and compacted[0].get("role") == "assistant" and not compacted[0].get("tool_calls"):
+            checkpoint_context = compacted
+        else:
+            checkpoint_context = [
+                {
+                    "role": "assistant",
+                    "content": (f"[Previous committed turns compacted]\n\n{_messages_to_text(compacted)}"),
+                }
+            ]
+        result.compacted_tokens = estimate_tokens(checkpoint_context)
+        return checkpoint_context, result
+
     def _split_messages(self, messages: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
         """Split messages into to_compact and to_preserve.
 

@@ -11,7 +11,9 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-SESSION_SCHEMA_VERSION = 1
+from .session_state import InvalidSessionStateError, SessionState
+
+SESSION_SCHEMA_VERSION = 2
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SENSITIVE_KEYS = {
     "api_key",
@@ -81,9 +83,21 @@ class SessionStore:
             if not isinstance(data, dict):
                 raise SessionLoadError(f"Session {self.session_id} must contain a JSON object")
             version = data.get("schema_version", 0)
-            if not isinstance(version, int) or version > SESSION_SCHEMA_VERSION:
+            if not isinstance(version, int) or version < 0 or version > SESSION_SCHEMA_VERSION:
                 raise SessionLoadError(f"Unsupported session schema version {version!r} for {self.session_id}")
-            return data
+            try:
+                state = (
+                    SessionState.from_snapshot(data, self.session_id)
+                    if version == SESSION_SCHEMA_VERSION
+                    else SessionState.migrate_legacy(data, self.session_id)
+                )
+            except InvalidSessionStateError as exc:
+                raise SessionLoadError(f"Invalid session state for {self.session_id}: {exc}") from exc
+            return {
+                **state.to_snapshot(),
+                "schema_version": SESSION_SCHEMA_VERSION,
+                "session_id": self.session_id,
+            }
 
     def save(self, data: dict[str, Any]) -> None:
         """Atomically save a session without exposing partial JSON files."""

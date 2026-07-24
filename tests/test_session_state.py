@@ -1,0 +1,364 @@
+"""Tests for canonical session turns, commits, and restart behavior."""
+
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from amcp.agent import Agent, AgentExecutionError
+from amcp.compaction import CompactionResult, CompactionStrategy
+from amcp.config import AMCPConfig, ChatConfig, ContextConfig
+from amcp.hooks import HookOutput
+from amcp.runtime import TurnStatus
+from amcp.session_state import SessionState
+from amcp.session_store import SessionSaveError
+from amcp.tools import create_default_tool_registry
+
+
+@pytest.fixture(autouse=True)
+def _disable_best_effort_projections():
+    with (
+        patch("amcp.agent.get_memory_manager"),
+        patch("amcp.agent.get_transcript_store"),
+    ):
+        yield
+
+
+def _config() -> AMCPConfig:
+    return AMCPConfig(
+        servers={},
+        chat=ChatConfig(model="glm-4.7"),
+        context=ContextConfig(),
+    )
+
+
+def _tool_delta() -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "think", "arguments": '{"thought":"one"}'},
+                },
+                {
+                    "id": "call-2",
+                    "type": "function",
+                    "function": {"name": "think", "arguments": '{"thought":"two"}'},
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "think",
+            "content": "one",
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-2",
+            "name": "think",
+            "content": "two",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_returns_ordered_canonical_message_delta(tmp_path):
+    class FakeLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "think",
+                            "arguments": json.dumps({"thought": "one"}),
+                        },
+                        {
+                            "id": "call-2",
+                            "name": "think",
+                            "arguments": json.dumps({"thought": "two"}),
+                        },
+                    ],
+                    usage=None,
+                )
+            return SimpleNamespace(content="done", tool_calls=None, usage=None)
+
+    with (
+        patch("amcp.agent.Path.home", return_value=tmp_path),
+        patch("amcp.agent.load_config", return_value=_config()),
+    ):
+        agent = Agent(session_id="tool-delta")
+        think = create_default_tool_registry(enable_task=False).get_tool("think")
+        result = await agent._enhanced_chat_with_tools(
+            llm_client=FakeLLM(),
+            messages=[{"role": "user", "content": "think twice"}],
+            tools=[think.get_spec()],
+            tool_registry={},
+            stream=False,
+            status=MagicMock(),
+            work_dir=tmp_path,
+            return_message_delta=True,
+        )
+
+    assert isinstance(result, tuple)
+    final, delta = result
+    assert final == "done"
+    assert [message["role"] for message in delta] == ["assistant", "tool", "tool"]
+    assert [message["tool_call_id"] for message in delta[1:]] == [
+        "call-1",
+        "call-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_persists_full_tool_evidence_and_restarts(tmp_path):
+    with (
+        patch("amcp.agent.Path.home", return_value=tmp_path),
+        patch("amcp.agent.load_config", return_value=_config()),
+        patch(
+            "amcp.agent.run_user_prompt_hooks",
+            new=AsyncMock(return_value=HookOutput()),
+        ),
+        patch("amcp.llm.create_llm_client"),
+    ):
+        agent = Agent(session_id="canonical")
+        with (
+            patch.object(
+                agent,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(
+                agent,
+                "_run_with_tools",
+                new=AsyncMock(return_value=("done", _tool_delta())),
+            ),
+        ):
+            result = await agent._process_message("inspect", tmp_path, stream=False, show_progress=False)
+
+        restarted = Agent(session_id="canonical")
+
+    assert result == "done"
+    assert [message["role"] for message in agent.conversation_history] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+    ]
+    assert restarted.conversation_history == agent.conversation_history
+    assert restarted._session_state.model_context() == agent.conversation_history
+
+
+@pytest.mark.asyncio
+async def test_failed_and_cancelled_turns_leave_committed_state_unchanged(tmp_path):
+    with (
+        patch("amcp.agent.Path.home", return_value=tmp_path),
+        patch("amcp.agent.load_config", return_value=_config()),
+        patch(
+            "amcp.agent.run_user_prompt_hooks",
+            new=AsyncMock(return_value=HookOutput()),
+        ),
+        patch("amcp.llm.create_llm_client"),
+    ):
+        agent = Agent(session_id="rollback")
+        agent._session_state.commit_turn(
+            "existing",
+            [
+                {"role": "user", "content": "before"},
+                {"role": "assistant", "content": "saved"},
+            ],
+        )
+        agent._apply_session_state(agent._session_state)
+        agent._save_conversation_history()
+        original = list(agent.conversation_history)
+
+        with (
+            patch.object(
+                agent,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(
+                agent,
+                "_run_with_tools",
+                new=AsyncMock(side_effect=AgentExecutionError("provider failed")),
+            ),
+            pytest.raises(AgentExecutionError, match="provider failed"),
+        ):
+            await agent._process_message("fail", tmp_path, stream=False, show_progress=False)
+        assert agent.conversation_history == original
+
+        with (
+            patch(
+                "amcp.agent.run_user_prompt_hooks",
+                new=AsyncMock(side_effect=RuntimeError("hook failed")),
+            ),
+            pytest.raises(RuntimeError, match="hook failed"),
+        ):
+            await agent._process_message("hook", tmp_path, stream=False, show_progress=False)
+
+        assert agent.conversation_history == original
+
+        started = asyncio.Event()
+
+        async def wait_forever(**_kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        with (
+            patch.object(
+                agent,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(agent, "_run_with_tools", side_effect=wait_forever),
+        ):
+            task = asyncio.create_task(agent._process_message("cancel", tmp_path, stream=False, show_progress=False))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert agent.conversation_history == original
+
+
+@pytest.mark.asyncio
+async def test_save_failure_fails_turn_handle_without_advancing_memory(tmp_path):
+    with (
+        patch("amcp.agent.Path.home", return_value=tmp_path),
+        patch("amcp.agent.load_config", return_value=_config()),
+        patch(
+            "amcp.agent.run_user_prompt_hooks",
+            new=AsyncMock(return_value=HookOutput()),
+        ),
+        patch("amcp.llm.create_llm_client"),
+    ):
+        agent = Agent(session_id="commit-failure")
+        with (
+            patch.object(
+                agent,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(
+                agent,
+                "_run_with_tools",
+                new=AsyncMock(return_value=("done", [])),
+            ),
+            patch.object(
+                agent._session_store,
+                "save",
+                side_effect=SessionSaveError("disk full"),
+            ),
+        ):
+            handle = await agent.submit("write", work_dir=tmp_path, stream=False, show_progress=False)
+            with pytest.raises(AgentExecutionError, match="disk full"):
+                await handle.wait()
+
+    assert handle.status == TurnStatus.FAILED
+    assert agent.conversation_history == []
+    assert agent.total_llm_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_restart_only_compacts_new_committed_prefix(tmp_path):
+    compacted_inputs: list[list[dict]] = []
+
+    class FakeCompactor:
+        threshold_tokens = 1
+        config = SimpleNamespace(min_tokens_to_compact=1, preserve_last=2)
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def compact_checkpoint(self, messages):
+            compacted_inputs.append(messages)
+            summary = f"summary-{len(compacted_inputs)}"
+            return (
+                [{"role": "assistant", "content": summary}],
+                CompactionResult(
+                    original_tokens=100,
+                    compacted_tokens=10,
+                    messages_removed=len(messages),
+                    messages_preserved=1,
+                    strategy_used=CompactionStrategy.SUMMARY,
+                    summary=summary,
+                ),
+            )
+
+    with (
+        patch("amcp.agent.Path.home", return_value=tmp_path),
+        patch("amcp.agent.load_config", return_value=_config()),
+        patch(
+            "amcp.agent.run_user_prompt_hooks",
+            new=AsyncMock(return_value=HookOutput()),
+        ),
+        patch("amcp.agent.SmartCompactor", FakeCompactor),
+        patch("amcp.agent.estimate_request_tokens", return_value=100),
+        patch("amcp.agent.estimate_tokens", return_value=100),
+        patch("amcp.llm.create_llm_client"),
+    ):
+        agent = Agent(session_id="checkpoint-restart")
+        for index in range(4):
+            agent._session_state.commit_turn(
+                f"seed-{index}",
+                [
+                    {"role": "user", "content": f"old-user-{index}"},
+                    {"role": "assistant", "content": f"old-answer-{index}"},
+                ],
+            )
+        agent._apply_session_state(agent._session_state)
+        agent._save_conversation_history()
+
+        with (
+            patch.object(
+                agent,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(
+                agent,
+                "_run_with_tools",
+                new=AsyncMock(return_value=("first", [])),
+            ),
+            patch.object(agent, "_run_memory_review", new=AsyncMock(return_value=False)),
+        ):
+            await agent._process_message("new-one", tmp_path, stream=False, show_progress=False)
+
+        restarted = Agent(session_id="checkpoint-restart")
+        with (
+            patch.object(
+                restarted,
+                "_build_tools_and_registry",
+                new=AsyncMock(return_value=([], {})),
+            ),
+            patch.object(
+                restarted,
+                "_run_with_tools",
+                new=AsyncMock(return_value=("second", [])),
+            ),
+            patch.object(
+                restarted,
+                "_run_memory_review",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            await restarted._process_message("new-two", tmp_path, stream=False, show_progress=False)
+
+    assert len(compacted_inputs) == 2
+    assert compacted_inputs[1][0]["content"] == "summary-1"
+    second_contents = [message.get("content") for message in compacted_inputs[1]]
+    assert "old-user-0" not in second_contents
+    assert restarted._session_state.checkpoint.generation == 2
