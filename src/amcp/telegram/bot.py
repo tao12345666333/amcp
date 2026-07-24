@@ -100,6 +100,8 @@ class TelegramBot:
         self._notification_handler_ids: list[str] = []
         self._skill_watcher: Any = None  # SkillWatcher (lazy import)
         self._typing_tasks: dict[int, asyncio.Task[None]] = {}
+        self._typing_counts: dict[int, int] = {}
+        self._typing_lock = asyncio.Lock()
         self._pairing_requests: dict[str, PairingRequest] = {}
         self._scheduler: Any = None  # AssistantScheduler (lazy import)
         self._prompt_scheduler: Any = None  # TelegramPromptScheduler (lazy import)
@@ -1004,12 +1006,30 @@ class TelegramBot:
     async def _start_typing(self, chat_id: int) -> None:
         if not self._config.typing_indicator:
             return
-        await self._stop_typing(chat_id)
-        await self._send_typing_action(chat_id)
-        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+        async with self._typing_lock:
+            count = self._typing_counts.get(chat_id, 0)
+            self._typing_counts[chat_id] = count + 1
+            task = self._typing_tasks.get(chat_id)
+            if task is not None and not task.done():
+                return
+            try:
+                await self._send_typing_action(chat_id)
+            except asyncio.CancelledError:
+                if count:
+                    self._typing_counts[chat_id] = count
+                else:
+                    self._typing_counts.pop(chat_id, None)
+                raise
+            self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
 
     async def _stop_typing(self, chat_id: int) -> None:
-        task = self._typing_tasks.pop(chat_id, None)
+        async with self._typing_lock:
+            count = self._typing_counts.get(chat_id, 0)
+            if count > 1:
+                self._typing_counts[chat_id] = count - 1
+                return
+            self._typing_counts.pop(chat_id, None)
+            task = self._typing_tasks.pop(chat_id, None)
         if task is None:
             return
         task.cancel()
@@ -1017,9 +1037,15 @@ class TelegramBot:
             await task
 
     async def _stop_all_typing(self) -> None:
-        chat_ids = list(self._typing_tasks)
-        for chat_id in chat_ids:
-            await self._stop_typing(chat_id)
+        async with self._typing_lock:
+            tasks = list(self._typing_tasks.values())
+            self._typing_tasks.clear()
+            self._typing_counts.clear()
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     @contextlib.asynccontextmanager
     async def _typing_session(self, chat_id: int):

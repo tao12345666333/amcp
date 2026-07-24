@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from amcp.telegram.auth import AuthMiddleware
 from amcp.telegram.config import TelegramConfig, TelegramGroupConfig, TelegramPairingConfig, TelegramTopicConfig
 from amcp.telegram.formatter import TelegramFormatter
@@ -708,6 +710,55 @@ def test_typing_stop_cancels_task():
     asyncio.run(_run())
 
 
+def test_typing_stays_active_until_all_requests_finish():
+    async def _run():
+        bot = _make_bot_for_typing()
+        await bot._start_typing(250)
+        task = bot._typing_tasks[250]
+
+        await bot._start_typing(250)
+
+        assert bot._typing_tasks[250] is task
+        assert bot._typing_counts[250] == 2
+
+        await bot._stop_typing(250)
+
+        assert bot._typing_tasks[250] is task
+        assert bot._typing_counts[250] == 1
+        assert not task.done()
+
+        await bot._stop_typing(250)
+
+        assert 250 not in bot._typing_tasks
+        assert 250 not in bot._typing_counts
+        assert task.cancelled() or task.done()
+
+    asyncio.run(_run())
+
+
+def test_typing_start_cancellation_rolls_back_request_count():
+    async def _run():
+        bot = _make_bot_for_typing()
+        started = asyncio.Event()
+
+        async def _send_chat_action(**kwargs):
+            started.set()
+            await asyncio.Future()
+
+        bot._application.bot.send_chat_action.side_effect = _send_chat_action
+        task = asyncio.create_task(bot._start_typing(275))
+        await started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert 275 not in bot._typing_tasks
+        assert 275 not in bot._typing_counts
+
+    asyncio.run(_run())
+
+
 def test_typing_disabled_skips():
     async def _run():
         bot = _make_bot_for_typing(typing_indicator=False)
@@ -743,6 +794,7 @@ def test_typing_stop_all():
         await bot._stop_all_typing()
 
         assert len(bot._typing_tasks) == 0
+        assert len(bot._typing_counts) == 0
 
     asyncio.run(_run())
 
