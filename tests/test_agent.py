@@ -659,6 +659,7 @@ async def test_process_message_preserves_max_steps_exception(tmp_path):
     status = SimpleNamespace(update=lambda *args, **kwargs: None)
     with (
         patch("amcp.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
+        patch("amcp.llm.create_llm_client", return_value=MagicMock()),
         patch.object(agent, "_create_progress_context") as progress,
         patch.object(agent, "_get_system_prompt", return_value="system"),
         patch.object(agent, "_build_tools_and_registry", return_value=([], {})),

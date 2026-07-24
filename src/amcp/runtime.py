@@ -9,14 +9,14 @@ import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from .message_queue import MessagePriority
 
 
-class TurnStatus(str, Enum):
+class TurnStatus(StrEnum):
     """Lifecycle states for one submitted turn."""
 
     QUEUED = "queued"
@@ -26,7 +26,7 @@ class TurnStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class SessionRuntimeStatus(str, Enum):
+class SessionRuntimeStatus(StrEnum):
     """Execution states owned by a session runtime."""
 
     IDLE = "idle"
