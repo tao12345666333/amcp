@@ -66,33 +66,16 @@ def test_corrupt_session_has_explicit_diagnostic(tmp_path):
         store.load()
 
 
-def test_migrates_v1_history_without_inventing_tool_messages(tmp_path):
-    store = SessionStore(tmp_path, "legacy")
-    store.path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "session_id": "legacy",
-                "agent_name": "default",
-                "conversation_history": [
-                    {"role": "user", "content": "inspect"},
-                    {"role": "assistant", "content": "done"},
-                ],
-                "tool_calls_history": [{"tool": "read_file"}],
-            }
-        ),
-        encoding="utf-8",
-    )
+@pytest.mark.parametrize("schema_version", [None, 0, 1, 3, True])
+def test_rejects_any_schema_other_than_v2(tmp_path, schema_version):
+    store = SessionStore(tmp_path, "unsupported")
+    payload = {"conversation_history": []}
+    if schema_version is not None:
+        payload["schema_version"] = schema_version
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
 
-    data = store.load()
-
-    assert data["schema_version"] == 2
-    assert [message["role"] for message in data["conversation"]["messages"]] == [
-        "user",
-        "assistant",
-    ]
-    assert data["conversation"]["turns"][0]["legacy"] is True
-    assert all(message["role"] != "tool" for message in data["conversation"]["messages"])
+    with pytest.raises(SessionLoadError, match="Unsupported session schema version"):
+        store.load()
 
 
 def test_rejects_broken_tool_batch(tmp_path):
@@ -177,4 +160,41 @@ def test_rejects_checkpoint_inside_a_turn(tmp_path):
     store.path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(SessionLoadError, match="complete turn boundary"):
+        store.load()
+
+
+def test_rejects_checkpoint_with_invalid_field_types(tmp_path):
+    store = SessionStore(tmp_path, "checkpoint-types")
+    state = SessionState(session_id="checkpoint-types", agent_name="default")
+    state.commit_turn(
+        "turn-1",
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ],
+    )
+    raw = {
+        "schema_version": 2,
+        "session_id": "checkpoint-types",
+        "agent_name": "default",
+        "conversation": {
+            "messages": state.messages,
+            "turns": [asdict(state.turns[0])],
+        },
+        "compaction_checkpoint": {
+            "context": [{"role": "assistant", "content": "summary"}],
+            "covered_message_count": 2,
+            "covered_turn_count": "1",
+            "generation": 1,
+            "strategy": "summary",
+            "strategy_version": 1,
+            "original_tokens": 10,
+            "compacted_tokens": 2,
+        },
+        "usage": {},
+        "diagnostics": {},
+    }
+    store.path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(SessionLoadError, match="checkpoint fields have invalid types"):
         store.load()

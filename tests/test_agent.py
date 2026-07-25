@@ -15,6 +15,7 @@ from amcp.hooks import HookOutput
 from amcp.llm import LLMResponse, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
+from amcp.session_state import SessionState
 from amcp.session_store import SessionLoadError
 from amcp.tools import create_default_tool_registry
 
@@ -56,12 +57,16 @@ class TestAgentInit:
         sessions_dir = tmp_path / ".config" / "amcp" / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         session_file = sessions_dir / "test-session.json"
-        data = {
-            "conversation_history": [{"role": "user", "content": "hi"}],
-            "tool_calls_history": [],
-            "current_conversation_tool_calls": [],
-            "total_llm_calls": 1,
-        }
+        state = SessionState(session_id="test-session", agent_name="default")
+        state.commit_turn(
+            "turn-1",
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+        )
+        state.usage.total_llm_calls = 1
+        data = {**state.to_snapshot(), "schema_version": 2}
         session_file.write_text(json.dumps(data))
 
         with patch("amcp.agent.Path.home") as mock_home:
@@ -69,7 +74,7 @@ class TestAgentInit:
             with patch("amcp.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
-                assert len(agent.conversation_history) == 1
+                assert len(agent.conversation_history) == 2
                 assert agent.total_llm_calls == 1
 
     def test_load_history_handles_corrupted_file(self, tmp_path):
@@ -334,12 +339,22 @@ class TestAgentHistoryManagement:
             with patch("amcp.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
-                agent.conversation_history = [{"role": "user", "content": "hi"}]
+                agent._session_state.commit_turn(
+                    "turn-1",
+                    [
+                        {"role": "user", "content": "hi"},
+                        {"role": "assistant", "content": "hello"},
+                    ],
+                )
+                agent._apply_session_state(agent._session_state)
                 agent._save_conversation_history()
                 assert agent.session_file.exists()
                 data = json.loads(agent.session_file.read_text())
                 assert data["schema_version"] == 2
-                assert data["conversation"]["messages"] == [{"role": "user", "content": "hi"}]
+                assert data["conversation"]["messages"] == [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "hello"},
+                ]
 
 
 class TestAgentContextBudget:

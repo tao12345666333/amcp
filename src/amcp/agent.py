@@ -191,17 +191,7 @@ class Agent:
 
     def _save_conversation_history(self) -> None:
         """Save the current canonical state, propagating commit failures."""
-        if self.conversation_history != self._session_state.messages:
-            candidate = SessionState.migrate_legacy(
-                {
-                    "agent_name": self.name,
-                    "created_at": self._session_state.created_at,
-                    "conversation_history": self.conversation_history,
-                },
-                self.session_id,
-            )
-        else:
-            candidate = self._session_state.clone()
+        candidate = self._session_state.clone()
         candidate = self._capture_session_state(candidate)
         self._session_store.save(candidate.to_snapshot())
         self._session_state = candidate
@@ -209,7 +199,6 @@ class Agent:
 
     def _capture_session_state(self, state: SessionState) -> SessionState:
         """Copy compatibility attributes into one candidate session state."""
-        state.messages = deepcopy(self.conversation_history)
         state.tool_calls_history = deepcopy(self.tool_calls_history)
         state.current_conversation_tool_calls = deepcopy(self.current_conversation_tool_calls)
         state.usage.total_llm_calls = self.total_llm_calls
