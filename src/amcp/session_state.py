@@ -20,7 +20,6 @@ class CanonicalTurn:
     start_message: int
     end_message: int
     completed_at: str
-    legacy: bool = False
 
 
 @dataclass
@@ -154,54 +153,6 @@ class SessionState:
         validate_session_state(state)
         return state
 
-    @classmethod
-    def migrate_legacy(cls, data: dict[str, Any], session_id: str) -> SessionState:
-        """Migrate v0/v1 user/assistant history without inventing tool evidence."""
-        messages = data.get("conversation_history", [])
-        if not isinstance(messages, list):
-            raise InvalidSessionStateError("Legacy conversation_history must be a list")
-        copied = deepcopy(messages)
-        for message in copied:
-            if not isinstance(message, dict) or message.get("role") not in {
-                "user",
-                "assistant",
-            }:
-                raise InvalidSessionStateError("Legacy history may contain only user and assistant messages")
-
-        turns: list[CanonicalTurn] = []
-        start = 0
-        while start < len(copied):
-            end = start + 1
-            if copied[start].get("role") == "user":
-                while end < len(copied) and copied[end].get("role") != "user":
-                    end += 1
-            turns.append(
-                CanonicalTurn(
-                    turn_id=f"legacy-{len(turns) + 1}",
-                    start_message=start,
-                    end_message=end,
-                    completed_at=str(data.get("created_at", datetime.now().isoformat())),
-                    legacy=True,
-                )
-            )
-            start = end
-
-        usage_fields = SessionUsage.__dataclass_fields__
-        usage = SessionUsage(**{name: data[name] for name in usage_fields if name in data})
-        state = cls(
-            session_id=session_id,
-            agent_name=str(data.get("agent_name", "default")),
-            created_at=str(data.get("created_at", datetime.now().isoformat())),
-            messages=copied,
-            turns=turns,
-            usage=usage,
-            tool_calls_history=deepcopy(data.get("tool_calls_history", [])),
-            current_conversation_tool_calls=deepcopy(data.get("current_conversation_tool_calls", [])),
-            last_memory_review_turn_count=int(data.get("last_memory_review_turn_count", 0)),
-        )
-        validate_session_state(state)
-        return state
-
 
 def validate_session_state(state: SessionState) -> None:
     """Validate turn ranges, tool batches, and checkpoint coverage."""
@@ -210,8 +161,14 @@ def validate_session_state(state: SessionState) -> None:
     expected_start = 0
     turn_ids: set[str] = set()
     for turn in state.turns:
-        if not turn.turn_id or turn.turn_id in turn_ids:
+        if not isinstance(turn.turn_id, str) or not turn.turn_id or turn.turn_id in turn_ids:
             raise InvalidSessionStateError("Committed turn IDs must be unique")
+        if (
+            type(turn.start_message) is not int
+            or type(turn.end_message) is not int
+            or not isinstance(turn.completed_at, str)
+        ):
+            raise InvalidSessionStateError("Committed turn fields have invalid types")
         turn_ids.add(turn.turn_id)
         if (
             turn.start_message != expected_start
@@ -220,10 +177,7 @@ def validate_session_state(state: SessionState) -> None:
         ):
             raise InvalidSessionStateError("Session turn ranges must be contiguous and valid")
         turn_messages = state.messages[turn.start_message : turn.end_message]
-        if turn.legacy:
-            _validate_legacy_turn(turn_messages)
-        else:
-            _validate_complete_turn(turn_messages)
+        _validate_complete_turn(turn_messages)
         expected_start = turn.end_message
     if expected_start != len(state.messages):
         raise InvalidSessionStateError("Every canonical message must belong to one turn")
@@ -240,6 +194,16 @@ def validate_session_state(state: SessionState) -> None:
         )
     ):
         raise InvalidSessionStateError("Compaction checkpoint context must be a non-empty list")
+    integer_fields = (
+        checkpoint.covered_message_count,
+        checkpoint.covered_turn_count,
+        checkpoint.generation,
+        checkpoint.strategy_version,
+        checkpoint.original_tokens,
+        checkpoint.compacted_tokens,
+    )
+    if any(type(value) is not int for value in integer_fields) or not isinstance(checkpoint.strategy, str):
+        raise InvalidSessionStateError("Compaction checkpoint fields have invalid types")
     if not 0 < checkpoint.covered_turn_count <= len(state.turns):
         raise InvalidSessionStateError("Compaction checkpoint has invalid turn coverage")
     boundary = state.turns[checkpoint.covered_turn_count - 1].end_message
@@ -247,13 +211,6 @@ def validate_session_state(state: SessionState) -> None:
         raise InvalidSessionStateError("Compaction checkpoint coverage must end on a complete turn boundary")
     if checkpoint.generation < 1 or checkpoint.strategy_version < 1:
         raise InvalidSessionStateError("Compaction checkpoint generation is invalid")
-
-
-def _validate_legacy_turn(messages: list[dict[str, Any]]) -> None:
-    if not messages or any(
-        not isinstance(message, dict) or message.get("role") not in {"user", "assistant"} for message in messages
-    ):
-        raise InvalidSessionStateError("Legacy turn contains invalid messages")
 
 
 def _validate_complete_turn(messages: list[dict[str, Any]]) -> None:

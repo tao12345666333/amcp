@@ -82,16 +82,12 @@ class SessionStore:
 
             if not isinstance(data, dict):
                 raise SessionLoadError(f"Session {self.session_id} must contain a JSON object")
-            version = data.get("schema_version", 0)
-            if not isinstance(version, int) or version < 0 or version > SESSION_SCHEMA_VERSION:
+            version = data.get("schema_version")
+            if version != SESSION_SCHEMA_VERSION or type(version) is not int:
                 raise SessionLoadError(f"Unsupported session schema version {version!r} for {self.session_id}")
             try:
-                state = (
-                    SessionState.from_snapshot(data, self.session_id)
-                    if version == SESSION_SCHEMA_VERSION
-                    else SessionState.migrate_legacy(data, self.session_id)
-                )
-            except InvalidSessionStateError as exc:
+                state = SessionState.from_snapshot(data, self.session_id)
+            except (InvalidSessionStateError, TypeError, ValueError) as exc:
                 raise SessionLoadError(f"Invalid session state for {self.session_id}: {exc}") from exc
             return {
                 **state.to_snapshot(),
