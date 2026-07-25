@@ -32,11 +32,11 @@ try:
     from telegram import BotCommand
     from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 except ImportError:  # pragma: no cover - optional dependency
-    BotCommand = None  # type: ignore[assignment]
-    ApplicationBuilder = None  # type: ignore[assignment]
-    CommandHandler = None  # type: ignore[assignment]
-    MessageHandler = None  # type: ignore[assignment]
-    filters = None  # type: ignore[assignment]
+    BotCommand = None  # type: ignore[assignment,misc]
+    ApplicationBuilder = None  # type: ignore[assignment,misc]
+    CommandHandler = None  # type: ignore[assignment,misc]
+    MessageHandler = None  # type: ignore[assignment,misc]
+    filters = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,7 @@ class TelegramBot:
         if key not in key_map:
             return False, f"Unsupported config key: {key}"
         try:
+            parsed: Any = value
             if key in {"dm_policy", "group_policy"}:
                 parsed = normalize_dm_policy(value) if key == "dm_policy" else normalize_group_policy(value)
                 if parsed != value.strip().lower():
@@ -529,7 +530,7 @@ class TelegramBot:
         max_queue_size = self._config.max_queue_size
         if max_queue_size <= 0:
             return False
-        return session.agent.queued_count() >= max_queue_size
+        return bool(session.agent.queued_count() >= max_queue_size)
 
     async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
         session = self._session_manager.get_or_create_session(chat_id)

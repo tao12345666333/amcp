@@ -160,7 +160,8 @@ class MemoryDreamer:
     def _load_state(self) -> dict[str, Any]:
         try:
             if self.state_file.exists():
-                return json.loads(self.state_file.read_text(encoding="utf-8"))
+                state = json.loads(self.state_file.read_text(encoding="utf-8"))
+                return state if isinstance(state, dict) else {}
         except (OSError, json.JSONDecodeError) as e:
             logger.debug(f"Could not read memory dream state: {e}")
         return {}

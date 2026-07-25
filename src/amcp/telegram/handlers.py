@@ -534,11 +534,20 @@ class TelegramHandlers:
         self._rate_limiter = rate_limiter
         self._work_dir = work_dir
 
+    def _chat_id(self, update: Update) -> int:
+        """Narrow effective chat id; callers already verified authorization."""
+        assert update.effective_chat is not None
+        return update.effective_chat.id
+
+    def _user_id(self, update: Update) -> int:
+        assert update.effective_user is not None
+        return update.effective_user.id
+
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
         await self._bot.send_text(
-            update.effective_chat.id,
+            self._chat_id(update),
             "Welcome to AMCP Bot. Use /help to see available commands.",
         )
 
@@ -565,17 +574,17 @@ class TelegramHandlers:
             "/logs <n> - Show recent logs (admin)",
             "/shutdown - Stop the bot (admin)",
         ]
-        if self._auth.is_admin(update.effective_user.id):
+        if self._auth.is_admin(self._user_id(update)):
             lines.append("/pair list|approve <code> - Manage DM pairing requests (admin)")
         await self._bot.send_text(
-            update.effective_chat.id,
+            self._chat_id(update),
             "\n".join(lines),
         )
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
-        chat_id = update.effective_chat.id
+        chat_id = self._chat_id(update)
         sessions = self._session_manager.list_sessions(chat_id)
         current = self._session_manager.get_current_session_id(chat_id)
         current_session = self._session_manager.get_current_session(chat_id)
@@ -654,7 +663,7 @@ class TelegramHandlers:
     async def handle_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
-        chat_id = update.effective_chat.id
+        chat_id = self._chat_id(update)
         cancelled, queued = self._bot.cancel_session(chat_id)
         if cancelled or queued:
             await self._bot.send_text(
@@ -669,12 +678,12 @@ class TelegramHandlers:
             return
         prompt = " ".join(context.args or [])
         if not prompt:
-            await self._bot.send_text(update.effective_chat.id, "Usage: /ask <prompt>")
+            await self._bot.send_text(self._chat_id(update), "Usage: /ask <prompt>")
             return
         message = update.message
         if message:
             prompt = _build_enriched_prompt(prompt, message, assistant_mode=self._bot.config.assistant_mode)
-        await self._bot.handle_prompt(update.effective_chat.id, update.effective_user.id, prompt)
+        await self._bot.handle_prompt(self._chat_id(update), self._user_id(update), prompt)
 
     async def handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = "/skills"
@@ -793,25 +802,25 @@ class TelegramHandlers:
             return
         args = context.args or []
         if len(args) < 2 or args[0] != "search":
-            await self._bot.send_text(update.effective_chat.id, "Usage: /memory search <query>")
+            await self._bot.send_text(self._chat_id(update), "Usage: /memory search <query>")
             return
         query = " ".join(args[1:])
         memory_project_root = getattr(self._bot, "memory_project_root", lambda _chat_id: self._work_dir)
-        memory_manager = get_memory_manager(memory_project_root(update.effective_chat.id))
+        memory_manager = get_memory_manager(memory_project_root(self._chat_id(update)))
         results = memory_manager.search(query)
         if not results:
-            await self._bot.send_text(update.effective_chat.id, "No results found.")
+            await self._bot.send_text(self._chat_id(update), "No results found.")
             return
         lines = [f"Found {len(results)} results:"]
         for idx, result in enumerate(results, start=1):
             lines.append(f"{idx}. [{result.source}] {result.line_number}: {result.content}")
-        await self._bot.send_text(update.effective_chat.id, "\n".join(lines))
+        await self._bot.send_text(self._chat_id(update), "\n".join(lines))
 
     async def handle_models(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """List configured LLM provider profiles."""
         if not await self._ensure_authorized(update):
             return
-        await self._bot.send_text(update.effective_chat.id, self._bot.models_summary())
+        await self._bot.send_text(self._chat_id(update), self._bot.models_summary())
 
     async def handle_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Switch the active LLM provider profile."""
@@ -820,9 +829,9 @@ class TelegramHandlers:
         args = context.args or []
         if len(args) >= 2 and args[0].lower() == "use":
             _, message = self._bot.use_model_provider(" ".join(args[1:]))
-            await self._bot.send_text(update.effective_chat.id, message)
+            await self._bot.send_text(self._chat_id(update), message)
             return
-        await self._bot.send_text(update.effective_chat.id, "Usage: /model use <name>")
+        await self._bot.send_text(self._chat_id(update), "Usage: /model use <name>")
 
     async def handle_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_admin(update):
@@ -830,18 +839,18 @@ class TelegramHandlers:
         args = context.args or []
         if not args or args[0] == "show":
             summary = self._bot.config_summary()
-            await self._bot.send_text(update.effective_chat.id, summary)
+            await self._bot.send_text(self._chat_id(update), summary)
             return
         if args[0] == "set" and len(args) >= 3:
             key = args[1]
             value = " ".join(args[2:])
             ok, message = self._bot.update_config_value(key, value)
-            await self._bot.send_text(update.effective_chat.id, message)
+            await self._bot.send_text(self._chat_id(update), message)
             if ok:
                 await self._bot.persist_config()
             return
         await self._bot.send_text(
-            update.effective_chat.id,
+            self._chat_id(update),
             "Usage: /config show|set <key> <value>",
         )
 
@@ -850,45 +859,45 @@ class TelegramHandlers:
             return
         args = context.args or []
         if not args or args[0] == "list":
-            await self._bot.send_text(update.effective_chat.id, self._bot.users_summary())
+            await self._bot.send_text(self._chat_id(update), self._bot.users_summary())
             return
         if args[0] in {"add", "remove"} and len(args) > 1:
             try:
                 user_id = int(args[1])
             except ValueError:
-                await self._bot.send_text(update.effective_chat.id, "User ID must be numeric.")
+                await self._bot.send_text(self._chat_id(update), "User ID must be numeric.")
                 return
             if args[0] == "add":
                 self._bot.add_allowed_user(user_id)
                 await self._bot.persist_config()
-                await self._bot.send_text(update.effective_chat.id, f"Added user: {user_id}")
+                await self._bot.send_text(self._chat_id(update), f"Added user: {user_id}")
                 return
             self._bot.remove_allowed_user(user_id)
             await self._bot.persist_config()
-            await self._bot.send_text(update.effective_chat.id, f"Removed user: {user_id}")
+            await self._bot.send_text(self._chat_id(update), f"Removed user: {user_id}")
             return
         if len(args) > 2 and args[0] == "admin" and args[1] in {"add", "remove"}:
             try:
                 user_id = int(args[2])
             except ValueError:
-                await self._bot.send_text(update.effective_chat.id, "User ID must be numeric.")
+                await self._bot.send_text(self._chat_id(update), "User ID must be numeric.")
                 return
             if args[1] == "add":
                 self._bot.add_admin_user(user_id)
                 await self._bot.persist_config()
-                await self._bot.send_text(update.effective_chat.id, f"Added admin: {user_id}")
+                await self._bot.send_text(self._chat_id(update), f"Added admin: {user_id}")
                 return
             self._bot.remove_admin_user(user_id)
             await self._bot.persist_config()
-            await self._bot.send_text(update.effective_chat.id, f"Removed admin: {user_id}")
+            await self._bot.send_text(self._chat_id(update), f"Removed admin: {user_id}")
             return
-        await self._bot.send_text(update.effective_chat.id, "Usage: /users list|add|remove <id>")
+        await self._bot.send_text(self._chat_id(update), "Usage: /users list|add|remove <id>")
 
     async def handle_pair(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_admin(update):
             return
         args = context.args or []
-        chat_id = update.effective_chat.id
+        chat_id = self._chat_id(update)
 
         if not args or args[0] == "list":
             requests = self._bot.list_pairing_requests()
@@ -921,15 +930,15 @@ class TelegramHandlers:
             try:
                 count = int(context.args[0])
             except ValueError:
-                await self._bot.send_text(update.effective_chat.id, "Usage: /logs <n>")
+                await self._bot.send_text(self._chat_id(update), "Usage: /logs <n>")
                 return
         logs = self._bot.tail_logs(count)
-        await self._bot.send_text(update.effective_chat.id, logs)
+        await self._bot.send_text(self._chat_id(update), logs)
 
     async def handle_shutdown(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_admin(update):
             return
-        await self._bot.send_text(update.effective_chat.id, "Shutting down.")
+        await self._bot.send_text(self._chat_id(update), "Shutting down.")
         await self._bot.stop()
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -994,7 +1003,7 @@ class TelegramHandlers:
     async def handle_unknown(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
             return
-        await self._bot.send_text(update.effective_chat.id, "Unknown command. Use /help.")
+        await self._bot.send_text(self._chat_id(update), "Unknown command. Use /help.")
 
     async def _ensure_authorized(self, update: Update) -> bool:
         user = update.effective_user

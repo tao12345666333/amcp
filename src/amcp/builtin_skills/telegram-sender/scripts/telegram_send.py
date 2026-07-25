@@ -21,9 +21,10 @@ import sys
 import tempfile
 from contextlib import suppress
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 try:
     from telegramify_markdown import markdownify
@@ -53,7 +54,7 @@ def _unescape_newlines(text: str) -> str:
 
 def _to_markdownv2(text: str) -> str:
     """Convert user-friendly markdown text to Telegram MarkdownV2."""
-    return markdownify(_unescape_newlines(text)).rstrip("\n")
+    return cast("str", markdownify(_unescape_newlines(text)).rstrip("\n"))
 
 
 def _is_url(value: str) -> bool:
@@ -128,7 +129,7 @@ def send_message(
 
     converted_text = _to_markdownv2(text)
 
-    payload = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": converted_text,
         "parse_mode": "MarkdownV2",
@@ -140,7 +141,7 @@ def send_message(
     response = requests.post(url, json=payload, timeout=30)
     response.raise_for_status()
 
-    return response.json()
+    return cast("dict[str, Any]", response.json())
 
 
 def send_photo(
@@ -166,7 +167,7 @@ def send_photo(
         API response as dict
     """
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
-    payload = {"chat_id": chat_id}
+    payload: dict[str, Any] = {"chat_id": chat_id}
 
     if caption:
         if mention_username:
@@ -193,7 +194,7 @@ def send_photo(
             payload["photo"] = photo
             response = requests.post(url, json=payload, timeout=30)
             response.raise_for_status()
-            return response.json()
+            return cast("dict[str, Any]", response.json())
         else:
             raise ValueError("Photo must be a local file path, HTTP(S) URL, or Telegram file_id")
 
@@ -201,7 +202,7 @@ def send_photo(
             files = {"photo": (upload_path.name, photo_file)}
             response = requests.post(url, data=payload, files=files, timeout=60)
             response.raise_for_status()
-            return response.json()
+            return cast("dict[str, Any]", response.json())
     finally:
         if temp_path:
             with suppress(OSError):
@@ -225,7 +226,7 @@ def edit_message(bot_token: str, chat_id: str, message_id: int, text: str) -> di
 
     converted_text = _to_markdownv2(text)
 
-    payload = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "message_id": message_id,
         "text": converted_text,
@@ -235,7 +236,7 @@ def edit_message(bot_token: str, chat_id: str, message_id: int, text: str) -> di
     response = requests.post(url, json=payload, timeout=30)
     response.raise_for_status()
 
-    return response.json()
+    return cast("dict[str, Any]", response.json())
 
 
 def main():

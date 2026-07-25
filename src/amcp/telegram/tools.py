@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -96,7 +96,7 @@ The text supports Markdown formatting which is auto-converted to MarkdownV2."""
         try:
             from telegramify_markdown import markdownify
 
-            return markdownify(text).rstrip("\n")
+            return cast("str", markdownify(text).rstrip("\n"))
         except ImportError:
             logger.debug("telegramify_markdown not available, sending as plain text")
             return text

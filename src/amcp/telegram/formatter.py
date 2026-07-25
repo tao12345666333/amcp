@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import cast
 
 from telegramify_markdown import convert, split_markdownv2
 
@@ -17,7 +18,7 @@ class TelegramFormatter:
     def format_response(self, text: str) -> list[str]:
         """Convert standard Markdown and split it into valid Telegram messages."""
         plain_text, entities = convert(text)
-        return split_markdownv2(plain_text, entities, max_utf16_len=self.max_length)
+        return cast("list[str]", split_markdownv2(plain_text, entities, max_utf16_len=self.max_length))
 
     def format_error(self, error: str) -> str:
         return f"Error: {self._escape_markdown(error)}"

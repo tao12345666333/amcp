@@ -102,7 +102,7 @@ class ContextBudgetManager:
     @staticmethod
     def _clamp_ratio(value: object, default: float) -> float:
         try:
-            ratio = float(value)
+            ratio = float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return default
         return min(max(ratio, 0.0), 0.9)
@@ -110,7 +110,7 @@ class ContextBudgetManager:
     @staticmethod
     def _positive_ratio(value: object, default: float) -> float:
         try:
-            ratio = float(value)
+            ratio = float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return default
         return ratio if ratio > 0 else 0.0

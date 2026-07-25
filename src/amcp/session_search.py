@@ -110,7 +110,7 @@ class TranscriptStore:
             ),
         )
         conn.commit()
-        return int(cursor.lastrowid)
+        return cursor.lastrowid or 0
 
     def append_turn(
         self,

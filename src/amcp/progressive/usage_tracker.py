@@ -46,7 +46,8 @@ class ToolUsageTracker:
                     snapshot.last_used[tool_name] = timestamp
 
             if prev_tool and prev_tool != tool_name:
-                pair = tuple(sorted((prev_tool, tool_name)))
+                lo, hi = sorted((prev_tool, tool_name))
+                pair = (lo, hi)
                 snapshot.cooccurrence_counts[pair] = snapshot.cooccurrence_counts.get(pair, 0) + 1
 
             prev_tool = tool_name
@@ -94,7 +95,8 @@ class ToolUsageTracker:
         for other in relevant_tools:
             if other == tool_name:
                 continue
-            pair = tuple(sorted((tool_name, other)))
+            lo, hi = sorted((tool_name, other))
+            pair = (lo, hi)
             score += snapshot.cooccurrence_counts.get(pair, 0)
 
         if score <= 0:

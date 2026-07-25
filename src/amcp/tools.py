@@ -1113,11 +1113,11 @@ Example for fixing a bug:
 +    return a - b
 *** End Patch"""
 
-    def execute(
+    def execute(  # type: ignore[override]
         self,
         patch: str,
         _workspace_root: Path | None = None,
-    ) -> ToolResult:  # type: ignore[override]
+    ) -> ToolResult:
         """Execute the apply patch tool.
 
         Args:

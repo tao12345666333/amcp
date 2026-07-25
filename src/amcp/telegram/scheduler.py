@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from croniter import croniter
@@ -105,13 +105,13 @@ class TelegramScheduledPrompt:
     def from_dict(cls, data: dict[str, object]) -> TelegramScheduledPrompt:
         return cls(
             id=str(data["id"]),
-            chat_id=int(data["chat_id"]),
+            chat_id=int(str(data["chat_id"])),
             schedule=str(data["schedule"]),
             prompt=str(data["prompt"]),
             name=str(data["name"]) if data.get("name") else None,
             enabled=bool(data.get("enabled", True)),
             notify=bool(data.get("notify", True)),
-            timeout=int(data.get("timeout", 900)),
+            timeout=int(str(data.get("timeout", 900))),
             blueprint=str(data["blueprint"]) if data.get("blueprint") else None,
             created_at=str(data.get("created_at") or _local_now().isoformat()),
             last_run_at=str(data["last_run_at"]) if data.get("last_run_at") else None,
@@ -325,6 +325,7 @@ class TelegramPromptScheduler:
         except (ValueError, KeyError):
             logger.warning("Invalid cron expression %r for scheduled prompt %s", job.schedule, job.id)
             return False
+        next_run = cast(datetime, next_run)
         if next_run.tzinfo is None:
             next_run = next_run.replace(tzinfo=now.tzinfo)
         return next_run <= now

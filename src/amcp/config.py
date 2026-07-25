@@ -446,15 +446,15 @@ def _decode_context(raw: Mapping[str, object] | None) -> ContextConfig | None:
     return ContextConfig(
         progressive_tools=bool(raw.get("progressive_tools", True)),
         progressive_skills=bool(raw.get("progressive_skills", True)),
-        response_ratio=float(raw.get("response_ratio", 0.30)),
+        response_ratio=float(str(raw.get("response_ratio", 0.30))),
         min_prompt_budget=int(str(raw.get("min_prompt_budget", 2500))),
         base_prompt_max_tokens=int(str(raw.get("base_prompt_max_tokens", 2200))),
-        tool_budget_ratio=float(raw.get("tool_budget_ratio", 0.45)),
-        skill_budget_ratio=float(raw.get("skill_budget_ratio", 0.30)),
-        memory_budget_ratio=float(raw.get("memory_budget_ratio", 0.15)),
-        rules_budget_ratio=float(raw.get("rules_budget_ratio", 0.10)),
-        tool_relevance_threshold=float(raw.get("tool_relevance_threshold", 0.12)),
-        skill_relevance_threshold=float(raw.get("skill_relevance_threshold", 0.25)),
+        tool_budget_ratio=float(str(raw.get("tool_budget_ratio", 0.45))),
+        skill_budget_ratio=float(str(raw.get("skill_budget_ratio", 0.30))),
+        memory_budget_ratio=float(str(raw.get("memory_budget_ratio", 0.15))),
+        rules_budget_ratio=float(str(raw.get("rules_budget_ratio", 0.10))),
+        tool_relevance_threshold=float(str(raw.get("tool_relevance_threshold", 0.12))),
+        skill_relevance_threshold=float(str(raw.get("skill_relevance_threshold", 0.25))),
         tool_tiers=tool_tiers,
     )
 
@@ -922,7 +922,8 @@ def _decode_automation(raw: Mapping[str, object] | None) -> AutomationConfig | N
     )
 
     jobs: list[AutomationJobConfig] = []
-    for j in raw.get("jobs", []):
+    jobs_raw = raw.get("jobs", [])
+    for j in jobs_raw if isinstance(jobs_raw, list) else []:
         if not isinstance(j, dict):
             continue
         timeout = int(str(j.get("timeout", cfg.default_timeout)))
