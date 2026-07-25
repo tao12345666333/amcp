@@ -97,7 +97,9 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
         )
 
     try:
-        result = tool_func.execute(**arguments)
+        # Go through the registry so arguments are validated the same way as
+        # agent-driven calls instead of raising a raw TypeError.
+        result = tool_registry.execute_tool(tool_name, **arguments)
 
         if isinstance(result, ToolResult):
             return {

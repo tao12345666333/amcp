@@ -14,6 +14,8 @@ from typing import Any, Protocol, cast, runtime_checkable
 import httpx
 from rich.console import Console
 
+from .tool_schema import ToolArgumentError, validate_callable_arguments
+
 
 @dataclass
 class ToolResult:
@@ -150,6 +152,10 @@ class ToolRegistry:
             return ToolResult(success=False, content="", error=f"Tool '{name}' not found")
 
         try:
+            # Reject unbindable arguments up front so callers get an actionable
+            # message instead of an opaque TypeError from execute().
+            validate_callable_arguments(name, tool.execute, kwargs)
+
             # Validate parameters
             if hasattr(tool, "validate_parameters"):
                 tool.validate_parameters(**kwargs)
@@ -158,6 +164,8 @@ class ToolRegistry:
             result = tool.execute(**kwargs)
             return result
 
+        except (ToolArgumentError, ToolValidationError) as e:
+            return ToolResult(success=False, content="", error=f"Invalid arguments: {e}")
         except Exception as e:
             return ToolResult(success=False, content="", error=f"Tool execution failed: {type(e).__name__}: {e}")
 
@@ -187,6 +195,15 @@ def _truncate_text(value: str, max_chars: int) -> str:
     if max_chars <= 0 or len(value) <= max_chars:
         return value
     return value[: max_chars - 16].rstrip() + "\n...[truncated]"
+
+
+def _as_str_list(value: str | list[str] | None) -> list[str]:
+    """Accept either a single value or a list for list-typed tool parameters."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    return [str(item) for item in value]
 
 
 _DEFAULT_EXA_MCP_URL = "https://mcp.exa.ai/mcp"
@@ -939,13 +956,17 @@ class GrepTool(BaseTool):
     def execute(  # type: ignore[override]
         self,
         pattern: str,
-        paths: list[str] | None = None,
+        paths: list[str] | str | None = None,
         ignore_case: bool = False,
         hidden: bool = False,
         context: int = 0,
-        globs: list[str] | None = None,
+        globs: list[str] | str | None = None,
     ) -> ToolResult:
-        """Execute grep search."""
+        """Execute grep search.
+
+        ``paths`` and ``globs`` are lists, but a single string is accepted too so
+        a caller passing one path does not have to wrap it in an array.
+        """
         import shutil
         import subprocess
 
@@ -954,15 +975,18 @@ class GrepTool(BaseTool):
                 success=False, content="", error="ripgrep (rg) not found on PATH. Please install ripgrep."
             )
 
+        search_paths = _as_str_list(paths) or ["."]
+        glob_filters = _as_str_list(globs)
+
         try:
-            cmd = ["rg", pattern, *(paths or ["."]), "-n"]
+            cmd = ["rg", pattern, *search_paths, "-n"]
             if ignore_case:
                 cmd.append("-i")
             if hidden:
                 cmd.append("--hidden")
             if context:
                 cmd.extend(["-C", str(context)])
-            for g in globs or []:
+            for g in glob_filters:
                 cmd.extend(["-g", g])
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -973,7 +997,7 @@ class GrepTool(BaseTool):
                     content=result.stdout,
                     metadata={
                         "pattern": pattern,
-                        "paths": paths or ["."],
+                        "paths": search_paths,
                         "match_count": len(result.stdout.splitlines()),
                     },
                 )
@@ -1002,7 +1026,11 @@ class GrepTool(BaseTool):
                 "paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Paths to search in (default: current directory)",
+                    "description": (
+                        "Files or directories to search, as a list (default: workspace root). "
+                        "The parameter is named 'paths', not 'path'; pass a single location as a "
+                        "one-element list, e.g. ['src/amcp']."
+                    ),
                 },
                 "ignore_case": {"type": "boolean", "description": "Case-insensitive search"},
                 "hidden": {"type": "boolean", "description": "Search hidden files and directories"},

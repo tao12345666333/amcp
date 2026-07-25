@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import AMCPConfig
 from .mcp_client import call_mcp_tool
+from .tool_schema import ToolArgumentError, normalize_tool_arguments
 from .tools import ToolRegistry, ToolResult
 
 
@@ -175,6 +176,11 @@ class ToolExecutor:
         if name not in self.exposed_tools or not self.capability.allows(name):
             raise ToolPermissionError(f"Tool '{name}' is not authorized for this turn")
 
+        try:
+            arguments = self._normalize_arguments(name, arguments)
+        except ToolArgumentError as exc:
+            return ToolResult(success=False, content="", error=f"Invalid arguments: {exc}")
+
         args = self._bind_arguments(name, arguments)
         if name.startswith("mcp."):
             return await self._execute_mcp(name, args)
@@ -186,6 +192,20 @@ class ToolExecutor:
         if name == "bash":
             return await self._execute_bash(args)
         return await asyncio.to_thread(self.registry.execute_tool, name, **args)
+
+    def _normalize_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Repair near-miss model arguments against the tool's published schema.
+
+        This runs before argument binding so alias repair (``path`` -> ``paths``)
+        happens before trusted runtime values are injected. MCP tools own their
+        own schemas remotely, so they are passed through untouched.
+        """
+        if name.startswith("mcp."):
+            return dict(arguments)
+        tool = self.registry.get_tool(name)
+        if tool is None:
+            return dict(arguments)
+        return normalize_tool_arguments(name, tool.get_parameters_schema(), arguments)
 
     def _bind_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         args = dict(arguments)

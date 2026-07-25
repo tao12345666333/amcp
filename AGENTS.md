@@ -18,6 +18,9 @@ progressive context management.
 ## Architecture Patterns
 
 - Tools are classes inheriting from `BaseTool` in `src/amcp/tools.py`.
+- Model-supplied tool arguments are repaired and validated against each tool's JSON schema in
+  `src/amcp/tool_schema.py`; register parameter aliases there instead of widening tool
+  signatures, and never let an invalid argument reach `execute()` as a raw `TypeError`.
 - Agents are configured through `AgentSpec` and `ResolvedAgentSpec`.
 - Built-in agent types live in `src/amcp/multi_agent.py`.
 - Configuration is TOML and is loaded through `src/amcp/config.py`.
@@ -67,6 +70,8 @@ src/amcp/
 ├── memory.py             # Memory orchestration
 ├── models_db.py          # Model metadata lookup
 ├── project_rules.py      # AGENTS.md loading
+├── tool_execution.py     # Capability checks and workspace-bound tool dispatch
+├── tool_schema.py        # Tool argument alias repair and schema validation
 ├── client/               # Embedded, HTTP, and WebSocket clients
 ├── protocol/             # HTTP/WebSocket protocol adapters and converters
 ├── server/               # HTTP/WebSocket server
