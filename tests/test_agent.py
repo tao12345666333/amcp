@@ -11,7 +11,7 @@ import pytest
 from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ChatConfig, ContextConfig
-from amcp.hooks import HookOutput
+from amcp.hooks import HookDecision, HookOutput
 from amcp.llm import LLMResponse, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
@@ -214,6 +214,57 @@ class TestAgentToolLimits:
         )
 
         assert result == "done"
+
+    @pytest.mark.asyncio
+    async def test_grep_path_is_canonicalized_before_pre_tool_hooks(self, tmp_path):
+        """Hooks inspect grep's canonical paths argument rather than its alias."""
+
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "call_1",
+                                "name": "grep",
+                                "arguments": json.dumps({"pattern": "needle", "path": "src"}),
+                            }
+                        ],
+                    )
+                assert any(message.get("role") == "tool" for message in messages)
+                return SimpleNamespace(content="done", tool_calls=None)
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            agent = Agent(session_id="test-session")
+
+        denied = HookOutput(decision=HookDecision.DENY, decision_reason="test")
+        with patch(
+            "amcp.agent.run_pre_tool_use_hooks",
+            new_callable=AsyncMock,
+            return_value=denied,
+        ) as pre_hook:
+            result = await agent._enhanced_chat_with_tools(
+                llm_client=FakeLLM(),
+                messages=[{"role": "user", "content": "search"}],
+                tools=[create_default_tool_registry(enable_task=False).get_tool("grep").get_spec()],
+                tool_registry={},
+                stream=False,
+                status=MagicMock(),
+                work_dir=tmp_path,
+            )
+
+        assert result == "done"
+        assert pre_hook.await_args.kwargs["tool_input"] == {
+            "pattern": "needle",
+            "paths": ["src"],
+        }
 
 
 class TestAgentHistoryManagement:

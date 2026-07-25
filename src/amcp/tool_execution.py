@@ -175,6 +175,7 @@ class ToolExecutor:
         if name not in self.exposed_tools or not self.capability.allows(name):
             raise ToolPermissionError(f"Tool '{name}' is not authorized for this turn")
 
+        arguments = self.prepare_model_arguments(name, arguments)
         args = self._bind_arguments(name, arguments)
         if name.startswith("mcp."):
             return await self._execute_mcp(name, args)
@@ -186,6 +187,12 @@ class ToolExecutor:
         if name == "bash":
             return await self._execute_bash(args)
         return await asyncio.to_thread(self.registry.execute_tool, name, **args)
+
+    def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Canonicalize model input before hooks or trusted runtime binding."""
+        if name.startswith("mcp."):
+            return dict(arguments)
+        return self.registry.prepare_model_arguments(name, arguments)
 
     def _bind_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         args = dict(arguments)

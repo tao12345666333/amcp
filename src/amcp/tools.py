@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+import inspect
 import os
 import threading
 from abc import ABC, abstractmethod
@@ -93,6 +95,10 @@ class BaseTool(ABC):
         """Validate tool parameters. Override in subclasses."""
         pass
 
+    def prepare_model_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Normalize model-supplied arguments before hooks and execution."""
+        return dict(arguments)
+
     def get_spec(self) -> dict[str, Any]:
         """Get tool specification for LLM."""
         return {
@@ -143,6 +149,13 @@ class ToolRegistry:
         """Get all tool specifications."""
         return self._tool_specs.copy()
 
+    def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Normalize untrusted arguments using the owning tool's narrow rules."""
+        tool = self.get_tool(name)
+        if tool is None:
+            return dict(arguments)
+        return tool.prepare_model_arguments(arguments)
+
     def execute_tool(self, name: str, **kwargs) -> ToolResult:
         """Execute a tool by name."""
         tool = self.get_tool(name)
@@ -150,6 +163,8 @@ class ToolRegistry:
             return ToolResult(success=False, content="", error=f"Tool '{name}' not found")
 
         try:
+            _validate_callable_arguments(name, tool.execute, kwargs)
+
             # Validate parameters
             if hasattr(tool, "validate_parameters"):
                 tool.validate_parameters(**kwargs)
@@ -158,8 +173,33 @@ class ToolRegistry:
             result = tool.execute(**kwargs)
             return result
 
+        except ToolValidationError as e:
+            return ToolResult(success=False, content="", error=f"Invalid arguments: {e}")
         except Exception as e:
             return ToolResult(success=False, content="", error=f"Tool execution failed: {type(e).__name__}: {e}")
+
+
+def _validate_callable_arguments(name: str, func: Callable[..., Any], arguments: dict[str, Any]) -> None:
+    """Reject unbindable keyword arguments with an actionable error."""
+    signature = inspect.signature(func)
+    try:
+        signature.bind(**arguments)
+    except TypeError as exc:
+        accepted = [
+            parameter_name
+            for parameter_name, parameter in signature.parameters.items()
+            if parameter.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        ]
+        unknown = [argument for argument in arguments if argument not in accepted]
+        if unknown:
+            invalid = unknown[0]
+            suggestion = difflib.get_close_matches(invalid, accepted, n=1, cutoff=0.5)
+            hint = f" Did you mean '{suggestion[0]}'?" if suggestion else ""
+            supported = ", ".join(sorted(accepted))
+            raise ToolValidationError(
+                f"Tool '{name}' does not support parameter '{invalid}'.{hint} Supported parameters: {supported}."
+            ) from exc
+        raise ToolValidationError(f"Tool '{name}' arguments do not match its signature: {exc}") from exc
 
 
 def _run_coroutine_in_thread(coro: Any) -> Any:
@@ -935,6 +975,15 @@ class GrepTool(BaseTool):
     @property
     def description(self) -> str:
         return "Search for patterns in files using ripgrep. Returns matching lines with file paths and line numbers."
+
+    def prepare_model_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Accept the common singular ``path`` near-miss without changing the tool API."""
+        prepared = dict(arguments)
+        if "paths" in prepared:
+            prepared.pop("path", None)
+        elif isinstance(prepared.get("path"), str):
+            prepared["paths"] = [prepared.pop("path")]
+        return prepared
 
     def execute(  # type: ignore[override]
         self,

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -114,6 +115,31 @@ async def test_read_write_patch_and_bash_share_runtime_workspace(tmp_path):
     assert bash.success
     assert str(tmp_path.resolve()) in bash.content
     assert (tmp_path / "file.txt").read_text(encoding="utf-8") == "new\n"
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
+@pytest.mark.asyncio
+async def test_grep_singular_path_is_repaired_before_workspace_binding(tmp_path):
+    (tmp_path / "sample.py").write_text("needle = True\n", encoding="utf-8")
+    executor = _executor(tmp_path, exposed={"grep"})
+
+    result = await executor.execute("grep", {"pattern": "needle", "path": "sample.py"})
+
+    assert result.success
+    assert "needle = True" in result.content
+    assert result.metadata["paths"] == [str((tmp_path / "sample.py").resolve())]
+
+
+@pytest.mark.asyncio
+async def test_grep_does_not_repair_non_string_path(tmp_path):
+    executor = _executor(tmp_path, exposed={"grep"})
+
+    result = await executor.execute("grep", {"pattern": "needle", "path": None})
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("Invalid arguments:")
+    assert "does not support parameter 'path'" in result.error
 
 
 @pytest.mark.asyncio

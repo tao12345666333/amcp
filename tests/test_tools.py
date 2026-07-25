@@ -2,7 +2,16 @@ import json
 import re
 from unittest.mock import patch
 
-from amcp.tools import BashTool, ReadFileTool, ThinkTool, TodoTool, WebFetchTool, WebSearchTool, get_tool_registry
+from amcp.tools import (
+    BashTool,
+    GrepTool,
+    ReadFileTool,
+    ThinkTool,
+    TodoTool,
+    WebFetchTool,
+    WebSearchTool,
+    get_tool_registry,
+)
 
 
 def test_read_file_tool(tmp_path):
@@ -47,6 +56,33 @@ def test_think_tool():
     result = tool.execute(thought="test reasoning")
     assert result.success
     assert "test reasoning" in result.content
+
+
+def test_grep_repairs_singular_path_without_changing_its_public_api():
+    tool = GrepTool()
+
+    assert tool.prepare_model_arguments({"pattern": "x", "path": "src"}) == {
+        "pattern": "x",
+        "paths": ["src"],
+    }
+    assert tool.prepare_model_arguments({"pattern": "x", "path": "alias", "paths": ["canonical"]}) == {
+        "pattern": "x",
+        "paths": ["canonical"],
+    }
+    assert tool.prepare_model_arguments({"pattern": "x", "path": None}) == {
+        "pattern": "x",
+        "path": None,
+    }
+
+
+def test_registry_reports_unbindable_arguments_without_raw_typeerror():
+    result = get_tool_registry().execute_tool("grep", pattern="x", path="src")
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.startswith("Invalid arguments:")
+    assert "Did you mean 'paths'?" in result.error
+    assert "TypeError" not in result.error
 
 
 def test_web_search_tool_firecrawl_backend():
