@@ -14,7 +14,11 @@ from typing import Any, Protocol, cast, runtime_checkable
 import httpx
 from rich.console import Console
 
-from .tool_schema import ToolArgumentError, validate_callable_arguments
+from .tool_schema import (
+    ToolArgumentError,
+    normalize_tool_arguments,
+    validate_callable_arguments,
+)
 
 
 @dataclass
@@ -144,6 +148,13 @@ class ToolRegistry:
     def get_tool_specs(self) -> dict[str, dict[str, Any]]:
         """Get all tool specifications."""
         return self._tool_specs.copy()
+
+    def prepare_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Normalize untrusted arguments against a tool's published schema."""
+        tool = self.get_tool(name)
+        if tool is None:
+            return dict(arguments)
+        return normalize_tool_arguments(name, tool.get_parameters_schema(), arguments)
 
     def execute_tool(self, name: str, **kwargs) -> ToolResult:
         """Execute a tool by name."""

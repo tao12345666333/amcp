@@ -57,6 +57,7 @@ from .tool_execution import (
     ToolExecutor,
     normalize_tool_calls,
 )
+from .tool_schema import ToolArgumentError
 from .tools import ToolRegistry
 from .ui import LiveUI
 
@@ -1498,6 +1499,25 @@ class Agent:
                                     "reason": tool_result_text,
                                 },
                             )
+                            append_canonical(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name,
+                                    "content": tool_result_text,
+                                }
+                            )
+                            continue
+
+                        # Hooks must inspect the same canonical arguments that
+                        # execution will use, otherwise an alias such as
+                        # ``cmd`` could bypass a rule matching ``command``.
+                        try:
+                            args = executor.prepare_arguments(tool_name, args)
+                        except ToolArgumentError as exc:
+                            tool_result_text = f"Error: Invalid arguments: {exc}"
+                            block = live_ui.add_tool(tool_name, args)
+                            live_ui.finish_tool(block, success=False, result=tool_result_text)
                             append_canonical(
                                 {
                                     "role": "tool",

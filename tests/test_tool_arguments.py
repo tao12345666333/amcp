@@ -11,7 +11,7 @@ from amcp.tool_schema import (
     normalize_tool_arguments,
     validate_callable_arguments,
 )
-from amcp.tools import GrepTool, ReadFileTool, create_default_tool_registry
+from amcp.tools import BashTool, GrepTool, ReadFileTool, create_default_tool_registry
 
 requires_ripgrep = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep (rg) is not installed")
 
@@ -88,11 +88,23 @@ def test_enum_and_bound_violations_are_reported():
 
 
 def test_runtime_owned_bash_cwd_is_dropped_not_rejected():
-    from amcp.tools import BashTool
-
     args = normalize_tool_arguments("bash", BashTool().get_parameters_schema(), {"cmd": "ls", "cwd": "/tmp"})
 
     assert args == {"command": "ls"}
+
+
+def test_executor_prepares_aliases_before_safety_hooks(tmp_path):
+    args = _executor(tmp_path).prepare_arguments("bash", {"cmd": "rm -rf important"})
+
+    assert args == {"command": "rm -rf important"}
+
+
+def test_registry_prepares_model_arguments_for_non_agent_entry_points():
+    registry = create_default_tool_registry(enable_task=False)
+
+    args = registry.prepare_arguments("grep", {"pattern": "x", "path": "src"})
+
+    assert args == {"pattern": "x", "paths": ["src"]}
 
 
 def test_signature_guard_replaces_typeerror_with_actionable_message():

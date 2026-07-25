@@ -13,7 +13,7 @@ from typing import Any
 
 from .config import AMCPConfig
 from .mcp_client import call_mcp_tool
-from .tool_schema import ToolArgumentError, normalize_tool_arguments
+from .tool_schema import ToolArgumentError
 from .tools import ToolRegistry, ToolResult
 
 
@@ -177,7 +177,7 @@ class ToolExecutor:
             raise ToolPermissionError(f"Tool '{name}' is not authorized for this turn")
 
         try:
-            arguments = self._normalize_arguments(name, arguments)
+            arguments = self.prepare_arguments(name, arguments)
         except ToolArgumentError as exc:
             return ToolResult(success=False, content="", error=f"Invalid arguments: {exc}")
 
@@ -193,19 +193,17 @@ class ToolExecutor:
             return await self._execute_bash(args)
         return await asyncio.to_thread(self.registry.execute_tool, name, **args)
 
-    def _normalize_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def prepare_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Repair near-miss model arguments against the tool's published schema.
 
-        This runs before argument binding so alias repair (``path`` -> ``paths``)
-        happens before trusted runtime values are injected. MCP tools own their
-        own schemas remotely, so they are passed through untouched.
+        Callers that run safety hooks must use the returned canonical arguments
+        as hook input. Execution repeats this step after hooks have applied any
+        updates and before trusted runtime values are injected. MCP tools own
+        their schemas remotely, so they are passed through untouched.
         """
         if name.startswith("mcp."):
             return dict(arguments)
-        tool = self.registry.get_tool(name)
-        if tool is None:
-            return dict(arguments)
-        return normalize_tool_arguments(name, tool.get_parameters_schema(), arguments)
+        return self.registry.prepare_arguments(name, arguments)
 
     def _bind_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         args = dict(arguments)

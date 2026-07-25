@@ -234,6 +234,17 @@ class TestToolEndpoints:
         response = client.get("/api/v1/tools/nonexistent_tool")
         assert response.status_code == 404
 
+    def test_execute_tool_repairs_model_argument_aliases(self, client):
+        """Direct tool execution uses the same argument repair as agents."""
+        response = client.post("/api/v1/tools/think/execute", json={"text": "check"})
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "success": True,
+            "result": "🤔 Thinking: check",
+            "error": None,
+        }
+
 
 class TestAgentEndpoints:
     """Test agent management endpoints."""

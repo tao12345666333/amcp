@@ -85,6 +85,7 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
 
     Warning: This bypasses normal safety checks.
     """
+    from ...tool_schema import ToolArgumentError
     from ...tools import ToolResult, get_tool_registry
 
     tool_registry = get_tool_registry()
@@ -97,8 +98,9 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
         )
 
     try:
-        # Go through the registry so arguments are validated the same way as
-        # agent-driven calls instead of raising a raw TypeError.
+        # This endpoint accepts untrusted model-shaped input, so repair and
+        # validate it before dispatch just like the agent execution path.
+        arguments = tool_registry.prepare_arguments(tool_name, arguments)
         result = tool_registry.execute_tool(tool_name, **arguments)
 
         if isinstance(result, ToolResult):
@@ -114,6 +116,12 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
                 "error": None,
             }
 
+    except ToolArgumentError as e:
+        return {
+            "success": False,
+            "result": None,
+            "error": f"Invalid arguments: {e}",
+        }
     except Exception as e:
         return {
             "success": False,
