@@ -19,6 +19,10 @@ from .tools import ToolRegistry, ToolResult
 class ToolCallProtocolError(Exception):
     """Raised for provider tool-call structures that cannot be repaired."""
 
+    def __init__(self, message: str, tool_calls: Any | None = None) -> None:
+        super().__init__(message)
+        self.tool_calls = tool_calls
+
 
 class ToolPermissionError(Exception):
     """Raised when a tool call is outside the effective capability."""
@@ -90,12 +94,13 @@ class NormalizedToolCall:
     raw_arguments: str
     arguments: dict[str, Any] | None
     argument_error: str | None = None
+    extra_content: dict[str, Any] | None = None
 
 
 def normalize_tool_calls(tool_calls: Any) -> list[NormalizedToolCall]:
     """Normalize provider tool calls and classify repairable argument errors."""
     if not isinstance(tool_calls, list):
-        raise ToolCallProtocolError("Provider tool_calls must be a list")
+        raise ToolCallProtocolError("Provider tool_calls must be a list", tool_calls=tool_calls)
 
     normalized: list[NormalizedToolCall] = []
     seen_ids: set[str] = set()
@@ -107,7 +112,7 @@ def normalize_tool_calls(tool_calls: Any) -> list[NormalizedToolCall]:
         if not isinstance(call_id, str) or not call_id.strip():
             raise ToolCallProtocolError(f"Tool call {index} is missing a valid ID")
         if call_id in seen_ids:
-            raise ToolCallProtocolError(f"Duplicate tool call ID: {call_id}")
+            raise ToolCallProtocolError(f"Duplicate tool call ID: {call_id}", tool_calls=tool_calls)
         seen_ids.add(call_id)
         if not isinstance(name, str) or not name.strip():
             raise ToolCallProtocolError(f"Tool call {call_id} is missing a valid name")
@@ -145,6 +150,7 @@ def normalize_tool_calls(tool_calls: Any) -> list[NormalizedToolCall]:
                 raw_arguments=raw_arguments,
                 arguments=arguments,
                 argument_error=error,
+                extra_content=call.get("extra_content") if isinstance(call.get("extra_content"), dict) else None,
             )
         )
     return normalized

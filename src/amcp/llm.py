@@ -80,6 +80,14 @@ def _reasoning_content(value: Any) -> str | None:
     return str(legacy) if legacy else None
 
 
+def _extra_content(value: Any) -> dict[str, Any] | None:
+    """Extract provider extra_content (e.g., Gemini thought_signature) if present."""
+    extra = _response_field(value, "extra_content")
+    if isinstance(extra, dict) and extra:
+        return extra
+    return None
+
+
 @dataclass
 class TokenUsage:
     """Normalized token usage returned by an LLM provider."""
@@ -232,7 +240,7 @@ class AnyLLMClient(BaseLLMClient):
             # Streaming mode
             accumulated_content = []
             accumulated_reasoning = []
-            tool_calls_chunks = {}  # index -> accumulated chunk
+            tool_calls_chunks: dict[int, dict[str, Any]] = {}  # index -> accumulated chunk
             finish_reason = None
             usage = None
 
@@ -266,7 +274,7 @@ class AnyLLMClient(BaseLLMClient):
                     for tc in delta_tool_calls:
                         idx = _response_field(tc, "index", 0)
                         if idx not in tool_calls_chunks:
-                            tool_calls_chunks[idx] = {"id": "", "name": "", "arguments": ""}
+                            tool_calls_chunks[idx] = {"id": "", "name": "", "arguments": "", "extra_content": None}
 
                         tool_call_id = _response_field(tc, "id")
                         if tool_call_id:
@@ -279,6 +287,9 @@ class AnyLLMClient(BaseLLMClient):
                                 tool_calls_chunks[idx]["name"] += name
                             if arguments:
                                 tool_calls_chunks[idx]["arguments"] += arguments
+                        extra_content = _extra_content(tc)
+                        if extra_content is not None:
+                            tool_calls_chunks[idx]["extra_content"] = extra_content
 
             # Reconstruct full response
             content = "".join(accumulated_content) if accumulated_content else None
@@ -288,7 +299,10 @@ class AnyLLMClient(BaseLLMClient):
             if tool_calls_chunks:
                 for idx in sorted(tool_calls_chunks.keys()):
                     tc = tool_calls_chunks[idx]
-                    tool_calls.append({"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]})
+                    tool_call: dict[str, Any] = {"id": tc["id"], "name": tc["name"], "arguments": tc["arguments"]}
+                    if tc.get("extra_content"):
+                        tool_call["extra_content"] = tc["extra_content"]
+                    tool_calls.append(tool_call)
 
             if reasoning_text and not content and not tool_calls:
                 callback(reasoning_text)
@@ -318,11 +332,14 @@ class AnyLLMClient(BaseLLMClient):
             message_tool_calls = _response_field(msg, "tool_calls")
             if message_tool_calls:
                 tool_calls = [
-                    {
-                        "id": _response_field(tc, "id"),
-                        "name": _response_field(_response_field(tc, "function"), "name"),
-                        "arguments": _response_field(_response_field(tc, "function"), "arguments", "{}"),
-                    }
+                    (
+                        {
+                            "id": _response_field(tc, "id"),
+                            "name": _response_field(_response_field(tc, "function"), "name"),
+                            "arguments": _response_field(_response_field(tc, "function"), "arguments", "{}"),
+                        }
+                        | ({"extra_content": extra} if (extra := _extra_content(tc)) else {})
+                    )
                     for tc in message_tool_calls
                 ]
 
@@ -370,15 +387,18 @@ class AnyLLMClient(BaseLLMClient):
             tool_calls = None
             if message_tool_calls:
                 tool_calls = [
-                    {
-                        "id": _response_field(call, "id"),
-                        "name": _response_field(_response_field(call, "function"), "name"),
-                        "arguments": _response_field(
-                            _response_field(call, "function"),
-                            "arguments",
-                            "{}",
-                        ),
-                    }
+                    (
+                        {
+                            "id": _response_field(call, "id"),
+                            "name": _response_field(_response_field(call, "function"), "name"),
+                            "arguments": _response_field(
+                                _response_field(call, "function"),
+                                "arguments",
+                                "{}",
+                            ),
+                        }
+                        | ({"extra_content": extra} if (extra := _extra_content(call)) else {})
+                    )
                     for call in message_tool_calls
                 ]
             thinking, content = _split_response_content(
@@ -396,7 +416,7 @@ class AnyLLMClient(BaseLLMClient):
 
         accumulated_content: list[str] = []
         accumulated_reasoning: list[str] = []
-        tool_call_chunks: dict[int, dict[str, str]] = {}
+        tool_call_chunks: dict[int, dict[str, Any]] = {}
         finish_reason = None
         usage = None
         response_stream = await self.client.acompletion(**params)
@@ -420,17 +440,23 @@ class AnyLLMClient(BaseLLMClient):
                 index = _response_field(call, "index", 0)
                 current = tool_call_chunks.setdefault(
                     index,
-                    {"id": "", "name": "", "arguments": ""},
+                    {"id": "", "name": "", "arguments": "", "extra_content": None},
                 )
                 current["id"] += _response_field(call, "id", "") or ""
                 function = _response_field(call, "function")
                 if function:
                     current["name"] += _response_field(function, "name", "") or ""
                     current["arguments"] += _response_field(function, "arguments", "") or ""
+                extra = _extra_content(call)
+                if extra is not None:
+                    current["extra_content"] = extra
 
         content_text = "".join(accumulated_content) or None
         reasoning_text = "".join(accumulated_reasoning) or None
-        tool_calls = [tool_call_chunks[index] for index in sorted(tool_call_chunks)] or None
+        tool_calls = [
+            ({k: v for k, v in chunk.items() if k != "extra_content" or v})
+            for chunk in (tool_call_chunks[index] for index in sorted(tool_call_chunks))
+        ] or None
         if reasoning_text and not content_text and not tool_calls:
             stream_callback(reasoning_text)
         thinking, content_text = _split_response_content(

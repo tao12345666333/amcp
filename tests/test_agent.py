@@ -216,6 +216,65 @@ class TestAgentToolLimits:
         assert result == "done"
 
     @pytest.mark.asyncio
+    async def test_retries_with_repaired_pairing_after_provider_pairing_error(self, tmp_path):
+        """A Gemini-style pairing 400 triggers one retry with synthesized tool results."""
+
+        pairing_error = RuntimeError(
+            "Error code: 400 - {'error': {'message': 'Please ensure that the number of "
+            "function response parts is equal to the number of function call parts of the "
+            "function call turn.', 'status': 'INVALID_ARGUMENT'}}"
+        )
+
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+                self.seen_messages = None
+
+            def chat(self, messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise pairing_error
+                self.seen_messages = messages
+                return SimpleNamespace(content="recovered", tool_calls=None)
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            agent = Agent(session_id="test-session")
+
+        llm = FakeLLM()
+        result = await agent._enhanced_chat_with_tools(
+            llm_client=llm,
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "missing",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+            ],
+            tools=[],
+            tool_registry={},
+            stream=False,
+            status=MagicMock(),
+            work_dir=tmp_path,
+        )
+
+        assert result == "recovered"
+        assert llm.calls == 2
+        retried_roles = [message["role"] for message in llm.seen_messages]
+        assert retried_roles == ["assistant", "tool", "user"]
+        synthesized = llm.seen_messages[1]
+        assert synthesized["tool_call_id"] == "missing"
+        assert synthesized["name"] == "read_file"
+
+    @pytest.mark.asyncio
     async def test_grep_path_is_canonicalized_before_pre_tool_hooks(self, tmp_path):
         """Hooks inspect grep's canonical paths argument rather than its alias."""
 
@@ -409,6 +468,50 @@ class TestAgentHistoryManagement:
 
 
 class TestAgentContextBudget:
+    def test_fit_tool_context_synthesizes_missing_tool_results(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "kept",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    },
+                    {
+                        "id": "lost",
+                        "type": "function",
+                        "function": {"name": "grep", "arguments": "{}"},
+                    },
+                ],
+            },
+            {"role": "tool", "tool_call_id": "kept", "content": "file contents"},
+            {"role": "user", "content": "go on"},
+        ]
+
+        fitted = Agent._fit_tool_context(messages, [], 10**9)
+
+        roles = [message["role"] for message in fitted]
+        assert roles == ["system", "assistant", "tool", "tool", "user"]
+        synthesized = fitted[3]
+        assert synthesized["tool_call_id"] == "lost"
+        assert synthesized["name"] == "grep"
+        assert "synthesized" in synthesized["content"]
+        assert messages[2]["role"] == "tool" and len(messages) == 4
+
+    def test_fit_tool_context_drops_orphaned_tool_results(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "tool", "tool_call_id": "orphan", "content": "stale"},
+            {"role": "user", "content": "hello"},
+        ]
+
+        fitted = Agent._fit_tool_context(messages, [], 10**9)
+
+        assert [message["role"] for message in fitted] == ["system", "user"]
+
     def test_fit_tool_context_trims_old_result_without_mutating_input(self):
         old_content = "old result " * 3000
         latest_content = "latest result " * 1000
