@@ -35,6 +35,7 @@ from .hooks import (
     run_user_prompt_hooks,
 )
 from .mcp_client import list_mcp_tools
+from .mcp_naming import is_mcp_tool_name, mcp_tool_name, unique_function_name
 from .memory import get_memory_manager
 from .memory_review import MEMORY_GUIDANCE, run_memory_review
 from .message_queue import MessagePriority
@@ -71,13 +72,77 @@ MEMORY_LOG_AGENT_LIMIT = 2000
 class AgentExecutionError(Exception):
     """Raised when agent execution fails."""
 
-    pass
+    def __init__(self, message: str, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class MaxStepsReached(Exception):
     """Raised when agent reaches maximum execution steps."""
 
     pass
+
+
+def _repair_tool_call_pairing(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ensure assistant tool_calls and tool results stay strictly paired.
+
+    Gemini-family backends reject requests where a function-call turn is not
+    followed by exactly one function-response part per call. History that
+    passes through trimming or compaction can lose responses, so missing ones
+    are synthesized and orphaned tool results are dropped.
+    """
+    repaired: list[dict[str, Any]] = []
+    pending_ids: list[str] = []
+    pending_names: dict[str, str] = {}
+
+    def flush_pending() -> None:
+        for call_id in pending_ids:
+            tool_result: dict[str, Any] = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": "[Tool result unavailable: synthesized to keep tool-call history paired]",
+            }
+            # Strict providers reject an empty function name, so only carry the
+            # name when the paired call actually reported one. Provider
+            # extra_content (e.g. Gemini thought signatures) stays on the call.
+            paired_name = pending_names.get(call_id)
+            if paired_name:
+                tool_result["name"] = paired_name
+            repaired.append(tool_result)
+        pending_ids.clear()
+        pending_names.clear()
+
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            flush_pending()
+            repaired.append(message)
+            for call in message["tool_calls"]:
+                if not isinstance(call, dict):
+                    continue
+                call_id = call.get("id")
+                if isinstance(call_id, str) and call_id:
+                    pending_ids.append(call_id)
+                    function = call.get("function")
+                    if isinstance(function, dict) and isinstance(function.get("name"), str):
+                        pending_names[call_id] = function["name"]
+        elif role == "tool":
+            call_id = message.get("tool_call_id")
+            if call_id in pending_ids:
+                pending_ids.remove(call_id)
+                repaired.append(message)
+            # Orphaned tool results are dropped.
+        else:
+            flush_pending()
+            repaired.append(message)
+    flush_pending()
+    return repaired
+
+
+def _is_tool_call_pairing_error(error: Exception) -> bool:
+    """Check whether an error is a provider-side tool-call pairing rejection."""
+    text = str(error).lower()
+    return "function response parts" in text or ("function call" in text and "invalid_argument" in text)
 
 
 class BusyError(Exception):
@@ -589,7 +654,7 @@ class Agent:
                 for tool in tools:
                     tools_info.append(
                         {
-                            "name": f"mcp.{server_name}.{tool['name']}",
+                            "name": mcp_tool_name(server_name, tool["name"]),
                             "description": tool.get("description", ""),
                             "server": server_name,
                         }
@@ -629,7 +694,7 @@ class Agent:
             return False
 
         # MCP tools: 100 per tool per conversation
-        return tool_name.startswith("mcp.") and current_conversation_calls >= 100
+        return is_mcp_tool_name(tool_name) and current_conversation_calls >= 100
 
     def _resolve_bash_tool_limit(self) -> int:
         """Resolve the per-request bash limit; values <= 0 disable this limit."""
@@ -1157,16 +1222,22 @@ class Agent:
         else:
             selected = list(cfg.servers.keys())
 
-        # Load MCP tools asynchronously (single call per server)
+        # Load MCP tools asynchronously (single call per server). Server and
+        # tool names are untrusted, and providers disagree on legal function
+        # names (Kimi rejects the dots Gemini accepts), so every MCP tool is
+        # exposed under a sanitized alias that the registry maps back to its
+        # (server, tool) pair.
+        exposed_names = {tool_name for tool in tools if (tool_name := tool.get("function", {}).get("name"))}
         for name in selected:
             try:
                 server = cfg.servers[name]
                 info_list = await list_mcp_tools(server)
                 for info in info_list:
                     tname = info.get("name") or "tool"
-                    oname = f"mcp.{name}.{tname}"
+                    oname = unique_function_name(mcp_tool_name(name, tname), exposed_names)
                     if not capability.allows(oname):
                         continue
+                    exposed_names.add(oname)
                     params = info.get("inputSchema") or {"type": "object"}
                     tools.append(
                         {
@@ -1372,16 +1443,41 @@ class Agent:
 
             messages = self._fit_tool_context(messages, tools, input_token_budget)
             estimated_input_tokens = estimate_request_tokens(messages, tools)
-            resp = await self._call_llm(
-                llm_client,
-                messages=messages,
-                tools=tools,
-                stream_callback=stream_callback,
-            )
+            try:
+                resp = await self._call_llm(
+                    llm_client,
+                    messages=messages,
+                    tools=tools,
+                    stream_callback=stream_callback,
+                )
+            except Exception as call_error:
+                if not _is_tool_call_pairing_error(call_error):
+                    raise
+                logger.warning(
+                    "Provider rejected tool-call history (%s); repairing pairing and retrying once",
+                    call_error,
+                )
+                messages = _repair_tool_call_pairing(messages)
+                estimated_input_tokens = estimate_request_tokens(messages, tools)
+                resp = await self._call_llm(
+                    llm_client,
+                    messages=messages,
+                    tools=tools,
+                    stream_callback=stream_callback,
+                )
             self._record_llm_usage(resp, estimated_input_tokens, context_window)
 
             if resp.tool_calls:
-                tool_calls = normalize_tool_calls(resp.tool_calls)
+                try:
+                    tool_calls = normalize_tool_calls(resp.tool_calls)
+                except ToolCallProtocolError as protocol_error:
+                    if protocol_error.tool_calls is None:
+                        raise
+                    logger.warning(
+                        "Provider returned malformed tool calls (%s); synthesizing tool results",
+                        protocol_error,
+                    )
+                    tool_calls = normalize_tool_calls(protocol_error.tool_calls)
                 used_tools = True
                 status.update(f"[bold]Agent {self.name}[/bold] - Executing {len(tool_calls)} tool(s)...")
 
@@ -1410,6 +1506,7 @@ class Agent:
                                         "arguments": tc.raw_arguments,
                                     },
                                 }
+                                | ({"extra_content": tc.extra_content} if tc.extra_content else {})
                                 for tc in tool_calls
                             ],
                         }
@@ -1460,6 +1557,7 @@ class Agent:
                                     "arguments": tc.raw_arguments,
                                 },
                             }
+                            | ({"extra_content": tc.extra_content} if tc.extra_content else {})
                             for tc in tool_calls
                         ],
                     }
@@ -1742,10 +1840,10 @@ class Agent:
         token_budget: int,
     ) -> list[dict[str, Any]]:
         """Fit request-local tool exchanges into the model input budget."""
-        if estimate_request_tokens(messages, tools) <= token_budget:
-            return messages
-
         fitted = [dict(message) for message in messages]
+        if estimate_request_tokens(fitted, tools) <= token_budget:
+            return _repair_tool_call_pairing(fitted)
+
         tool_indexes = [i for i, message in enumerate(fitted) if message.get("role") == "tool"]
 
         # Retain useful head/tail excerpts, shrinking oldest results first.
@@ -1787,7 +1885,7 @@ class Agent:
         for message in fitted:
             if message.get("role") == "tool" and message.get("content"):
                 message["content"] = "[Tool result omitted: context budget exceeded]"
-        return fitted
+        return _repair_tool_call_pairing(fitted)
 
     def _create_progress_context(self, show_progress: bool):
         """Create progress display context."""

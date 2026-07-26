@@ -88,6 +88,39 @@ class TestOpenAIClient:
         client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         assert client.model == "gpt-5.5"
 
+    def test_chat_preserves_tool_call_extra_content(self):
+        client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
+        extra = {"google": {"thought_signature": "sig-abc"}}
+        client.client.completion = lambda **_kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call_1",
+                                function=SimpleNamespace(name="bash", arguments='{"command": "pwd"}'),
+                                extra_content=extra,
+                            )
+                        ],
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=None,
+        )
+
+        response = client.chat([{"role": "user", "content": "run pwd"}])
+
+        assert response.tool_calls == [
+            {
+                "id": "call_1",
+                "name": "bash",
+                "arguments": '{"command": "pwd"}',
+                "extra_content": extra,
+            }
+        ]
+
     def test_chat_captures_provider_usage(self):
         client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         client.client.completion = lambda **_kwargs: SimpleNamespace(
