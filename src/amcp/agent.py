@@ -1508,6 +1508,11 @@ class Agent:
                             )
                             continue
 
+                        # Hooks must inspect the same canonical arguments that
+                        # execution will use. For example, grep's common
+                        # ``path`` near-miss becomes ``paths`` here.
+                        args = executor.prepare_model_arguments(tool_name, args)
+
                         # Run PreToolUse hooks
                         pre_hook_output = await run_pre_tool_use_hooks(
                             session_id=self.session_id,

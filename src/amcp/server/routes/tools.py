@@ -97,7 +97,8 @@ async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
         )
 
     try:
-        result = tool_func.execute(**arguments)
+        arguments = tool_registry.prepare_model_arguments(tool_name, arguments)
+        result = tool_registry.execute_tool(tool_name, **arguments)
 
         if isinstance(result, ToolResult):
             return {
