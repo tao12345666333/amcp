@@ -56,7 +56,7 @@ Default tiers (configurable):
 
 - `ALWAYS`: `read_file`, `grep`, `think`
 - `FREQUENT`: `apply_patch`, `write_file`, `bash`, `todo`
-- `ON_DEMAND`: `memory`, `task`, `mcp.*`
+- `ON_DEMAND`: `memory`, `task`, `mcp__*`
 - `HIDDEN`: only when explicitly set via `tool_tiers`
 
 > This is safer than forcing write tools into `ALWAYS`: it preserves implementation capability while reducing irrelevant noise.
@@ -121,7 +121,7 @@ bash = "frequent"
 todo = "frequent"
 memory = "on_demand"
 task = "on_demand"
-mcp.* = "on_demand"
+"mcp__*" = "on_demand"   # matches every MCP tool; legacy "mcp.*" is still read
 ```
 
 ---

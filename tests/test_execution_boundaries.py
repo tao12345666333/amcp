@@ -5,13 +5,13 @@ import json
 import shutil
 from contextlib import suppress
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from amcp.agent import Agent
 from amcp.agent_spec import ResolvedAgentSpec
-from amcp.config import AMCPConfig, ContextConfig
+from amcp.config import AMCPConfig, ContextConfig, Server
 from amcp.multi_agent import AgentMode
 from amcp.tool_execution import (
     ToolCallProtocolError,
@@ -140,6 +140,33 @@ async def test_grep_does_not_repair_non_string_path(tmp_path):
     assert result.error is not None
     assert result.error.startswith("Invalid arguments:")
     assert "does not support parameter 'path'" in result.error
+
+
+@pytest.mark.asyncio
+async def test_mcp_alias_dispatches_to_the_original_tool_name(tmp_path):
+    """The sanitized alias exposed to the model maps back to the MCP server tool."""
+    alias = "mcp__tavily__tavily_extract"
+    executor = ToolExecutor(
+        context=ToolExecutionContext("session", tmp_path, "turn"),
+        capability=ToolCapability.from_spec(None, [], True),
+        exposed_tools={alias},
+        registry=create_default_tool_registry(enable_task=False),
+        mcp_registry={alias: ("tavily", "tavily.extract")},
+        config=AMCPConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
+    )
+    call_mcp_tool = AsyncMock(return_value={"content": [{"type": "text", "text": "extracted"}]})
+
+    with patch("amcp.tool_execution.call_mcp_tool", call_mcp_tool):
+        result = await executor.execute(alias, {"url": "https://example.com"})
+
+    assert result.success
+    assert result.content == "extracted"
+    server, tool_name, arguments = call_mcp_tool.await_args.args
+    assert (server.url, tool_name, arguments) == (
+        "https://mcp.example.com/mcp",
+        "tavily.extract",
+        {"url": "https://example.com"},
+    )
 
 
 @pytest.mark.asyncio

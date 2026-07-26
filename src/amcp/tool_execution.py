@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import AMCPConfig
 from .mcp_client import call_mcp_tool
+from .mcp_naming import is_mcp_tool_name
 from .tools import ToolRegistry, ToolResult
 
 
@@ -183,7 +184,7 @@ class ToolExecutor:
 
         arguments = self.prepare_model_arguments(name, arguments)
         args = self._bind_arguments(name, arguments)
-        if name.startswith("mcp."):
+        if is_mcp_tool_name(name):
             return await self._execute_mcp(name, args)
         if name == "task":
             from .task import TaskTool
@@ -196,7 +197,7 @@ class ToolExecutor:
 
     def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Canonicalize model input before hooks or trusted runtime binding."""
-        if name.startswith("mcp."):
+        if is_mcp_tool_name(name):
             return dict(arguments)
         return self.registry.prepare_model_arguments(name, arguments)
 

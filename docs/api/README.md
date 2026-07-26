@@ -270,7 +270,7 @@ List all available tools.
       "source": "builtin"
     },
     {
-      "name": "mcp.filesystem.read_file",
+      "name": "mcp__filesystem__read_file",
       "description": "Read file via MCP",
       "parameters": {...},
       "source": "mcp"

@@ -334,9 +334,11 @@ command = "npx"
 args = ["-y", "@some/mcp-server"]
 ```
 
-Configured MCP servers are exposed as `mcp.<server>.<tool>` tools. The built-in
-`web_search` and `web_fetch` tools are available separately and work out of the
-box without adding a search MCP server.
+Configured MCP servers are exposed as `mcp__<server>__<tool>` tools. Server and
+tool names are sanitized into `[A-Za-z][A-Za-z0-9_-]*`, because some providers
+(for example Kimi/Moonshot) reject any other function name with HTTP 400. The
+built-in `web_search` and `web_fetch` tools are available separately and work
+out of the box without adding a search MCP server.
 
 ### Context Optimization
 

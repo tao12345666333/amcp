@@ -35,6 +35,7 @@ from .hooks import (
     run_user_prompt_hooks,
 )
 from .mcp_client import list_mcp_tools
+from .mcp_naming import is_mcp_tool_name, mcp_tool_name, unique_function_name
 from .memory import get_memory_manager
 from .memory_review import MEMORY_GUIDANCE, run_memory_review
 from .message_queue import MessagePriority
@@ -93,22 +94,23 @@ def _repair_tool_call_pairing(messages: list[dict[str, Any]]) -> list[dict[str, 
     repaired: list[dict[str, Any]] = []
     pending_ids: list[str] = []
     pending_names: dict[str, str] = {}
-    pending_extras: dict[str, dict[str, Any]] = {}
 
     def flush_pending() -> None:
         for call_id in pending_ids:
             tool_result: dict[str, Any] = {
                 "role": "tool",
                 "tool_call_id": call_id,
-                "name": pending_names.get(call_id, ""),
                 "content": "[Tool result unavailable: synthesized to keep tool-call history paired]",
             }
-            if call_id in pending_extras:
-                tool_result["extra_content"] = pending_extras[call_id]
+            # Strict providers reject an empty function name, so only carry the
+            # name when the paired call actually reported one. Provider
+            # extra_content (e.g. Gemini thought signatures) stays on the call.
+            paired_name = pending_names.get(call_id)
+            if paired_name:
+                tool_result["name"] = paired_name
             repaired.append(tool_result)
         pending_ids.clear()
         pending_names.clear()
-        pending_extras.clear()
 
     for message in messages:
         role = message.get("role")
@@ -124,9 +126,6 @@ def _repair_tool_call_pairing(messages: list[dict[str, Any]]) -> list[dict[str, 
                     function = call.get("function")
                     if isinstance(function, dict) and isinstance(function.get("name"), str):
                         pending_names[call_id] = function["name"]
-                    extra_content = call.get("extra_content")
-                    if isinstance(extra_content, dict) and extra_content:
-                        pending_extras[call_id] = extra_content
         elif role == "tool":
             call_id = message.get("tool_call_id")
             if call_id in pending_ids:
@@ -655,7 +654,7 @@ class Agent:
                 for tool in tools:
                     tools_info.append(
                         {
-                            "name": f"mcp.{server_name}.{tool['name']}",
+                            "name": mcp_tool_name(server_name, tool["name"]),
                             "description": tool.get("description", ""),
                             "server": server_name,
                         }
@@ -695,7 +694,7 @@ class Agent:
             return False
 
         # MCP tools: 100 per tool per conversation
-        return tool_name.startswith("mcp.") and current_conversation_calls >= 100
+        return is_mcp_tool_name(tool_name) and current_conversation_calls >= 100
 
     def _resolve_bash_tool_limit(self) -> int:
         """Resolve the per-request bash limit; values <= 0 disable this limit."""
@@ -1223,16 +1222,22 @@ class Agent:
         else:
             selected = list(cfg.servers.keys())
 
-        # Load MCP tools asynchronously (single call per server)
+        # Load MCP tools asynchronously (single call per server). Server and
+        # tool names are untrusted, and providers disagree on legal function
+        # names (Kimi rejects the dots Gemini accepts), so every MCP tool is
+        # exposed under a sanitized alias that the registry maps back to its
+        # (server, tool) pair.
+        exposed_names = {tool_name for tool in tools if (tool_name := tool.get("function", {}).get("name"))}
         for name in selected:
             try:
                 server = cfg.servers[name]
                 info_list = await list_mcp_tools(server)
                 for info in info_list:
                     tname = info.get("name") or "tool"
-                    oname = f"mcp.{name}.{tname}"
+                    oname = unique_function_name(mcp_tool_name(name, tname), exposed_names)
                     if not capability.allows(oname):
                         continue
+                    exposed_names.add(oname)
                     params = info.get("inputSchema") or {"type": "object"}
                     tools.append(
                         {

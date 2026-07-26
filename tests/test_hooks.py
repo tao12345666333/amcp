@@ -56,9 +56,9 @@ class TestHookHandler:
 
     def test_matches_regex_wildcard(self):
         """Test regex wildcard patterns."""
-        handler = HookHandler(matcher="mcp\\..*")
-        assert handler.matches("mcp.exa.search") is True
-        assert handler.matches("mcp.github.create_issue") is True
+        handler = HookHandler(matcher="mcp__.*")
+        assert handler.matches("mcp__exa__search") is True
+        assert handler.matches("mcp__github__create_issue") is True
         assert handler.matches("read_file") is False
 
 

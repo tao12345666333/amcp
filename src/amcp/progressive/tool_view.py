@@ -4,6 +4,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from ..mcp_naming import (
+    LEGACY_MCP_TOOL_TIER_KEY,
+    MCP_TOOL_TIER_KEY,
+    is_mcp_tool_name,
+)
 from .context_budget import estimate_text_tokens
 from .relevance import RelevanceScorer, ToolTier
 from .usage_tracker import ToolUsageSnapshot
@@ -114,14 +119,16 @@ class ProgressiveToolView:
         )
 
     def _resolve_tier(self, tool_name: str, overrides: dict[str, str]) -> ToolTier:
-        raw_override = overrides.get(tool_name) or (overrides.get("mcp.*") if tool_name.startswith("mcp.") else None)
+        raw_override = overrides.get(tool_name)
+        if not raw_override and is_mcp_tool_name(tool_name):
+            raw_override = overrides.get(MCP_TOOL_TIER_KEY) or overrides.get(LEGACY_MCP_TOOL_TIER_KEY)
         if raw_override:
             try:
                 return ToolTier(raw_override)
             except ValueError:
                 pass
 
-        if tool_name.startswith("mcp."):
+        if is_mcp_tool_name(tool_name):
             return ToolTier.ON_DEMAND
 
         return DEFAULT_TOOL_TIERS.get(tool_name, ToolTier.ON_DEMAND)

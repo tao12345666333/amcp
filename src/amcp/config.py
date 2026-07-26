@@ -270,7 +270,7 @@ _DEFAULT = {
             "todo": "frequent",
             "memory": "on_demand",
             "task": "on_demand",
-            "mcp.*": "on_demand",
+            "mcp__*": "on_demand",
         },
     },
     "telegram": {
