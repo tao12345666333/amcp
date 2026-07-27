@@ -19,21 +19,31 @@ from ..event_bus import EventType, get_event_bus
 from ..memory import CONFIG_DIR, get_memory_manager
 from ..memory_dream import MemoryDreamer
 from ..multi_agent import get_agent_registry
+from ..runtime import CancellationResult, TurnStatus
 from .auth import AuthMiddleware
 from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
 from .formatter import TelegramFormatter
-from .handlers import RateLimiter, SessionManager, TelegramHandlers, TelegramQueuedMessage
+from .handlers import (
+    RateLimiter,
+    SessionManager,
+    TelegramDeliveryToken,
+    TelegramHandlers,
+    TelegramQueuedMessage,
+)
 from .scheduler import SCHEDULE_BLUEPRINTS, TelegramScheduledPrompt, TelegramScheduleStore
 
 if TYPE_CHECKING:
     from telegram.ext import Application
 
 try:
-    from telegram import BotCommand
-    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+    from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 except ImportError:  # pragma: no cover - optional dependency
     BotCommand = None  # type: ignore[assignment,misc]
+    InlineKeyboardButton = None  # type: ignore[assignment,misc]
+    InlineKeyboardMarkup = None  # type: ignore[assignment,misc]
     ApplicationBuilder = None  # type: ignore[assignment,misc]
+    CallbackQueryHandler = None  # type: ignore[assignment,misc]
     CommandHandler = None  # type: ignore[assignment,misc]
     MessageHandler = None  # type: ignore[assignment,misc]
     filters = None  # type: ignore[assignment,misc]
@@ -309,6 +319,7 @@ class TelegramBot:
             await self._skill_watcher.stop()
             self._skill_watcher = None
         await self._stop_all_typing()
+        await self._session_manager.close_all()
         if self._stop_event:
             self._stop_event.set()
         elif self._application:
@@ -321,13 +332,31 @@ class TelegramBot:
         self._unregister_telegram_schedule_tool()
         self._unregister_telegram_send_tool()
 
-    def cancel_session(self, chat_id: int) -> tuple[bool, bool]:
-        session = self._session_manager.get_or_create_session(chat_id)
-        cancelled = session.agent.is_busy()
-        queued = session.agent.queued_count() > 0
-        if cancelled or queued:
-            asyncio.create_task(session.agent.cancel(clear_queue=True))
-        return cancelled, queued
+    async def cancel_session(self, chat_id: int) -> CancellationResult:
+        """Cancel and await all current Session turns."""
+        async with self._get_session_boundary_lock(chat_id):
+            session = self._session_manager.get_current_session(chat_id)
+            if session is None:
+                return CancellationResult(False, 0)
+            result = await session.agent.cancel(clear_queue=True)
+            if not isinstance(result, CancellationResult):
+                raise TypeError("Agent.cancel() must return CancellationResult")
+            return result
+
+    async def cancel_turn(self, chat_id: int, turn_id: str) -> bool:
+        """Cancel one current Session turn by its immutable ID."""
+        async with self._get_session_boundary_lock(chat_id):
+            session = self._session_manager.get_current_session(chat_id)
+            if session is None:
+                return False
+            handle = session.agent.get_turn(turn_id)
+            if handle is None:
+                return False
+            if handle.status == TurnStatus.CANCELLED:
+                return True
+            if handle.done:
+                return False
+            return bool(await session.agent.cancel_turn(turn_id))
 
     def _get_session_boundary_lock(self, chat_id: int) -> asyncio.Lock:
         lock = self._session_boundary_locks.get(chat_id)
@@ -337,15 +366,32 @@ class TelegramBot:
         return lock
 
     async def create_new_session(self, chat_id: int) -> Any:
-        """Atomically flush and replace the current Telegram session."""
+        """Invalidate and drain old work before publishing a new Session."""
         async with self._get_session_boundary_lock(chat_id):
             old_session = self._session_manager.get_current_session(chat_id)
             if old_session:
-                self._session_manager.abandon_current_session(chat_id)
-                await self.flush_session_memory(chat_id, old_session)
+                await self._session_manager.abandon_current_session(chat_id)
+                snapshot = list(old_session.agent.conversation_history)
+                await self.flush_session_memory(
+                    chat_id,
+                    old_session,
+                    conversation_snapshot=snapshot,
+                )
 
             session = self._session_manager.create_session(chat_id)
             self._bind_session_memory(chat_id, session)
+            return session
+
+    async def switch_session(self, chat_id: int, session_id: str) -> bool:
+        """Drain the current Session before switching the delivery boundary."""
+        async with self._get_session_boundary_lock(chat_id):
+            return await self._session_manager.switch_session(chat_id, session_id)
+
+    async def reset_session(self, chat_id: int) -> Any:
+        """Reset the current Session inside the chat lifecycle boundary."""
+        async with self._get_session_boundary_lock(chat_id):
+            session = await self._session_manager.get_or_create_session(chat_id)
+            await session.agent.reset_session()
             return session
 
     def memory_project_root(self, chat_id: int) -> Path:
@@ -427,7 +473,13 @@ class TelegramBot:
             lines.append(f"- {name}: {blueprint.description}")
         return "\n".join(lines)
 
-    async def flush_session_memory(self, chat_id: int, session: Any) -> bool:
+    async def flush_session_memory(
+        self,
+        chat_id: int,
+        session: Any,
+        *,
+        conversation_snapshot: list[dict[str, Any]] | None = None,
+    ) -> bool:
         """Flush durable memory for a Telegram session before it is replaced."""
         self._bind_session_memory(chat_id, session)
         flush = getattr(session.agent, "flush_memory", None)
@@ -436,7 +488,10 @@ class TelegramBot:
         try:
             return bool(
                 await asyncio.wait_for(
-                    flush(work_dir=self._work_dir),
+                    flush(
+                        work_dir=self._work_dir,
+                        conversation_snapshot=conversation_snapshot,
+                    ),
                     timeout=60,
                 )
             )
@@ -464,7 +519,7 @@ class TelegramBot:
             await self._run_memory_dream_once()
 
     async def _run_memory_dream_once(self) -> None:
-        for chat_id in self._session_manager.list_chat_ids():
+        for chat_id in await self._session_manager.list_chat_ids():
             project_root = self.memory_project_root(chat_id)
             try:
                 result = await asyncio.to_thread(MemoryDreamer(project_root).run_once)
@@ -533,20 +588,22 @@ class TelegramBot:
         return bool(session.agent.queued_count() >= max_queue_size)
 
     async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
-        session = self._session_manager.get_or_create_session(chat_id)
-        session.last_used = datetime.now()
-        queued_message = TelegramQueuedMessage(chat_id=chat_id, user_id=user_id, text=text)
-        await self._enqueue_message(session, queued_message)
+        async with self._get_session_boundary_lock(chat_id):
+            session = await self._session_manager.get_or_create_session(chat_id)
+            session.last_used = datetime.now()
+            queued_message = TelegramQueuedMessage(chat_id=chat_id, user_id=user_id, text=text)
+            await self._enqueue_message(session, queued_message)
 
     async def handle_media(
         self, chat_id: int, user_id: int, text: str, message_type: str, metadata: dict[str, Any] | None
     ) -> None:
-        session = self._session_manager.get_or_create_session(chat_id)
-        session.last_used = datetime.now()
-        queued_message = TelegramQueuedMessage(
-            chat_id=chat_id, user_id=user_id, text=text, message_type=message_type, metadata=metadata
-        )
-        await self._enqueue_message(session, queued_message)
+        async with self._get_session_boundary_lock(chat_id):
+            session = await self._session_manager.get_or_create_session(chat_id)
+            session.last_used = datetime.now()
+            queued_message = TelegramQueuedMessage(
+                chat_id=chat_id, user_id=user_id, text=text, message_type=message_type, metadata=metadata
+            )
+            await self._enqueue_message(session, queued_message)
 
     async def _enqueue_message(self, session: Any, message: TelegramQueuedMessage) -> None:
         queue_lock = self._get_session_queue_lock(session)
@@ -561,8 +618,6 @@ class TelegramBot:
                 if active
                 else "Started processing your request..."
             )
-            status_message = await self.send_text(message.chat_id, status_text)
-            message.status_message_id = self._get_telegram_message_id(status_message)
             self._bind_session_memory(message.chat_id, session)
             handle = await session.agent.submit(
                 message.text,
@@ -570,13 +625,19 @@ class TelegramBot:
                 stream=False,
                 show_progress=False,
             )
+            try:
+                status_message = await self.send_text(
+                    message.chat_id,
+                    status_text,
+                    reply_markup=self._stop_task_markup(handle.id),
+                )
+            except BaseException:
+                await asyncio.shield(session.agent.cancel_turn(handle.id))
+                raise
+            message.status_message_id = self._get_telegram_message_id(status_message)
             task = asyncio.create_task(self._process_message(session, message, handle=handle))
-            turn_tasks = getattr(session, "turn_tasks", None)
-            if turn_tasks is None:
-                turn_tasks = set()
-                session.turn_tasks = turn_tasks
-            turn_tasks.add(task)
-            task.add_done_callback(turn_tasks.discard)
+            session.delivery_tasks.add(task)
+            task.add_done_callback(session.delivery_tasks.discard)
 
     @staticmethod
     def _get_session_queue_lock(session: Any) -> asyncio.Lock:
@@ -595,8 +656,11 @@ class TelegramBot:
         message_id = getattr(message, "message_id", None)
         return int(message_id) if message_id is not None else None
 
-    async def send_text(self, chat_id: int, text: str) -> Any:
-        return await self._application.bot.send_message(chat_id=chat_id, text=text)
+    async def send_text(self, chat_id: int, text: str, *, reply_markup: Any = None) -> Any:
+        kwargs: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
+        return await self._application.bot.send_message(**kwargs)
 
     async def send_markdown(self, chat_id: int, text: str) -> Any:
         return await self._application.bot.send_message(
@@ -612,6 +676,7 @@ class TelegramBot:
                 "chat_id": chat_id,
                 "message_id": message_id,
                 "text": text,
+                "reply_markup": None,
             }
             if markdown:
                 kwargs["parse_mode"] = "MarkdownV2"
@@ -650,74 +715,113 @@ class TelegramBot:
         *,
         handle: Any | None = None,
     ) -> None:
-        generation = getattr(session, "generation", 0)
-        task: asyncio.Task | None = None
+        token = TelegramDeliveryToken(
+            chat_id=message.chat_id,
+            session_id=session.session_id,
+            generation=getattr(session, "generation", 0),
+            turn_id=getattr(handle, "id", f"direct-{id(message)}"),
+        )
         status_message_id = message.status_message_id
         self._bind_session_memory(message.chat_id, session)
         async with self._typing_session(message.chat_id):
             try:
                 if handle is None:
-                    task = asyncio.create_task(
-                        session.agent.run(
-                            user_input=message.text,
-                            work_dir=self._work_dir,
-                            stream=False,
-                            show_progress=False,
-                            queue_if_busy=False,
-                        )
+                    response = await session.agent.run(
+                        user_input=message.text,
+                        work_dir=self._work_dir,
+                        stream=False,
+                        show_progress=False,
+                        queue_if_busy=False,
                     )
                 else:
-                    task = asyncio.create_task(handle.wait())
-                session.current_task = task
-                response = await task
+                    response = await handle.wait()
             except asyncio.CancelledError:
-                if getattr(session, "generation", 0) == generation:
-                    await self._deliver_status_or_text(
-                        message.chat_id,
-                        status_message_id,
-                        "Request cancelled.",
-                    )
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                await self._deliver_status_or_text_if_current(
+                    token,
+                    session,
+                    status_message_id,
+                    "Request cancelled.",
+                )
                 return
             except BusyError:
-                if getattr(session, "generation", 0) != generation:
-                    return
-                await self._deliver_status_or_text(
-                    message.chat_id,
+                await self._deliver_status_or_text_if_current(
+                    token,
+                    session,
                     status_message_id,
                     "Session busy. Please try again.",
                 )
                 return
             except Exception as exc:
                 logger.exception("Failed to process Telegram message.")
-                if getattr(session, "generation", 0) == generation:
-                    await self._deliver_status_or_markdown(
-                        message.chat_id,
-                        status_message_id,
-                        self._formatter.format_error(str(exc)),
-                    )
+                await self._deliver_status_or_markdown_if_current(
+                    token,
+                    session,
+                    status_message_id,
+                    self._formatter.format_error(str(exc)),
+                )
                 return
-            finally:
-                if getattr(session, "current_task", None) is task:
-                    session.current_task = None
 
             response_text = response or ""
-            if getattr(session, "generation", 0) != generation:
+            if not self._is_delivery_current(token, session):
                 return
             if response_text:
                 chunks = self._formatter.format_response(response_text)
-                await self._deliver_response_chunks(message.chat_id, status_message_id, chunks, generation, session)
+                await self._deliver_response_chunks(token, session, status_message_id, chunks)
             elif status_message_id is not None:
-                await self._edit_text(message.chat_id, status_message_id, "Done.")
+                await self._edit_if_current(token, session, status_message_id, "Done.")
 
-        if getattr(session, "generation", 0) != generation:
-            return
-        memory_manager = get_memory_manager(self.memory_project_root(message.chat_id))
-        memory_manager.append_history(
-            content=self._format_telegram_history_entry(message, response_text),
-            session_id=session.session_id,
-            tags=["telegram", "conversation"],
-            scope="project",
-        )
+        async with self._get_session_boundary_lock(message.chat_id):
+            if not self._is_delivery_current(token, session):
+                return
+            memory_manager = get_memory_manager(self.memory_project_root(message.chat_id))
+            memory_manager.append_history(
+                content=self._format_telegram_history_entry(message, response_text),
+                session_id=session.session_id,
+                tags=["telegram", "conversation"],
+                scope="project",
+            )
+
+    def _is_delivery_current(self, token: TelegramDeliveryToken, session: Any) -> bool:
+        if session.session_id != token.session_id or getattr(session, "generation", 0) != token.generation:
+            return False
+        current_id = self._session_manager.get_current_session_id(token.chat_id)
+        return current_id is None or current_id == token.session_id
+
+    async def _deliver_status_or_text_if_current(
+        self,
+        token: TelegramDeliveryToken,
+        session: Any,
+        message_id: int | None,
+        text: str,
+    ) -> None:
+        async with self._get_session_boundary_lock(token.chat_id):
+            if self._is_delivery_current(token, session):
+                await self._deliver_status_or_text(token.chat_id, message_id, text)
+
+    async def _deliver_status_or_markdown_if_current(
+        self,
+        token: TelegramDeliveryToken,
+        session: Any,
+        message_id: int | None,
+        text: str,
+    ) -> None:
+        async with self._get_session_boundary_lock(token.chat_id):
+            if self._is_delivery_current(token, session):
+                await self._deliver_status_or_markdown(token.chat_id, message_id, text)
+
+    async def _edit_if_current(
+        self,
+        token: TelegramDeliveryToken,
+        session: Any,
+        message_id: int,
+        text: str,
+    ) -> None:
+        async with self._get_session_boundary_lock(token.chat_id):
+            if self._is_delivery_current(token, session):
+                await self._edit_text(token.chat_id, message_id, text)
 
     async def _deliver_status_or_text(self, chat_id: int, message_id: int | None, text: str) -> None:
         if message_id is not None and await self._edit_text(chat_id, message_id, text):
@@ -731,23 +835,37 @@ class TelegramBot:
 
     async def _deliver_response_chunks(
         self,
-        chat_id: int,
+        token: TelegramDeliveryToken,
+        session: Any,
         message_id: int | None,
         chunks: list[str],
-        generation: int,
-        session: Any,
     ) -> None:
         if not chunks:
             return
 
         start_idx = 0
-        if message_id is not None and await self._edit_text(chat_id, message_id, chunks[0], markdown=True):
-            start_idx = 1
+        async with self._get_session_boundary_lock(token.chat_id):
+            if not self._is_delivery_current(token, session):
+                return
+            if message_id is not None and await self._edit_text(
+                token.chat_id,
+                message_id,
+                chunks[0],
+                markdown=True,
+            ):
+                start_idx = 1
 
         for chunk in chunks[start_idx:]:
-            if getattr(session, "generation", 0) != generation:
-                return
-            await self.send_markdown(chat_id, chunk)
+            async with self._get_session_boundary_lock(token.chat_id):
+                if not self._is_delivery_current(token, session):
+                    return
+                await self.send_markdown(token.chat_id, chunk)
+
+    @staticmethod
+    def _stop_task_markup(turn_id: str) -> Any:
+        if InlineKeyboardButton is None or InlineKeyboardMarkup is None:
+            return None
+        return InlineKeyboardMarkup([[InlineKeyboardButton("Stop task", callback_data=f"cancel:{turn_id}")]])
 
     @staticmethod
     def _trim_memory_log_text(text: str, limit: int) -> str:
@@ -780,6 +898,12 @@ class TelegramBot:
         application.add_handler(CommandHandler("pair", self._handlers.handle_pair))
         application.add_handler(CommandHandler("logs", self._handlers.handle_logs))
         application.add_handler(CommandHandler("shutdown", self._handlers.handle_shutdown))
+        application.add_handler(
+            CallbackQueryHandler(
+                self._handlers.handle_cancel_callback,
+                pattern=r"^cancel:turn-[A-Za-z0-9]+$",
+            )
+        )
         # Handle /skill:<name> commands (not supported by CommandHandler due to colon)
         application.add_handler(
             MessageHandler(

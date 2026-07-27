@@ -15,8 +15,9 @@ from amcp.hooks import HookDecision, HookOutput
 from amcp.llm import LLMResponse, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
+from amcp.runtime import RuntimeClosedError, TurnStatus
 from amcp.session_state import SessionState
-from amcp.session_store import SessionLoadError
+from amcp.session_store import SessionLoadError, SessionSaveError
 from amcp.tools import create_default_tool_registry
 
 
@@ -340,6 +341,169 @@ class TestAgentHistoryManagement:
                 assert agent.conversation_history == []
                 assert agent.tool_calls_history == []
                 assert agent.total_llm_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_run_cancellation_cancels_its_turn(self, tmp_path):
+        started = asyncio.Event()
+
+        async def slow_process(*_args):
+            started.set()
+            await asyncio.sleep(60)
+            return "late"
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        with patch.object(agent, "_process_message", side_effect=slow_process):
+            task = asyncio.create_task(agent.run("hello"))
+            await started.wait()
+            turn_id = str(agent.execution_context["turn_id"])
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        handle = agent.get_turn(turn_id)
+        assert handle is not None
+        assert handle.status == TurnStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_cancelled_handle_waiter_does_not_cancel_detached_turn(self, tmp_path):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_process(*_args):
+            started.set()
+            await release.wait()
+            return "done"
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        with patch.object(agent, "_process_message", side_effect=slow_process):
+            handle = await agent.submit("hello")
+            waiter = asyncio.create_task(handle.wait())
+            await started.wait()
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            release.set()
+            assert await handle.wait() == "done"
+
+    @pytest.mark.asyncio
+    async def test_reset_session_publishes_only_after_save(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        agent._session_state.commit_turn(
+            "turn-1",
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+        )
+        agent._apply_session_state(agent._session_state)
+        old_messages = list(agent.conversation_history)
+
+        with (
+            patch.object(
+                agent._session_store,
+                "save",
+                side_effect=SessionSaveError("disk full"),
+            ),
+            pytest.raises(SessionSaveError, match="disk full"),
+        ):
+            await agent.reset_session()
+
+        assert agent.conversation_history == old_messages
+
+        await agent.reset_session()
+        assert agent.conversation_history == []
+        assert agent.session_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_reset_session_cancels_active_turn_before_clearing(self, tmp_path):
+        started = asyncio.Event()
+
+        async def slow_process(*_args):
+            started.set()
+            await asyncio.sleep(60)
+            return "late"
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        with patch.object(agent, "_process_message", side_effect=slow_process):
+            handle = await agent.submit("hello")
+            await started.wait()
+            await agent.reset_session()
+
+        assert handle.status == TurnStatus.CANCELLED
+        assert agent.conversation_history == []
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_owned_tasks_and_rejects_submit(self, tmp_path):
+        review_started = asyncio.Event()
+        review_cancelled = asyncio.Event()
+
+        async def review():
+            review_started.set()
+            try:
+                await asyncio.sleep(60)
+            finally:
+                review_cancelled.set()
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        task = asyncio.create_task(review())
+        agent._pending_memory_review_tasks.add(task)
+        await review_started.wait()
+        task_manager = SimpleNamespace(cancel_for_session=AsyncMock(return_value=0))
+        with patch("amcp.task.get_task_manager", return_value=task_manager):
+            await agent.close()
+            await agent.close()
+
+        assert review_cancelled.is_set()
+        task_manager.cancel_for_session.assert_awaited_once_with(agent.session_id)
+        with pytest.raises(RuntimeClosedError):
+            await agent.submit("late")
+
+    @pytest.mark.asyncio
+    async def test_cancel_waits_for_pending_memory_review(self, tmp_path):
+        review_started = asyncio.Event()
+        review_cancelled = asyncio.Event()
+
+        async def review():
+            review_started.set()
+            try:
+                await asyncio.sleep(60)
+            finally:
+                review_cancelled.set()
+
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        task = asyncio.create_task(review())
+        agent._pending_memory_review_tasks.add(task)
+        await review_started.wait()
+        task_manager = SimpleNamespace(cancel_for_session=AsyncMock(return_value=0))
+        with patch("amcp.task.get_task_manager", return_value=task_manager):
+            result = await agent.cancel(clear_queue=True)
+
+        assert result.active_cancelled is False
+        assert review_cancelled.is_set()
 
     def test_get_conversation_summary(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home:

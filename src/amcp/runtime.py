@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import heapq
 import uuid
+from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -33,10 +34,23 @@ class SessionRuntimeStatus(StrEnum):
     BUSY = "busy"
     CANCELLED = "cancelled"
     ERROR = "error"
+    CLOSED = "closed"
+
+
+class RuntimeClosedError(RuntimeError):
+    """Raised when work is submitted to a closed session runtime."""
 
 
 class TurnCancelledError(asyncio.CancelledError):
     """Raised when awaiting a cancelled turn."""
+
+
+@dataclass(frozen=True)
+class CancellationResult:
+    """Summary of work cancelled by one runtime operation."""
+
+    active_cancelled: bool
+    queued_cancelled: int
 
 
 @dataclass(frozen=True)
@@ -130,24 +144,38 @@ RuntimeEventCallback = Callable[[str, TurnHandle], None]
 
 
 class SessionRuntime:
-    """Own a session queue, active task, turn states, and cancellation."""
+    """Own a session queue, active task, turn states, and cancellation.
+
+    A runtime executes at most one turn at a time. Every accepted turn reaches
+    a terminal state, queued turns cleared by cancellation become cancelled,
+    and active cancellation is awaited before the operation returns. Closing
+    is permanent and idempotent.
+    """
 
     def __init__(
         self,
         session_id: str,
         processor: RuntimeProcessor,
         event_callback: RuntimeEventCallback | None = None,
+        *,
+        terminal_handle_retention: int = 200,
     ):
+        if terminal_handle_retention < 0:
+            raise ValueError("terminal_handle_retention must be non-negative")
         self.session_id = session_id
         self._processor = processor
         self._event_callback = event_callback
+        self._terminal_handle_retention = terminal_handle_retention
         self._queue: list[tuple[int, int, TurnHandle]] = []
         self._turns: dict[str, TurnHandle] = {}
+        self._terminal_turn_ids: deque[str] = deque()
         self._sequence = 0
         self._lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
         self._worker: asyncio.Task[None] | None = None
         self._active_handle: TurnHandle | None = None
         self._active_task: asyncio.Task[str] | None = None
+        self._closed = False
         self.status = SessionRuntimeStatus.IDLE
 
     @property
@@ -164,6 +192,11 @@ class SessionRuntime:
     def active_turn(self) -> TurnHandle | None:
         """Return the currently running turn."""
         return self._active_handle
+
+    @property
+    def is_closed(self) -> bool:
+        """Return whether this runtime permanently stopped accepting work."""
+        return self._closed
 
     def get_turn(self, turn_id: str) -> TurnHandle | None:
         """Return a previously submitted turn."""
@@ -194,6 +227,8 @@ class SessionRuntime:
         )
         handle = TurnHandle(self, request)
         async with self._lock:
+            if self._closed:
+                raise RuntimeClosedError(f"Session runtime {self.session_id} is closed")
             self._sequence += 1
             heapq.heappush(self._queue, (-priority.value, self._sequence, handle))
             self._turns[handle.id] = handle
@@ -207,22 +242,34 @@ class SessionRuntime:
 
     async def cancel_active(self, *, clear_queue: bool = False) -> bool:
         """Cancel the active turn and optionally cancel all queued turns."""
+        result = await self._cancel(clear_queue=clear_queue)
+        return result.active_cancelled
+
+    async def cancel_all(self) -> CancellationResult:
+        """Cancel and await the active turn, and cancel every queued turn."""
+        return await self._cancel(clear_queue=True)
+
+    async def _cancel(self, *, clear_queue: bool) -> CancellationResult:
         async with self._lock:
             task = self._active_task
             cancelled = task is not None and not task.done()
             if cancelled and task is not None:
                 task.cancel()
-            if clear_queue:
-                self._cancel_queued_locked()
+            queued_cancelled = self._cancel_queued_locked() if clear_queue else 0
+            active_handle = self._active_handle
         if task is not None and cancelled:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-            if self._active_handle is not None and not self._active_handle.done:
-                await asyncio.shield(self._active_handle._completion)
-        return cancelled
+            if active_handle is not None and not active_handle.done:
+                await asyncio.shield(active_handle._completion)
+        return CancellationResult(
+            active_cancelled=cancelled,
+            queued_cancelled=queued_cancelled,
+        )
 
     async def cancel_turn(self, turn_id: str) -> bool:
         """Cancel a queued or active turn by ID."""
+        task: asyncio.Task[str] | None = None
         async with self._lock:
             handle = self._turns.get(turn_id)
             if handle is None or handle.done:
@@ -236,6 +283,7 @@ class SessionRuntime:
                 heapq.heapify(self._queue)
                 handle._finish(TurnResult(TurnStatus.CANCELLED))
                 self._emit("turn.cancelled", handle)
+                self._record_terminal_turn_locked(handle)
                 return True
         if task is not None:
             with contextlib.suppress(asyncio.CancelledError):
@@ -250,13 +298,21 @@ class SessionRuntime:
             return self._cancel_queued_locked()
 
     async def close(self) -> None:
-        """Cancel all work and stop this runtime."""
-        await self.cancel_active(clear_queue=True)
-        worker = self._worker
-        if worker is not None and not worker.done():
-            worker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker
+        """Permanently stop accepting work and await all runtime termination."""
+        async with self._close_lock:
+            async with self._lock:
+                if self.status == SessionRuntimeStatus.CLOSED:
+                    return
+                self._closed = True
+            await self._cancel(clear_queue=True)
+            worker = self._worker
+            if worker is not None and not worker.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
+
+            async with self._lock:
+                self._worker = None
+                self.status = SessionRuntimeStatus.CLOSED
 
     def _cancel_queued_locked(self) -> int:
         count = len(self._queue)
@@ -264,6 +320,7 @@ class SessionRuntime:
             _, _, handle = heapq.heappop(self._queue)
             handle._finish(TurnResult(TurnStatus.CANCELLED))
             self._emit("turn.cancelled", handle)
+            self._record_terminal_turn_locked(handle)
         return count
 
     async def _run_queue(self) -> None:
@@ -271,7 +328,9 @@ class SessionRuntime:
             async with self._lock:
                 if not self._queue:
                     self._worker = None
-                    if self.status not in {
+                    if self._closed:
+                        self.status = SessionRuntimeStatus.CLOSED
+                    elif self.status not in {
                         SessionRuntimeStatus.CANCELLED,
                         SessionRuntimeStatus.ERROR,
                     }:
@@ -310,6 +369,12 @@ class SessionRuntime:
                     if self._active_handle is handle:
                         self._active_handle = None
                         self._active_task = None
+                    self._record_terminal_turn_locked(handle)
+
+    def _record_terminal_turn_locked(self, handle: TurnHandle) -> None:
+        self._terminal_turn_ids.append(handle.id)
+        while len(self._terminal_turn_ids) > self._terminal_handle_retention:
+            self._turns.pop(self._terminal_turn_ids.popleft(), None)
 
     def _emit(self, event: str, handle: TurnHandle) -> None:
         if self._event_callback is not None:

@@ -1,11 +1,13 @@
 import asyncio
 import importlib
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from amcp.runtime import CancellationResult
 from amcp.telegram.auth import AuthMiddleware
 from amcp.telegram.config import TelegramConfig, TelegramGroupConfig, TelegramPairingConfig, TelegramTopicConfig
 from amcp.telegram.formatter import TelegramFormatter
@@ -25,8 +27,10 @@ class _FakeAgent:
         self.session_id = session_id
         self.execution_context: dict[str, str] = {}
         self.flush_calls: list[dict] = []
+        self.conversation_history: list[dict] = []
         self._busy = False
         self._queued = 0
+        self.closed = False
 
     async def flush_memory(self, **kwargs):
         self.flush_calls.append(kwargs)
@@ -44,8 +48,17 @@ class _FakeAgent:
         return handle
 
     async def cancel(self, **kwargs):
+        result = CancellationResult(self._busy, self._queued if kwargs.get("clear_queue") else 0)
         self._busy = False
         self._queued = 0
+        return result
+
+    async def reset_session(self):
+        self.conversation_history = []
+
+    async def close(self):
+        self.closed = True
+        await self.cancel(clear_queue=True)
 
 
 class _FakeBot:
@@ -56,6 +69,8 @@ class _FakeBot:
         self.prompts: list[tuple[int, int, str]] = []
         self.model_provider_requests: list[str] = []
         self.flushed_sessions: list[tuple[int, str]] = []
+        self.cancelled_turns: list[tuple[int, str]] = []
+        self.session_manager: SessionManager | None = None
 
     def create_pairing_request(self, user_id: int, chat_id: int, username: str | None = None):
         self.pairing_requests.append((user_id, chat_id, username))
@@ -67,12 +82,34 @@ class _FakeBot:
     async def handle_prompt(self, chat_id: int, user_id: int, text: str) -> None:
         self.prompts.append((chat_id, user_id, text))
 
-    def cancel_session(self, chat_id: int):
-        return False, False
+    async def cancel_session(self, chat_id: int):
+        return CancellationResult(False, 0)
+
+    async def cancel_turn(self, chat_id: int, turn_id: str):
+        self.cancelled_turns.append((chat_id, turn_id))
+        return True
 
     async def flush_session_memory(self, chat_id: int, session):
         self.flushed_sessions.append((chat_id, session.session_id))
         return await session.agent.flush_memory()
+
+    async def create_new_session(self, chat_id: int):
+        assert self.session_manager is not None
+        old_session = self.session_manager.get_current_session(chat_id)
+        if old_session is not None:
+            await self.session_manager.abandon_current_session(chat_id)
+            await self.flush_session_memory(chat_id, old_session)
+        return self.session_manager.create_session(chat_id)
+
+    async def switch_session(self, chat_id: int, session_id: str):
+        assert self.session_manager is not None
+        return await self.session_manager.switch_session(chat_id, session_id)
+
+    async def reset_session(self, chat_id: int):
+        assert self.session_manager is not None
+        session = await self.session_manager.get_or_create_session(chat_id)
+        await session.agent.reset_session()
+        return session
 
     def models_summary(self) -> str:
         return "Configured providers:\n* test"
@@ -131,12 +168,15 @@ def test_formatter_uses_utf16_length_for_emoji():
 
 
 def test_session_manager_creates_sessions():
-    manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
-    session = manager.get_or_create_session(123)
-    assert session.session_id.startswith("telegram-123-")
-    session2 = manager.create_session(123)
-    assert manager.switch_session(123, session2.session_id)
-    assert manager.get_current_session_id(123) == session2.session_id
+    async def _run():
+        manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
+        session = await manager.get_or_create_session(123)
+        assert session.session_id.startswith("telegram-123-")
+        session2 = manager.create_session(123)
+        assert await manager.switch_session(123, session2.session_id)
+        assert manager.get_current_session_id(123) == session2.session_id
+
+    asyncio.run(_run())
 
 
 def test_session_manager_abandons_current_session_when_creating_replacement():
@@ -146,14 +186,58 @@ def test_session_manager_abandons_current_session_when_creating_replacement():
         old_session.agent._busy = True
         old_session.agent._queued = 1
 
-        new_session = manager.create_session(123, abandon_current=True)
-        await asyncio.sleep(0)
+        result = await manager.abandon_current_session(123)
+        new_session = manager.create_session(123)
 
         assert new_session.session_id != old_session.session_id
         assert manager.get_current_session_id(123) == new_session.session_id
         assert old_session.generation == 1
         assert old_session.agent._busy is False
         assert old_session.agent._queued == 0
+        assert result.active_cancelled is True
+        assert result.queued_cancelled == 1
+
+    asyncio.run(_run())
+
+
+def test_session_abandon_invalidates_delivery_before_waiting_for_cancel():
+    async def _run():
+        cancel_started = asyncio.Event()
+        cancel_release = asyncio.Event()
+
+        class _BlockingAgent(_FakeAgent):
+            async def cancel(self, **kwargs):
+                cancel_started.set()
+                await cancel_release.wait()
+                return await super().cancel(**kwargs)
+
+        manager = SessionManager(agent_factory=_BlockingAgent, session_timeout=60)
+        session = manager.create_session(123)
+        session.agent._busy = True
+        task = asyncio.create_task(manager.abandon_current_session(123))
+
+        await cancel_started.wait()
+        assert session.generation == 1
+        assert manager.get_current_session_id(123) is None
+        assert not task.done()
+
+        cancel_release.set()
+        result = await task
+        assert result.active_cancelled is True
+
+    asyncio.run(_run())
+
+
+def test_expired_sessions_are_closed():
+    async def _run():
+        manager = SessionManager(agent_factory=_FakeAgent, session_timeout=1)
+        session = manager.create_session(123)
+        session.last_used = datetime.now() - timedelta(seconds=2)
+
+        await manager.prune_expired()
+
+        assert session.agent.closed is True
+        assert manager.get_current_session(123) is None
 
     asyncio.run(_run())
 
@@ -197,6 +281,32 @@ def test_handle_new_flushes_old_session_before_replacement():
         assert old_session.agent.queued_count() == 0
         assert fake_bot.flushed_sessions == [(123, old_session.session_id)]
         assert old_session.agent.flush_calls == [{}]
+
+    asyncio.run(_run())
+
+
+def test_stop_callback_cancels_exact_turn_idempotently():
+    async def _run():
+        handlers, fake_bot = _make_handlers(TelegramConfig(), allowed_users={42})
+        query = SimpleNamespace(
+            data="cancel:turn-abc123",
+            answer=AsyncMock(),
+        )
+        update = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=123, type="private"),
+            effective_user=SimpleNamespace(id=42),
+            message=None,
+            callback_query=query,
+        )
+
+        await handlers.handle_cancel_callback(update, SimpleNamespace())
+        await handlers.handle_cancel_callback(update, SimpleNamespace())
+
+        assert fake_bot.cancelled_turns == [
+            (123, "turn-abc123"),
+            (123, "turn-abc123"),
+        ]
+        assert query.answer.await_count == 2
 
     asyncio.run(_run())
 
@@ -432,6 +542,7 @@ def _make_handlers(
 ):
     fake_bot = _FakeBot(config)
     manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)
+    fake_bot.session_manager = manager
     handlers = TelegramHandlers(
         bot=fake_bot,
         session_manager=manager,
@@ -629,12 +740,10 @@ def test_create_new_session_flushes_and_replaces_under_boundary_lock():
         old_session = bot._session_manager.create_session(800)
         old_session.agent._queued = 1
         old_session.agent._busy = True
-        task = asyncio.create_task(asyncio.sleep(60))
-        old_session.current_task = task
 
         flushed: list[str] = []
 
-        async def _flush(chat_id: int, session) -> bool:
+        async def _flush(chat_id: int, session, **_kwargs) -> bool:
             flushed.append(f"{chat_id}:{session.session_id}:{session.generation}:{session.agent.queued_count()}")
             return True
 
@@ -646,8 +755,108 @@ def test_create_new_session_flushes_and_replaces_under_boundary_lock():
         assert bot._session_manager.get_current_session_id(800) == new_session.session_id
         assert old_session.generation == 1
         assert old_session.agent.queued_count() == 0
-        assert flushed == [f"800:{old_session.session_id}:1:1"]
+        assert flushed == [f"800:{old_session.session_id}:1:0"]
         assert new_session.agent.execution_context["memory_project_root"] == str(bot.memory_project_root(800))
+
+    asyncio.run(_run())
+
+
+def test_create_new_session_waits_for_old_turn_before_publishing():
+    async def _run():
+        cancel_started = asyncio.Event()
+        cancel_release = asyncio.Event()
+
+        class _BlockingAgent(_FakeAgent):
+            async def cancel(self, **kwargs):
+                cancel_started.set()
+                await cancel_release.wait()
+                return await super().cancel(**kwargs)
+
+        bot = _make_bot_for_typing(agent_factory=_BlockingAgent)
+        old_session = bot._session_manager.create_session(802)
+        old_session.agent._busy = True
+
+        with patch.object(bot, "flush_session_memory", new_callable=AsyncMock, return_value=True):
+            task = asyncio.create_task(bot.create_new_session(802))
+            await cancel_started.wait()
+            assert old_session.generation == 1
+            assert bot._session_manager.get_current_session(802) is None
+            assert not task.done()
+            cancel_release.set()
+            new_session = await task
+
+        assert bot._session_manager.get_current_session(802) is new_session
+
+    asyncio.run(_run())
+
+
+def test_cancel_session_waits_and_returns_actual_counts():
+    async def _run():
+        cancel_started = asyncio.Event()
+        cancel_release = asyncio.Event()
+
+        class _BlockingAgent(_FakeAgent):
+            async def cancel(self, **kwargs):
+                cancel_started.set()
+                await cancel_release.wait()
+                return await super().cancel(**kwargs)
+
+        bot = _make_bot_for_typing(agent_factory=_BlockingAgent)
+        session = bot._session_manager.create_session(803)
+        session.agent._busy = True
+        session.agent._queued = 2
+
+        task = asyncio.create_task(bot.cancel_session(803))
+        await cancel_started.wait()
+        assert not task.done()
+        cancel_release.set()
+        result = await task
+
+        assert result == CancellationResult(True, 2)
+
+    asyncio.run(_run())
+
+
+def test_bot_stop_closes_all_session_agents():
+    async def _run():
+        bot = _make_bot_for_typing(agent_factory=_FakeAgent)
+        first = bot._session_manager.create_session(804)
+        second = bot._session_manager.create_session(805)
+        bot._stop_event = asyncio.Event()
+
+        await bot.stop()
+
+        assert first.agent.closed is True
+        assert second.agent.closed is True
+
+    asyncio.run(_run())
+
+
+def test_expiry_cleanup_does_not_deadlock_delivery_boundary():
+    async def _run():
+        started = asyncio.Event()
+
+        class _Agent(_FakeAgent):
+            async def run(self, **kwargs):
+                started.set()
+                await asyncio.sleep(60)
+                return "late"
+
+        bot = _make_bot_for_typing(agent_factory=_Agent)
+        bot._session_manager.update_session_timeout(1)
+        session = bot._session_manager.create_session(806)
+        session.last_used = datetime.now() - timedelta(seconds=120)
+        message = TelegramQueuedMessage(chat_id=806, user_id=1, text="hi")
+        delivery = asyncio.create_task(bot._process_message(session, message))
+        session.delivery_tasks.add(delivery)
+        delivery.add_done_callback(session.delivery_tasks.discard)
+        await started.wait()
+
+        async with bot._get_session_boundary_lock(806):
+            await asyncio.wait_for(bot._session_manager.prune_expired(806), timeout=1)
+
+        assert session.agent.closed is True
+        assert delivery.done()
 
     asyncio.run(_run())
 
@@ -839,25 +1048,60 @@ def test_handle_prompt_starts_background_worker_and_returns():
 
         session = bot._session_manager.get_current_session(900)
         assert session is not None
-        assert session.current_task is not None
-        assert not session.current_task.done()
+        assert len(session.delivery_tasks) == 1
+        assert not next(iter(session.delivery_tasks)).done()
         assert (
             bot._application.bot.send_message.call_args_list[0].kwargs["text"] == "Started processing your request..."
         )
+        markup = bot._application.bot.send_message.call_args_list[0].kwargs["reply_markup"]
+        assert markup.inline_keyboard[0][0].callback_data == "cancel:turn-slow"
 
         release.set()
-        turn_tasks = getattr(session, "turn_tasks", set())
-        if turn_tasks:
-            await asyncio.gather(*turn_tasks, return_exceptions=True)
+        if session.delivery_tasks:
+            await asyncio.gather(*session.delivery_tasks, return_exceptions=True)
         await asyncio.sleep(0.05)
 
         bot._application.bot.edit_message_text.assert_any_call(
             chat_id=900,
             message_id=1,
             text="done",
+            reply_markup=None,
             parse_mode="MarkdownV2",
             disable_web_page_preview=True,
         )
+
+    asyncio.run(_run())
+
+
+def test_status_send_failure_cancels_submitted_turn():
+    async def _run():
+        cancelled: list[str] = []
+
+        class _Agent:
+            def __init__(self, session_id: str) -> None:
+                self.session_id = session_id
+                self.execution_context = {}
+
+            def is_busy(self) -> bool:
+                return False
+
+            def queued_count(self) -> int:
+                return 0
+
+            async def submit(self, prompt, **kwargs):
+                return SimpleNamespace(id="turn-orphan")
+
+            async def cancel_turn(self, turn_id: str):
+                cancelled.append(turn_id)
+                return True
+
+        bot = _make_bot_for_typing(agent_factory=_Agent)
+        bot._application.bot.send_message.side_effect = RuntimeError("Telegram unavailable")
+
+        with pytest.raises(RuntimeError, match="Telegram unavailable"):
+            await bot.handle_prompt(906, 1, "hi")
+
+        assert cancelled == ["turn-orphan"]
 
     asyncio.run(_run())
 
@@ -927,9 +1171,8 @@ def test_handle_prompt_queues_follow_up_for_same_session():
         )
 
         first_release.set()
-        turn_tasks = getattr(session, "turn_tasks", set())
-        if turn_tasks:
-            await asyncio.gather(*turn_tasks, return_exceptions=True)
+        if session.delivery_tasks:
+            await asyncio.gather(*session.delivery_tasks, return_exceptions=True)
         await asyncio.sleep(0.05)
 
         assert calls == ["first", "second"]
@@ -937,6 +1180,7 @@ def test_handle_prompt_queues_follow_up_for_same_session():
             chat_id=901,
             message_id=2,
             text="reply 2",
+            reply_markup=None,
             parse_mode="MarkdownV2",
             disable_web_page_preview=True,
         )
@@ -1075,5 +1319,46 @@ def test_process_message_suppresses_error_after_session_is_abandoned():
             await task
 
         send_markdown.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_process_message_suppresses_result_chunks_and_memory_after_abandon():
+    async def _run():
+        bot = _make_bot_for_typing()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class _SlowAgent:
+            session_id = "test"
+
+            async def run(self, **kwargs):
+                started.set()
+                await release.wait()
+                return "late result"
+
+        session = SimpleNamespace(
+            session_id="test",
+            agent=_SlowAgent(),
+            lock=asyncio.Lock(),
+            generation=0,
+        )
+        msg = TelegramQueuedMessage(chat_id=711, user_id=1, text="hi")
+        memory_manager = MagicMock()
+
+        with (
+            patch.object(bot, "send_markdown", new_callable=AsyncMock) as send_markdown,
+            patch.object(bot, "_edit_text", new_callable=AsyncMock) as edit_text,
+            patch("amcp.telegram.bot.get_memory_manager", return_value=memory_manager),
+        ):
+            task = asyncio.create_task(bot._process_message(session, msg))
+            await started.wait()
+            session.generation += 1
+            release.set()
+            await task
+
+        send_markdown.assert_not_awaited()
+        edit_text.assert_not_awaited()
+        memory_manager.append_history.assert_not_called()
 
     asyncio.run(_run())

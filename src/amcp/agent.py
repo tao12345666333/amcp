@@ -46,7 +46,7 @@ from .progressive.skill_view import ProgressiveSkillView
 from .progressive.tool_view import ProgressiveToolView
 from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
-from .runtime import SessionRuntime, TurnHandle, TurnRequest
+from .runtime import CancellationResult, RuntimeClosedError, SessionRuntime, TurnCancelledError, TurnHandle, TurnRequest
 from .session_search import get_transcript_store
 from .session_state import CompactionCheckpoint, SessionState
 from .session_store import SessionStore, SessionStoreError
@@ -210,6 +210,9 @@ class Agent:
         self._frozen_persona_context: str = ""
         self._frozen_memory_context: str = ""
         self._pending_memory_review_tasks: set[asyncio.Task[None]] = set()
+        self._lifecycle_lock = asyncio.Lock()
+        self._closed = False
+        self._close_complete = False
 
         # Project rules loader (will be initialized with work_dir during run)
         self._project_rules_loader: ProjectRulesLoader | None = None
@@ -757,7 +760,13 @@ class Agent:
             priority=priority,
             reject_if_busy=not queue_if_busy,
         )
-        return await handle.wait()
+        try:
+            return await handle.wait()
+        except TurnCancelledError:
+            raise
+        except asyncio.CancelledError:
+            await asyncio.shield(handle.cancel())
+            raise
 
     async def submit(
         self,
@@ -770,15 +779,18 @@ class Agent:
         reject_if_busy: bool = False,
     ) -> TurnHandle:
         """Submit a turn and return a handle that owns its eventual result."""
-        if reject_if_busy and self._runtime.is_busy:
-            raise BusyError(f"Session {self.session_id} is busy processing another request")
-        return await self._runtime.submit(
-            user_input,
-            work_dir=work_dir,
-            stream=stream,
-            show_progress=show_progress,
-            priority=priority,
-        )
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeClosedError(f"Agent session {self.session_id} is closed")
+            if reject_if_busy and self._runtime.is_busy:
+                raise BusyError(f"Session {self.session_id} is busy processing another request")
+            return await self._runtime.submit(
+                user_input,
+                work_dir=work_dir,
+                stream=stream,
+                show_progress=show_progress,
+                priority=priority,
+            )
 
     async def _process_turn_request(self, request: TurnRequest) -> str:
         self.execution_context["turn_id"] = request.id
@@ -1147,19 +1159,74 @@ class Agent:
         """Clear all queued messages for this session."""
         return await self._runtime.clear_queue()
 
-    async def cancel(self, *, clear_queue: bool = False) -> bool:
-        """Cancel the active turn and optionally all queued turns."""
-        cancelled = await self._runtime.cancel_active(clear_queue=clear_queue)
-        for task in list(self._pending_memory_review_tasks):
-            task.cancel()
+    async def cancel(self, *, clear_queue: bool = False) -> CancellationResult:
+        """Cancel current work and return the runtime's actual cancellation result."""
+        async with self._lifecycle_lock:
+            if clear_queue:
+                result = await self._runtime.cancel_all()
+            else:
+                active_cancelled = await self._runtime.cancel_active()
+                result = CancellationResult(
+                    active_cancelled=active_cancelled,
+                    queued_cancelled=0,
+                )
+            await self._cancel_memory_review_tasks()
+            await self._cancel_delegated_tasks()
+            return result
+
+    async def cancel_turn(self, turn_id: str) -> bool:
+        """Cancel one active or queued turn without creating another owner."""
+        async with self._lifecycle_lock:
+            handle = self._runtime.get_turn(turn_id)
+            was_active = handle is not None and self._runtime.active_turn is handle
+            cancelled = await self._runtime.cancel_turn(turn_id)
+            if cancelled and was_active:
+                await self._cancel_delegated_tasks()
+            return cancelled
+
+    async def reset_session(self) -> None:
+        """Cancel all work and atomically replace the committed session state."""
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeClosedError(f"Agent session {self.session_id} is closed")
+            await self._runtime.cancel_all()
+            await self._cancel_memory_review_tasks()
+            await self._cancel_delegated_tasks()
+            candidate = SessionState(
+                session_id=self.session_id,
+                agent_name=self.name,
+            )
+            self._session_store.save(candidate.to_snapshot())
+            self._session_state = candidate
+            self._apply_session_state(candidate)
+            self.current_request_llm_calls = 0
+            self.current_request_tool_calls = 0
+            self.reset_memory_context_snapshot()
+
+    async def _cancel_delegated_tasks(self) -> int:
+        """Cancel and await delegated tasks owned by this Agent session."""
         from .task import get_task_manager
 
-        await get_task_manager().cancel_for_session(self.session_id)
-        return cancelled
+        return await get_task_manager().cancel_for_session(self.session_id)
+
+    async def _cancel_memory_review_tasks(self) -> None:
+        """Cancel and await pending background memory reviews."""
+        tasks = list(self._pending_memory_review_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def close(self) -> None:
-        """Cancel runtime work and release session-owned resources."""
-        await self._runtime.close()
+        """Permanently stop the Agent and await all session-owned resources."""
+        async with self._lifecycle_lock:
+            if self._close_complete:
+                return
+            self._closed = True
+            await self._runtime.close()
+            await self._cancel_delegated_tasks()
+            await self._cancel_memory_review_tasks()
+            self._close_complete = True
 
     def get_queue_status(self) -> dict[str, Any]:
         """Get queue status for this session."""

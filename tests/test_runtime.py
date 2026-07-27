@@ -5,7 +5,13 @@ import asyncio
 import pytest
 
 from amcp.message_queue import MessagePriority
-from amcp.runtime import SessionRuntime, TurnCancelledError, TurnStatus
+from amcp.runtime import (
+    RuntimeClosedError,
+    SessionRuntime,
+    SessionRuntimeStatus,
+    TurnCancelledError,
+    TurnStatus,
+)
 
 
 @pytest.mark.asyncio
@@ -130,3 +136,70 @@ async def test_clear_queue_cancels_each_queued_handle():
     await runtime.cancel_active()
     with pytest.raises(TurnCancelledError):
         await active.wait()
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_reports_active_and_queued_work():
+    started = asyncio.Event()
+
+    async def process(request):
+        started.set()
+        await asyncio.sleep(60)
+        return request.prompt
+
+    runtime = SessionRuntime("cancel-all", process)
+    active = await runtime.submit("active")
+    await started.wait()
+    queued = await runtime.submit("queued")
+
+    result = await runtime.cancel_all()
+
+    assert result.active_cancelled is True
+    assert result.queued_cancelled == 1
+    with pytest.raises(TurnCancelledError):
+        await active.wait()
+    with pytest.raises(TurnCancelledError):
+        await queued.wait()
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_work_is_idempotent_and_rejects_submit():
+    started = asyncio.Event()
+
+    async def process(request):
+        started.set()
+        await asyncio.sleep(60)
+        return request.prompt
+
+    runtime = SessionRuntime("close", process)
+    active = await runtime.submit("active")
+    await started.wait()
+    queued = await runtime.submit("queued")
+
+    await runtime.close()
+    await runtime.close()
+
+    assert runtime.status == SessionRuntimeStatus.CLOSED
+    assert runtime.is_closed is True
+    with pytest.raises(TurnCancelledError):
+        await active.wait()
+    with pytest.raises(TurnCancelledError):
+        await queued.wait()
+    with pytest.raises(RuntimeClosedError):
+        await runtime.submit("late")
+
+
+@pytest.mark.asyncio
+async def test_terminal_handle_retention_is_bounded():
+    async def process(request):
+        return request.prompt
+
+    runtime = SessionRuntime("retention", process, terminal_handle_retention=2)
+    handles = [await runtime.submit(str(index)) for index in range(5)]
+    await asyncio.gather(*(handle.wait() for handle in handles))
+
+    assert runtime.get_turn(handles[0].id) is None
+    assert runtime.get_turn(handles[1].id) is None
+    assert runtime.get_turn(handles[2].id) is None
+    assert runtime.get_turn(handles[3].id) is handles[3]
+    assert runtime.get_turn(handles[4].id) is handles[4]

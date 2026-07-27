@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from collections import deque
 from collections.abc import Callable
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..interaction import InteractionResult, route_interaction
 from ..memory import get_memory_manager
+from ..runtime import CancellationResult
 from .auth import AuthMiddleware
 from .config import normalize_dm_policy, normalize_group_policy
 
@@ -24,13 +24,39 @@ if TYPE_CHECKING:
 
 @dataclass
 class TelegramSession:
+    """One resumable chat session.
+
+    The Agent runtime owns business execution. ``generation`` is only a
+    Telegram delivery epoch, and ``delivery_tasks`` only tracks I/O coroutines
+    so they can be awaited during teardown.
+    """
+
     session_id: str
     agent: Any
     last_used: datetime = field(default_factory=datetime.now)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     queue_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    current_task: asyncio.Task | None = None
+    delivery_tasks: set[asyncio.Task[None]] = field(default_factory=set)
     generation: int = 0
+
+
+@dataclass(frozen=True)
+class SessionAbandonResult:
+    """Result of invalidating and cancelling one current Telegram session."""
+
+    session_id: str | None
+    active_cancelled: bool
+    queued_cancelled: int
+
+
+@dataclass(frozen=True)
+class TelegramDeliveryToken:
+    """Immutable identity required before any Telegram turn delivery."""
+
+    chat_id: int
+    session_id: str
+    generation: int
+    turn_id: str
 
 
 @dataclass
@@ -419,8 +445,8 @@ class SessionManager:
         self._sessions: dict[int, dict[str, TelegramSession]] = {}
         self._current_sessions: dict[int, str] = {}
 
-    def get_or_create_session(self, chat_id: int) -> TelegramSession:
-        self.prune_expired()
+    async def get_or_create_session(self, chat_id: int) -> TelegramSession:
+        await self.prune_expired(chat_id)
         current_id = self._current_sessions.get(chat_id)
         if current_id:
             session = self._sessions.get(chat_id, {}).get(current_id)
@@ -428,27 +454,26 @@ class SessionManager:
                 return session
         return self.create_session(chat_id)
 
-    def abandon_current_session(self, chat_id: int) -> tuple[bool, int]:
-        current_id = self._current_sessions.get(chat_id)
+    async def abandon_current_session(self, chat_id: int) -> SessionAbandonResult:
+        current_id = self._current_sessions.pop(chat_id, None)
         if not current_id:
-            return False, 0
+            return SessionAbandonResult(None, False, 0)
         session = self._sessions.get(chat_id, {}).get(current_id)
         if not session:
-            return False, 0
+            return SessionAbandonResult(current_id, False, 0)
 
         session.generation += 1
-        cancelled = session.agent.is_busy()
-        queued = session.agent.queued_count()
-        if cancelled or queued:
-            with contextlib.suppress(RuntimeError):
-                asyncio.get_running_loop().create_task(session.agent.cancel(clear_queue=True))
-        return cancelled, queued
+        result = await session.agent.cancel(clear_queue=True)
+        if not isinstance(result, CancellationResult):
+            result = CancellationResult(False, 0)
+        return SessionAbandonResult(
+            session_id=current_id,
+            active_cancelled=result.active_cancelled,
+            queued_cancelled=result.queued_cancelled,
+        )
 
-    def create_session(self, chat_id: int, *, abandon_current: bool = False) -> TelegramSession:
+    def create_session(self, chat_id: int) -> TelegramSession:
         from uuid import uuid4
-
-        if abandon_current:
-            self.abandon_current_session(chat_id)
 
         session_id = f"telegram-{chat_id}-{uuid4().hex[:8]}"
         agent = self._agent_factory(session_id)
@@ -457,18 +482,23 @@ class SessionManager:
         self._current_sessions[chat_id] = session_id
         return session
 
-    def list_sessions(self, chat_id: int) -> list[TelegramSession]:
-        self.prune_expired()
+    async def list_sessions(self, chat_id: int) -> list[TelegramSession]:
+        await self.prune_expired(chat_id)
         return list(self._sessions.get(chat_id, {}).values())
 
-    def list_chat_ids(self) -> list[int]:
-        self.prune_expired()
+    async def list_chat_ids(self) -> list[int]:
+        await self.prune_expired()
         return list(self._sessions.keys())
 
-    def switch_session(self, chat_id: int, session_id: str) -> bool:
-        session = self._sessions.get(chat_id, {}).get(session_id)
-        if not session:
+    async def switch_session(self, chat_id: int, session_id: str) -> bool:
+        target = self._sessions.get(chat_id, {}).get(session_id)
+        if not target:
             return False
+        current_id = self._current_sessions.get(chat_id)
+        if current_id == session_id:
+            return True
+        if current_id:
+            await self.abandon_current_session(chat_id)
         self._current_sessions[chat_id] = session_id
         return True
 
@@ -481,17 +511,47 @@ class SessionManager:
             return None
         return self._sessions.get(chat_id, {}).get(current_id)
 
-    def prune_expired(self) -> None:
+    async def prune_expired(self, chat_id: int | None = None) -> None:
         if self._session_timeout <= 0:
             return
         cutoff = datetime.now() - timedelta(seconds=self._session_timeout)
-        for chat_id, sessions in list(self._sessions.items()):
+        expired: list[TelegramSession] = []
+        chat_sessions = (
+            [(chat_id, self._sessions.get(chat_id, {}))] if chat_id is not None else list(self._sessions.items())
+        )
+        for current_chat_id, sessions in chat_sessions:
             for session_id, session in list(sessions.items()):
                 if session.last_used < cutoff:
+                    session.generation += 1
+                    expired.append(session)
                     sessions.pop(session_id, None)
+                    if self._current_sessions.get(current_chat_id) == session_id:
+                        self._current_sessions.pop(current_chat_id, None)
             if not sessions:
-                self._sessions.pop(chat_id, None)
-                self._current_sessions.pop(chat_id, None)
+                self._sessions.pop(current_chat_id, None)
+                self._current_sessions.pop(current_chat_id, None)
+        if expired:
+            await asyncio.gather(*(self._close_session(session) for session in expired))
+
+    async def close_all(self) -> None:
+        """Invalidate and close every Session-owned Agent and delivery task."""
+        sessions = [session for chat_sessions in self._sessions.values() for session in chat_sessions.values()]
+        self._sessions.clear()
+        self._current_sessions.clear()
+        for session in sessions:
+            session.generation += 1
+        if sessions:
+            await asyncio.gather(*(self._close_session(session) for session in sessions))
+
+    @staticmethod
+    async def _close_session(session: TelegramSession) -> None:
+        current = asyncio.current_task()
+        tasks = [task for task in session.delivery_tasks if task is not current]
+        for task in tasks:
+            task.cancel()
+        await session.agent.close()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def update_session_timeout(self, timeout: int) -> None:
         self._session_timeout = timeout
@@ -585,7 +645,7 @@ class TelegramHandlers:
         if not await self._ensure_authorized(update):
             return
         chat_id = self._chat_id(update)
-        sessions = self._session_manager.list_sessions(chat_id)
+        sessions = await self._session_manager.list_sessions(chat_id)
         current = self._session_manager.get_current_session_id(chat_id)
         current_session = self._session_manager.get_current_session(chat_id)
         queued = current_session.agent.queued_count() if current_session else 0
@@ -664,14 +724,26 @@ class TelegramHandlers:
         if not await self._ensure_authorized(update):
             return
         chat_id = self._chat_id(update)
-        cancelled, queued = self._bot.cancel_session(chat_id)
-        if cancelled or queued:
+        result = await self._bot.cancel_session(chat_id)
+        if result.active_cancelled or result.queued_cancelled:
             await self._bot.send_text(
                 chat_id,
-                f"Cancelled current task: {cancelled}. Cleared queued: {queued}.",
+                f"Cancelled current task: {result.active_cancelled}. Cleared queued: {result.queued_cancelled}.",
             )
         else:
             await self._bot.send_text(chat_id, "Nothing to cancel.")
+
+    async def handle_cancel_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the idempotent per-turn stop button."""
+        query = update.callback_query
+        if query is None or not await self._ensure_authorized(update):
+            return
+        data = query.data or ""
+        if not data.startswith("cancel:"):
+            return
+        turn_id = data.removeprefix("cancel:")
+        cancelled = bool(turn_id) and await self._bot.cancel_turn(self._chat_id(update), turn_id)
+        await query.answer("Cancellation requested." if cancelled else "Task is no longer active.")
 
     async def handle_ask(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._ensure_authorized(update):
@@ -738,22 +810,12 @@ class TelegramHandlers:
             return
 
         if result.action == "new_session":
-            create_new_session = getattr(self._bot, "create_new_session", None)
-            if callable(create_new_session):
-                session = await create_new_session(chat_id)
-            else:
-                old_session = self._session_manager.get_current_session(chat_id)
-                if old_session:
-                    self._session_manager.abandon_current_session(chat_id)
-                    flush_session_memory = getattr(self._bot, "flush_session_memory", None)
-                    if callable(flush_session_memory):
-                        await flush_session_memory(chat_id, old_session)
-                session = self._session_manager.create_session(chat_id)
+            session = await self._bot.create_new_session(chat_id)
             await self._bot.send_text(chat_id, f"Created session: {session.session_id}")
             return
 
         if result.action == "session_list":
-            sessions = self._session_manager.list_sessions(chat_id)
+            sessions = await self._session_manager.list_sessions(chat_id)
             current_id = self._session_manager.get_current_session_id(chat_id)
             lines = ["Sessions:"]
             if not sessions:
@@ -766,17 +828,15 @@ class TelegramHandlers:
 
         if result.action == "session_switch":
             target_id = result.session_id or ""
-            if self._session_manager.switch_session(chat_id, target_id):
+            switched = await self._bot.switch_session(chat_id, target_id)
+            if switched:
                 await self._bot.send_text(chat_id, f"Switched to session: {target_id}")
             else:
                 await self._bot.send_text(chat_id, f"Unknown session: {target_id}")
             return
 
         if result.action == "clear":
-            session = self._session_manager.get_or_create_session(chat_id)
-            clear = getattr(session.agent, "clear_conversation_history", None)
-            if callable(clear):
-                clear()
+            session = await self._bot.reset_session(chat_id)
             await self._bot.send_text(chat_id, f"Conversation history cleared for session: {session.session_id}")
             return
 
@@ -785,11 +845,12 @@ class TelegramHandlers:
             return
 
         if result.action == "cancel":
-            cancelled, queued = self._bot.cancel_session(chat_id)
+            cancellation = await self._bot.cancel_session(chat_id)
             await self._bot.send_text(
                 chat_id,
-                f"Cancelled current task: {cancelled}. Cleared queued: {queued}."
-                if cancelled or queued
+                f"Cancelled current task: {cancellation.active_cancelled}. "
+                f"Cleared queued: {cancellation.queued_cancelled}."
+                if cancellation.active_cancelled or cancellation.queued_cancelled
                 else "Nothing to cancel.",
             )
             return
