@@ -193,7 +193,35 @@ class ToolExecutor:
             return ToolResult(success=True, content=content)
         if name == "bash":
             return await self._execute_bash(args)
-        return await asyncio.to_thread(self.registry.execute_tool, name, **args)
+        return await self._execute_sync_tool(name, args)
+
+    async def _execute_sync_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Run a thread-backed tool and settle it before propagating cancellation.
+
+        Python cannot stop a thread that has already entered synchronous tool
+        code. Shielding the worker means a cancelled turn waits until any file,
+        memory, or external side effect has reached a known terminal state.
+        """
+        task = asyncio.create_task(
+            asyncio.to_thread(self.registry.execute_tool, name, **arguments),
+            name=f"amcp-tool-{self.context.turn_id}-{name}",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as cancelled:
+            # Repeated cancellation requests must not break the settled
+            # guarantee while the underlying thread can still mutate state.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not task.cancelled():
+                with contextlib.suppress(Exception):
+                    task.result()
+            raise cancelled
 
     def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Canonicalize model input before hooks or trusted runtime binding."""

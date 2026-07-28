@@ -49,7 +49,7 @@ from .project_rules import ProjectRulesLoader
 from .runtime import CancellationResult, RuntimeClosedError, SessionRuntime, TurnCancelledError, TurnHandle, TurnRequest
 from .session_search import get_transcript_store
 from .session_state import CompactionCheckpoint, SessionState
-from .session_store import SessionStore, SessionStoreError
+from .session_store import SessionStore
 from .skills import get_skill_manager
 from .tool_execution import (
     ToolCallProtocolError,
@@ -261,7 +261,10 @@ class Agent:
         """Save the current canonical state, propagating commit failures."""
         candidate = self._session_state.clone()
         candidate = self._capture_session_state(candidate)
-        self._session_store.save(candidate.to_snapshot())
+        candidate.revision = self._session_store.save(
+            candidate.to_snapshot(),
+            expected_revision=candidate.revision,
+        )
         self._session_state = candidate
         self._apply_session_state(candidate)
 
@@ -303,38 +306,16 @@ class Agent:
 
     def _commit_session_state(self, candidate: SessionState) -> None:
         """Persist a complete candidate before publishing it in memory."""
-        self._session_store.save(candidate.to_snapshot())
+        candidate.revision = self._session_store.save(
+            candidate.to_snapshot(),
+            expected_revision=candidate.revision,
+        )
         self._session_state = candidate
         self._apply_session_state(candidate)
 
-    def clear_conversation_history(self) -> None:
-        """Clear conversation history and delete session file."""
-        self._session_state = SessionState(
-            session_id=self.session_id,
-            agent_name=self.name,
-        )
-        self.conversation_history = []
-        self.tool_calls_history = []
-        self.current_conversation_tool_calls = []
-        self.total_llm_calls = 0
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
-        self.total_cached_input_tokens = 0
-        self.total_cache_write_input_tokens = 0
-        self.usage_reported_llm_calls = 0
-        self.estimated_input_llm_calls = 0
-        self.last_context_tokens = 0
-        self.last_context_window = 0
-        self.last_output_tokens = None
-        self.last_usage_from_api = False
-        self._last_memory_review_turn_count = 0
-        self.current_request_llm_calls = 0
-        self.current_request_tool_calls = 0
-        try:
-            self._session_store.delete()
-        except SessionStoreError as e:
-            self.console.print(f"[yellow]Warning: Could not delete session file: {e}[/yellow]")
-        self.reset_memory_context_snapshot()
+    async def clear_conversation_history(self) -> None:
+        """Cancel owned work and atomically replace the session state."""
+        await self.reset_session()
 
     def _resolve_memory_project_root(self, work_dir: Path | None = None) -> Path:
         """Return the project root used for project-scoped persistent memory."""
@@ -464,10 +445,25 @@ class Agent:
             with contextlib.suppress(Exception):
                 callback(event_type, event_data)
 
-    def _resolve_context_config(self) -> ContextConfig:
+    def _resolve_context_config(self, cfg: AMCPConfig | None = None) -> ContextConfig:
         """Load context config with defaults."""
-        cfg = load_config()
-        return cfg.context or ContextConfig()
+        resolved = cfg or load_config()
+        return resolved.context or ContextConfig()
+
+    def _resolve_turn_config(self) -> AMCPConfig:
+        """Resolve one provider/config snapshot for the complete turn.
+
+        Empty AgentSpec model/base URL values inherit the currently active
+        provider. Explicit values pin only that field for this agent.
+        """
+        cfg = deepcopy(load_config())
+        chat = cfg.chat or ChatConfig()
+        if self.agent_spec.model:
+            chat.model = self.agent_spec.model
+        if self.agent_spec.base_url:
+            chat.base_url = self.agent_spec.base_url
+        cfg.chat = chat
+        return cfg
 
     def _resolve_model_name(self, cfg: AMCPConfig | None = None) -> str:
         """Resolve model name used for budget and token decisions."""
@@ -483,9 +479,10 @@ class Agent:
         conversation_tokens: int,
         model_name: str | None = None,
         model_config: ModelConfig | None = None,
+        context_config: ContextConfig | None = None,
     ) -> ContextBudget:
         """Calculate context budget for current request."""
-        context_cfg = self._resolve_context_config()
+        context_cfg = context_config or self._resolve_context_config()
         model = model_name or self._resolve_model_name()
         manager = ContextBudgetManager(model=model, config=context_cfg, model_config=model_config)
         return manager.calculate_budget(conversation_tokens)
@@ -513,12 +510,18 @@ class Agent:
             )
         return text[:char_budget].rstrip() + "\n\n[... trimmed for context budget ...]"
 
-    def _get_system_prompt(self, work_dir: Path | None = None, user_input: str = "") -> str:
+    def _get_system_prompt(
+        self,
+        work_dir: Path | None = None,
+        user_input: str = "",
+        *,
+        cfg: AMCPConfig | None = None,
+    ) -> str:
         """Get resolved system prompt with template variables and project rules."""
         current_time = datetime.now().isoformat()
         resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
         work_dir_str = str(resolved_work_dir)
-        cfg = load_config()
+        cfg = cfg or self._resolve_turn_config()
         context_cfg = cfg.context or ContextConfig()
         model_name = self._resolve_model_name(cfg)
 
@@ -527,6 +530,7 @@ class Agent:
             conversation_tokens,
             model_name=model_name,
             model_config=cfg.chat.model_config if cfg.chat else None,
+            context_config=context_cfg,
         )
 
         # Note: MCP tools info will be loaded asynchronously during execution
@@ -667,7 +671,7 @@ class Agent:
 
         return tools_info
 
-    def _should_limit_tool_calls(self, tool_name: str) -> bool:
+    def _should_limit_tool_calls(self, tool_name: str, cfg: AMCPConfig | None = None) -> bool:
         """Check if a tool should be limited to prevent infinite loops."""
         # Per-tool limits (each tool tracked separately)
         current_conversation_calls = sum(
@@ -690,7 +694,7 @@ class Agent:
         # repo analysis. Keep a configurable per-request loop bound; session
         # totals are still tracked in tool_calls_history for diagnostics.
         if tool_name == "bash":
-            limit = self._resolve_bash_tool_limit()
+            limit = self._resolve_bash_tool_limit(cfg)
             if limit > 0 and current_conversation_calls >= limit:
                 self.console.print(f"[yellow]Per-request bash limit reached ({limit} calls)[/yellow]")
                 return True
@@ -699,10 +703,10 @@ class Agent:
         # MCP tools: 100 per tool per conversation
         return is_mcp_tool_name(tool_name) and current_conversation_calls >= 100
 
-    def _resolve_bash_tool_limit(self) -> int:
+    def _resolve_bash_tool_limit(self, cfg: AMCPConfig | None = None) -> int:
         """Resolve the per-request bash limit; values <= 0 disable this limit."""
-        cfg = load_config()
-        configured = cfg.chat.bash_tool_limit if cfg.chat else None
+        resolved = cfg or load_config()
+        configured = resolved.chat.bash_tool_limit if resolved.chat else None
         if isinstance(configured, int) and not isinstance(configured, bool):
             return configured
         return DEFAULT_BASH_TOOL_LIMIT
@@ -764,9 +768,17 @@ class Agent:
             return await handle.wait()
         except TurnCancelledError:
             raise
-        except asyncio.CancelledError:
-            await asyncio.shield(handle.cancel())
-            raise
+        except asyncio.CancelledError as cancelled:
+            cancel_task = asyncio.create_task(handle.cancel())
+            while not cancel_task.done():
+                try:
+                    await asyncio.shield(cancel_task)
+                except asyncio.CancelledError:
+                    continue
+            if not cancel_task.cancelled():
+                with contextlib.suppress(Exception):
+                    cancel_task.result()
+            raise cancelled
 
     async def submit(
         self,
@@ -851,7 +863,15 @@ class Agent:
                 status.update(f"[bold]Agent {self.name}[/bold] thinking...")
 
                 # Prepare messages with conversation history
-                system_prompt = self._get_system_prompt(work_dir, user_input=user_input)
+                # Freeze provider and related settings for this turn. A
+                # `/model use` or config-file edit affects the next turn, but
+                # cannot mix providers between chat, compaction, and memory.
+                turn_config = self._resolve_turn_config()
+                system_prompt = self._get_system_prompt(
+                    work_dir,
+                    user_input=user_input,
+                    cfg=turn_config,
+                )
                 messages = [{"role": "system", "content": system_prompt}]
 
                 # Build tools before compaction so their schemas are included in
@@ -860,15 +880,14 @@ class Agent:
                 tools, tool_registry = await self._build_tools_and_registry(
                     user_input=user_input,
                     conversation_history=history_to_add,
+                    cfg=turn_config,
                 )
 
                 # Apply compaction if context is too large
-                cfg = load_config()
+                cfg = turn_config
                 model = self._resolve_model_name(cfg)
                 compaction_chat = replace(cfg.chat) if cfg.chat else ChatConfig()
                 compaction_chat.model = model
-                if self.agent_spec.base_url:
-                    compaction_chat.base_url = self.agent_spec.base_url
 
                 from .llm import create_llm_client
 
@@ -894,6 +913,7 @@ class Agent:
                             system_prompt=system_prompt,
                             work_dir=work_dir,
                             status=status,
+                            cfg=turn_config,
                         )
                         self._last_memory_review_turn_count = len(draft.turns) + 1
                         status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
@@ -931,6 +951,7 @@ class Agent:
                     stream=stream,
                     status=status,
                     work_dir=work_dir,
+                    cfg=turn_config,
                 )
 
                 turn_messages.extend(tool_messages)
@@ -950,6 +971,7 @@ class Agent:
                         conversation_snapshot=draft.messages,
                         system_prompt=system_prompt,
                         work_dir=work_dir,
+                        cfg=turn_config,
                     )
 
                 # Log to memory history
@@ -995,6 +1017,8 @@ class Agent:
         system_prompt: str,
         work_dir: Path | None,
         status: Any = None,
+        *,
+        cfg: AMCPConfig | None = None,
     ) -> bool:
         """Run a pre-compaction memory flush to save durable memories.
 
@@ -1004,12 +1028,10 @@ class Agent:
         details to persistent memory.  Failures are silently ignored.
         """
         try:
-            cfg = load_config()
-            model = cfg.chat.model if cfg.chat and cfg.chat.model else "DeepSeek-V3.1-Terminus"
+            cfg = cfg or self._resolve_turn_config()
+            model = self._resolve_model_name(cfg)
             memory_chat = replace(cfg.chat) if cfg.chat else ChatConfig()
             memory_chat.model = model
-            if self.agent_spec.base_url:
-                memory_chat.base_url = self.agent_spec.base_url
 
             from .llm import create_llm_client
 
@@ -1064,12 +1086,14 @@ class Agent:
         snapshot = list(conversation_snapshot or self.conversation_history)
         if not snapshot:
             return False
-        system_prompt = self._get_system_prompt(work_dir)
+        cfg = self._resolve_turn_config()
+        system_prompt = self._get_system_prompt(work_dir, cfg=cfg)
         saved = await self._run_memory_review(
             conversation_snapshot=snapshot,
             system_prompt=system_prompt,
             work_dir=work_dir,
             status=status,
+            cfg=cfg,
         )
         self._last_memory_review_turn_count = self._conversation_turn_count(snapshot)
         self._save_conversation_history()
@@ -1102,6 +1126,7 @@ class Agent:
         conversation_snapshot: list[dict[str, Any]],
         system_prompt: str,
         work_dir: Path | None,
+        cfg: AMCPConfig | None = None,
     ) -> None:
         """Schedule a best-effort review after its checkpoint is committed."""
         try:
@@ -1114,6 +1139,7 @@ class Agent:
                 conversation_snapshot=list(conversation_snapshot),
                 system_prompt=system_prompt,
                 work_dir=work_dir,
+                cfg=deepcopy(cfg) if cfg is not None else None,
             )
         )
         self._pending_memory_review_tasks.add(task)
@@ -1124,6 +1150,7 @@ class Agent:
         conversation_snapshot: list[dict[str, Any]],
         system_prompt: str,
         work_dir: Path | None,
+        cfg: AMCPConfig | None,
     ) -> None:
         """Run a background memory review without mutating chat history."""
         await self._run_memory_review(
@@ -1131,6 +1158,7 @@ class Agent:
             system_prompt=system_prompt,
             work_dir=work_dir,
             status=None,
+            cfg=cfg,
         )
 
     def _on_memory_review_task_done(self, task: asyncio.Task[None]) -> None:
@@ -1195,8 +1223,12 @@ class Agent:
             candidate = SessionState(
                 session_id=self.session_id,
                 agent_name=self.name,
+                revision=self._session_state.revision,
             )
-            self._session_store.save(candidate.to_snapshot())
+            candidate.revision = self._session_store.save(
+                candidate.to_snapshot(),
+                expected_revision=candidate.revision,
+            )
             self._session_state = candidate
             self._apply_session_state(candidate)
             self.current_request_llm_calls = 0
@@ -1248,6 +1280,8 @@ class Agent:
         self,
         user_input: str = "",
         conversation_history: list[dict[str, Any]] | None = None,
+        *,
+        cfg: AMCPConfig | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
         """Build list of available tools and registry for MCP tool dispatch.
 
@@ -1278,7 +1312,7 @@ class Agent:
                 tools.append(tool.get_spec())
 
         # Load MCP tools
-        cfg = load_config()
+        cfg = cfg or self._resolve_turn_config()
         chat_cfg = cfg.chat
 
         # Decide which servers to include
@@ -1328,7 +1362,9 @@ class Agent:
         conversation_tokens = estimate_tokens(conversation)
         budget = self._calculate_context_budget(
             conversation_tokens,
+            model_name=self._resolve_model_name(cfg),
             model_config=cfg.chat.model_config if cfg.chat else None,
+            context_config=context_cfg,
         )
         usage_snapshot = ToolUsageTracker.from_history(self.tool_calls_history)
 
@@ -1400,18 +1436,16 @@ class Agent:
         stream: bool,
         status: Status,
         work_dir: Path | None = None,
+        *,
+        cfg: AMCPConfig | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run chat with tools and enhanced tracking."""
-        cfg = load_config()
+        cfg = cfg or self._resolve_turn_config()
 
         # Use new LLM client abstraction
         from .llm import create_llm_client
 
         llm_client = create_llm_client(cfg.chat)
-
-        # Override model if specified in agent spec
-        if self.agent_spec.model:
-            llm_client.model = self.agent_spec.model
 
         # Override the chat function to add our tracking
         result = await self._enhanced_chat_with_tools(
@@ -1423,6 +1457,7 @@ class Agent:
             status=status,
             work_dir=work_dir,
             return_message_delta=True,
+            cfg=cfg,
         )
         assert isinstance(result, tuple)
         return result
@@ -1439,6 +1474,7 @@ class Agent:
         max_steps: int | None = None,
         *,
         return_message_delta: bool = False,
+        cfg: AMCPConfig | None = None,
     ) -> str | tuple[str, list[dict[str, Any]]]:
         """Enhanced version of _chat_with_tools with better tracking."""
         max_steps = max_steps or self.max_steps
@@ -1462,7 +1498,7 @@ class Agent:
 
         used_tools = False
 
-        cfg = load_config()
+        cfg = cfg or self._resolve_turn_config()
         model_config = cfg.chat.model_config if cfg.chat else None
         model = getattr(llm_client, "model", None) or self._resolve_model_name(cfg)
         workspace_root = (work_dir or Path.cwd()).resolve()
@@ -1552,7 +1588,7 @@ class Agent:
                 limited_tools = []
                 for tc in tool_calls:
                     tool_name = tc.name
-                    if self._should_limit_tool_calls(tool_name):
+                    if self._should_limit_tool_calls(tool_name, cfg):
                         limited_tools.append(tool_name)
 
                 if limited_tools:
@@ -1808,6 +1844,19 @@ class Agent:
                                 }
                             )
 
+                        except asyncio.CancelledError:
+                            tool_duration_ms = (time.time() - tool_start_time) * 1000
+                            self._emit_event(
+                                "tool.call_cancelled",
+                                {
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "success": False,
+                                    "settled": True,
+                                    "duration_ms": tool_duration_ms,
+                                },
+                            )
+                            raise
                         except Exception as e:
                             error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
                             live_ui.finish_tool(block, success=False, result=error_msg)

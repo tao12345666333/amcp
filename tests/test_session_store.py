@@ -9,6 +9,7 @@ import pytest
 from amcp.session_state import CanonicalTurn, CompactionCheckpoint, SessionState
 from amcp.session_store import (
     InvalidSessionIdError,
+    SessionConflictError,
     SessionLoadError,
     SessionSaveError,
     SessionStore,
@@ -56,6 +57,42 @@ def test_atomic_replace_failure_preserves_previous_session(tmp_path):
         store.save(SessionState(session_id="atomic", agent_name="new").to_snapshot())
 
     assert store.load()["agent_name"] == "test"
+
+
+def test_stale_session_owner_cannot_overwrite_newer_revision(tmp_path):
+    initial_store = SessionStore(tmp_path, "shared")
+    initial_store.save(SessionState(session_id="shared", agent_name="test").to_snapshot())
+
+    first_store = SessionStore(tmp_path, "shared")
+    second_store = SessionStore(tmp_path, "shared")
+    first = SessionState.from_snapshot(first_store.load(), "shared")
+    second = SessionState.from_snapshot(second_store.load(), "shared")
+
+    first.commit_turn(
+        "first",
+        [
+            {"role": "user", "content": "one"},
+            {"role": "assistant", "content": "saved"},
+        ],
+    )
+    first.revision = first_store.save(
+        first.to_snapshot(),
+        expected_revision=first.revision,
+    )
+
+    second.commit_turn(
+        "second",
+        [
+            {"role": "user", "content": "two"},
+            {"role": "assistant", "content": "stale"},
+        ],
+    )
+    with pytest.raises(SessionConflictError, match="changed from revision"):
+        second_store.save(second.to_snapshot(), expected_revision=second.revision)
+
+    persisted = SessionState.from_snapshot(first_store.load(), "shared")
+    assert persisted.revision == first.revision
+    assert [turn.turn_id for turn in persisted.turns] == ["first"]
 
 
 def test_corrupt_session_has_explicit_diagnostic(tmp_path):

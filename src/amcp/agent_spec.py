@@ -8,7 +8,6 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
-from .config import load_config as load_app_config
 from .multi_agent import AgentMode
 
 
@@ -87,11 +86,6 @@ def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
     except Exception as e:
         raise AgentSpecError(f"Invalid agent spec format: {e}") from e
 
-    # Apply defaults from global config
-    cfg = load_app_config()
-    default_model = cfg.chat.model if cfg.chat and cfg.chat.model else ""
-    default_base_url = cfg.chat.base_url if cfg.chat and cfg.chat.base_url else ""
-
     # Resolve system prompt
     system_prompt = spec.system_prompt
     if spec.system_prompt_template and spec.system_prompt_vars:
@@ -115,8 +109,11 @@ def load_agent_spec(agent_file: Path) -> ResolvedAgentSpec:
         tools=spec.tools,
         exclude_tools=spec.exclude_tools or [],
         max_steps=spec.max_steps,
-        model=spec.model or default_model,
-        base_url=spec.base_url or default_base_url,
+        # Empty values deliberately mean "follow the active provider".  Do not
+        # copy the provider selected while this spec is loaded: existing Agent
+        # instances must be able to observe a later `/model use` switch.
+        model=spec.model,
+        base_url=spec.base_url,
         can_delegate=can_delegate,
     )
 

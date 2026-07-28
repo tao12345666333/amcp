@@ -36,6 +36,14 @@ class SessionBusyError(Exception):
         super().__init__(f"Session is busy: {session_id}")
 
 
+class SessionAlreadyExistsError(Exception):
+    """Raised when a live owner already exists for a session ID."""
+
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        super().__init__(f"Session already exists: {session_id}")
+
+
 class MaxSessionsReachedError(Exception):
     """Raised when maximum sessions limit is reached."""
 
@@ -130,12 +138,14 @@ class SessionManager:
             MaxSessionsReachedError: If maximum sessions limit is reached.
         """
         async with self._lock:
-            if len(self._sessions) >= self.config.max_sessions:
-                raise MaxSessionsReachedError(self.config.max_sessions)
-
             # Generate session ID
             if session_id is None:
                 session_id = self._generate_session_id()
+            elif session_id in self._sessions:
+                raise SessionAlreadyExistsError(session_id)
+
+            if len(self._sessions) >= self.config.max_sessions:
+                raise MaxSessionsReachedError(self.config.max_sessions)
 
             # Resolve working directory
             if cwd is None:

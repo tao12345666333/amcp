@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,7 +18,8 @@ from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 from amcp.runtime import RuntimeClosedError, TurnStatus
 from amcp.session_state import SessionState
-from amcp.session_store import SessionLoadError, SessionSaveError
+from amcp.session_store import SessionConflictError, SessionLoadError, SessionSaveError
+from amcp.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
 from amcp.tools import create_default_tool_registry
 
 
@@ -53,6 +55,46 @@ class TestAgentInit:
             agent = Agent(agent_spec=spec)
             assert agent.name == "custom"
             assert agent.max_steps == 10
+
+    def test_turn_config_follows_provider_switch_unless_agent_is_pinned(self, tmp_path):
+        first = AMCPConfig(
+            servers={},
+            chat=ChatConfig(model="model-a", base_url="https://a.example/v1"),
+        )
+        second = AMCPConfig(
+            servers={},
+            chat=ChatConfig(model="model-b", base_url="https://b.example/v1"),
+        )
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", side_effect=[first, second]),
+        ):
+            agent = Agent(session_id="provider-switch")
+            assert agent._resolve_turn_config().chat.base_url == "https://a.example/v1"
+            switched = agent._resolve_turn_config()
+
+        assert switched.chat.model == "model-b"
+        assert switched.chat.base_url == "https://b.example/v1"
+
+        pinned_spec = ResolvedAgentSpec(
+            name="pinned",
+            description="",
+            mode=AgentMode.PRIMARY,
+            system_prompt="",
+            tools=[],
+            exclude_tools=[],
+            max_steps=10,
+            model="pinned-model",
+            base_url="https://pinned.example/v1",
+        )
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", return_value=second),
+        ):
+            pinned = Agent(pinned_spec, session_id="provider-pinned")._resolve_turn_config()
+
+        assert pinned.chat.model == "pinned-model"
+        assert pinned.chat.base_url == "https://pinned.example/v1"
 
     def test_loads_existing_history(self, tmp_path):
         sessions_dir = tmp_path / ".config" / "amcp" / "sessions"
@@ -328,7 +370,8 @@ class TestAgentToolLimits:
 
 
 class TestAgentHistoryManagement:
-    def test_clear_conversation_history(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_clear_conversation_history(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
             with patch("amcp.agent.load_config") as mock_load:
@@ -337,10 +380,35 @@ class TestAgentHistoryManagement:
                 agent.conversation_history = [{"role": "user", "content": "hi"}]
                 agent.tool_calls_history = [{"tool": "test"}]
                 agent.total_llm_calls = 5
-                agent.clear_conversation_history()
+                await agent.clear_conversation_history()
                 assert agent.conversation_history == []
                 assert agent.tool_calls_history == []
                 assert agent.total_llm_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_stale_owner_cannot_clear_newer_session(self, tmp_path):
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", return_value=MagicMock()),
+        ):
+            first = Agent(session_id="shared-clear")
+            stale = Agent(session_id="shared-clear")
+            first._session_state.commit_turn(
+                "saved",
+                [
+                    {"role": "user", "content": "keep"},
+                    {"role": "assistant", "content": "kept"},
+                ],
+            )
+            first._apply_session_state(first._session_state)
+            first._save_conversation_history()
+
+            with pytest.raises(SessionConflictError, match="changed from revision"):
+                await stale.clear_conversation_history()
+
+            restarted = Agent(session_id="shared-clear")
+
+        assert [turn.turn_id for turn in restarted._session_state.turns] == ["saved"]
 
     @pytest.mark.asyncio
     async def test_run_cancellation_cancels_its_turn(self, tmp_path):
@@ -367,6 +435,49 @@ class TestAgentHistoryManagement:
         handle = agent.get_turn(turn_id)
         assert handle is not None
         assert handle.status == TurnStatus.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_repeated_run_cancellation_waits_for_sync_tool_to_settle(self, tmp_path):
+        started = threading.Event()
+        release = threading.Event()
+        registry = MagicMock()
+
+        def execute_tool(_name, **_arguments):
+            started.set()
+            release.wait(timeout=5)
+            return SimpleNamespace(success=True, content="settled")
+
+        registry.execute_tool.side_effect = execute_tool
+        executor = ToolExecutor(
+            context=ToolExecutionContext("run-cancel", tmp_path, "turn"),
+            capability=ToolCapability.from_spec(None, [], True),
+            exposed_tools={"slow_write"},
+            registry=registry,
+            mcp_registry={},
+            config=AMCPConfig(servers={}, chat=None),
+        )
+
+        async def process(*_args):
+            await executor.execute("slow_write", {})
+            return "late"
+
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", return_value=MagicMock()),
+        ):
+            agent = Agent(session_id="run-cancel")
+
+        with patch.object(agent, "_process_message", side_effect=process):
+            run_task = asyncio.create_task(agent.run("write"))
+            assert await asyncio.to_thread(started.wait, 1)
+            run_task.cancel()
+            await asyncio.sleep(0.05)
+            run_task.cancel()
+            await asyncio.sleep(0.05)
+            assert not run_task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await run_task
 
     @pytest.mark.asyncio
     async def test_cancelled_handle_waiter_does_not_cancel_detached_turn(self, tmp_path):

@@ -71,6 +71,7 @@ class EmbeddedClient(BaseClient):
     def __init__(self):
         """Initialize the embedded client."""
         self._sessions: dict[str, EmbeddedSession] = {}
+        self._closing_sessions: set[str] = set()
         self._connected = False
 
     @property
@@ -153,6 +154,8 @@ class EmbeddedClient(BaseClient):
 
         # Generate session ID
         sid = session_id or str(uuid.uuid4())[:8]
+        if sid in self._sessions or sid in self._closing_sessions:
+            raise SessionError(f"Session already exists: {sid}")
 
         # Resolve working directory
         work_dir = cwd or os.getcwd()
@@ -229,8 +232,15 @@ class EmbeddedClient(BaseClient):
         """
         if session_id not in self._sessions:
             raise SessionNotFoundError(session_id)
-        session = self._sessions.pop(session_id)
-        await session.agent.close()
+        if session_id in self._closing_sessions:
+            raise SessionError(f"Session is already closing: {session_id}")
+        session = self._sessions[session_id]
+        self._closing_sessions.add(session_id)
+        try:
+            await session.agent.close()
+        finally:
+            self._sessions.pop(session_id, None)
+            self._closing_sessions.discard(session_id)
 
     # =========================================================================
     # Prompt Operations

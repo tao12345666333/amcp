@@ -12,6 +12,7 @@ from amcp.server.models import SessionStatus
 from amcp.server.session_manager import (
     ManagedSession,
     MaxSessionsReachedError,
+    SessionAlreadyExistsError,
     SessionManager,
     SessionNotFoundError,
     get_session_manager,
@@ -278,6 +279,15 @@ class TestSessionManager:
         created = await session_manager.create_session(cwd="/tmp")
         retrieved = await session_manager.get_session(created.id)
         assert retrieved.id == created.id
+
+    @pytest.mark.asyncio
+    async def test_duplicate_live_session_owner_is_rejected(self, session_manager):
+        first = await session_manager.create_session(cwd="/tmp", session_id="shared")
+
+        with pytest.raises(SessionAlreadyExistsError, match="already exists"):
+            await session_manager.create_session(cwd="/var", session_id="shared")
+
+        assert await session_manager.get_session("shared") is first
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_session(self, session_manager):

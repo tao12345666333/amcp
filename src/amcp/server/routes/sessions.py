@@ -24,6 +24,7 @@ from ..models import (
 )
 from ..session_manager import (
     MaxSessionsReachedError,
+    SessionAlreadyExistsError,
     SessionNotFoundError,
     get_session_manager,
 )
@@ -84,6 +85,11 @@ async def create_session(request: CreateSessionRequest | None = None) -> Session
         raise HTTPException(
             status_code=429,
             detail={"error": str(e), "code": "MAX_SESSIONS_REACHED"},
+        ) from None
+    except SessionAlreadyExistsError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": str(e), "code": "SESSION_ALREADY_EXISTS"},
         ) from None
 
 
@@ -443,7 +449,7 @@ async def clear_session_history(session_id: str) -> dict:
 
     try:
         session = await session_manager.get_session(session_id)
-        session.agent.clear_conversation_history()
+        await session.agent.clear_conversation_history()
 
         return {"status": "cleared", "session_id": session_id}
     except SessionNotFoundError:

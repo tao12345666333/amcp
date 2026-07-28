@@ -91,7 +91,7 @@ async def apply_interaction_result(
 
     if result.action == "clear":
         session = await session_manager.get_session(session_id)
-        session.agent.clear_conversation_history()
+        await session.agent.clear_conversation_history()
         yield {"type": "chunk", "content": f"Conversation history cleared for session: {session_id}"}
         return
 

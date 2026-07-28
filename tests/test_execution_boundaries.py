@@ -3,6 +3,7 @@
 import asyncio
 import json
 import shutil
+import threading
 from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -195,6 +196,41 @@ async def test_bash_process_is_terminated_on_cancellation(tmp_path):
         await task
     await asyncio.sleep(0.1)
     assert not (tmp_path / "should-not-exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_thread_backed_tool_settles_before_cancellation_returns(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    registry = MagicMock()
+
+    def execute_tool(_name, **_arguments):
+        started.set()
+        release.wait(timeout=5)
+        return SimpleNamespace(success=True, content="settled")
+
+    registry.execute_tool.side_effect = execute_tool
+    executor = ToolExecutor(
+        context=ToolExecutionContext("session", tmp_path, "turn"),
+        capability=ToolCapability.from_spec(None, [], True),
+        exposed_tools={"slow_write"},
+        registry=registry,
+        mcp_registry={},
+        config=AMCPConfig(servers={}, chat=None),
+    )
+
+    task = asyncio.create_task(executor.execute("slow_write", {}))
+    assert await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 class _ToolCallingLLM:

@@ -850,7 +850,7 @@ def main(
 
         # Handle session clearing
         if clear_session:
-            agent.clear_conversation_history()
+            asyncio.run(agent.clear_conversation_history())
             console.print(f"[green]Cleared conversation history for session: {agent.session_id}[/green]")
 
         # Show session info
@@ -915,7 +915,7 @@ def main(
                                     console.print("[green]Goodbye! 👋[/green]")
                                     break
                                 elif result.content == "clear":
-                                    agent.clear_conversation_history()
+                                    asyncio.run(agent.clear_conversation_history())
                                     console.print(
                                         f"[green]Conversation history cleared for session: {agent.session_id}[/green]"
                                     )
@@ -975,7 +975,7 @@ def main(
                         break
 
                     if user_input.lower() == "clear":
-                        agent.clear_conversation_history()
+                        asyncio.run(agent.clear_conversation_history())
                         console.print(f"[green]Conversation history cleared for session: {agent.session_id}[/green]")
                         continue
 

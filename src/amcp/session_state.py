@@ -59,6 +59,7 @@ class SessionState:
 
     session_id: str
     agent_name: str
+    revision: int = 0
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     messages: list[dict[str, Any]] = field(default_factory=list)
     turns: list[CanonicalTurn] = field(default_factory=list)
@@ -103,6 +104,7 @@ class SessionState:
         validate_session_state(self)
         return {
             "agent_name": self.agent_name,
+            "revision": self.revision,
             "created_at": self.created_at,
             "conversation": {
                 "messages": deepcopy(self.messages),
@@ -141,6 +143,7 @@ class SessionState:
         state = cls(
             session_id=session_id,
             agent_name=str(data.get("agent_name", "default")),
+            revision=int(data.get("revision", 0)),
             created_at=str(data.get("created_at", datetime.now().isoformat())),
             messages=deepcopy(messages),
             turns=turns,
@@ -156,6 +159,8 @@ class SessionState:
 
 def validate_session_state(state: SessionState) -> None:
     """Validate turn ranges, tool batches, and checkpoint coverage."""
+    if type(state.revision) is not int or state.revision < 0:
+        raise InvalidSessionStateError("Session revision must be a non-negative integer")
     if any(not isinstance(message, dict) for message in state.messages):
         raise InvalidSessionStateError("Canonical messages must be objects")
     expected_start = 0

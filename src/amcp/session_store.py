@@ -7,9 +7,14 @@ import os
 import re
 import tempfile
 import threading
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from .session_state import InvalidSessionStateError, SessionState
 
@@ -42,6 +47,10 @@ class SessionSaveError(SessionStoreError):
     """Raised when persisted session data cannot be saved atomically."""
 
 
+class SessionConflictError(SessionSaveError):
+    """Raised when another live owner committed the session first."""
+
+
 def validate_session_id(session_id: str) -> str:
     """Validate and return a session ID safe for file-backed persistence."""
     if not isinstance(session_id, str) or not _SESSION_ID_PATTERN.fullmatch(session_id) or ".." in session_id:
@@ -61,6 +70,30 @@ def redact_sensitive_data(value: Any) -> Any:
     return value
 
 
+@contextmanager
+def _exclusive_file_lock(handle: Any):
+    """Lock one session lock file across processes on Unix and Windows."""
+    if os.name == "nt":
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+        return
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 class SessionStore:
     """Versioned JSON session store using atomic replacement."""
 
@@ -68,6 +101,7 @@ class SessionStore:
         self.root = root.expanduser()
         self.session_id = validate_session_id(session_id)
         self.path = self.root / f"{self.session_id}.json"
+        self.lock_path = self.root / f".{self.session_id}.lock"
         self._lock = threading.RLock()
 
     def load(self) -> dict[str, Any] | None:
@@ -95,35 +129,67 @@ class SessionStore:
                 "session_id": self.session_id,
             }
 
-    def save(self, data: dict[str, Any]) -> None:
-        """Atomically save a session without exposing partial JSON files."""
+    def save(self, data: dict[str, Any], *, expected_revision: int | None = None) -> int:
+        """Atomically save a session and reject stale owner revisions.
+
+        Callers that own a loaded session should pass its current revision.
+        The optional form remains useful for one-shot import and test callers.
+        """
+        with self._lock:
+            try:
+                self.root.mkdir(parents=True, exist_ok=True)
+                with self.lock_path.open("a+b") as lock_handle, _exclusive_file_lock(lock_handle):
+                    return self._save_locked(data, expected_revision)
+            except SessionConflictError:
+                raise
+            except (OSError, TypeError, ValueError) as exc:
+                raise SessionSaveError(f"Could not save session {self.session_id}: {exc}") from exc
+
+    def _save_locked(self, data: dict[str, Any], expected_revision: int | None) -> int:
+        """Write the next revision while the inter-process lock is held."""
+        current_revision = self._read_current_revision()
+        if expected_revision is not None and current_revision != expected_revision:
+            raise SessionConflictError(
+                f"Session {self.session_id} changed from revision {expected_revision} to {current_revision}"
+            )
+        next_revision = current_revision + 1
         payload = redact_sensitive_data(
             {
                 **data,
+                "revision": next_revision,
                 "schema_version": SESSION_SCHEMA_VERSION,
                 "session_id": self.session_id,
             }
         )
-        with self._lock:
-            try:
-                self.root.mkdir(parents=True, exist_ok=True)
-                fd, temp_name = tempfile.mkstemp(
-                    dir=self.root,
-                    prefix=f".{self.session_id}.",
-                    suffix=".tmp",
-                )
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                        json.dump(payload, handle, indent=2, ensure_ascii=False)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(temp_name, self.path)
-                except BaseException:
-                    with suppress(OSError):
-                        os.unlink(temp_name)
-                    raise
-            except (OSError, TypeError, ValueError) as exc:
-                raise SessionSaveError(f"Could not save session {self.session_id}: {exc}") from exc
+        fd, temp_name = tempfile.mkstemp(
+            dir=self.root,
+            prefix=f".{self.session_id}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, self.path)
+        except BaseException:
+            with suppress(OSError):
+                os.unlink(temp_name)
+            raise
+        return next_revision
+
+    def _read_current_revision(self) -> int:
+        """Read the on-disk revision while the cross-process lock is held."""
+        if not self.path.exists():
+            return 0
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            revision = data.get("revision", 0)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SessionSaveError(f"Could not inspect session {self.session_id}: {exc}") from exc
+        if type(revision) is not int or revision < 0:
+            raise SessionSaveError(f"Session {self.session_id} has an invalid revision")
+        return revision
 
     def delete(self) -> None:
         """Delete the persisted session if present."""
