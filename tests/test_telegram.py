@@ -1323,7 +1323,7 @@ def test_process_message_suppresses_error_after_session_is_abandoned():
     asyncio.run(_run())
 
 
-def test_process_message_suppresses_result_chunks_and_memory_after_abandon():
+def test_process_message_suppresses_result_chunks_after_abandon():
     async def _run():
         bot = _make_bot_for_typing()
         started = asyncio.Event()
@@ -1344,12 +1344,10 @@ def test_process_message_suppresses_result_chunks_and_memory_after_abandon():
             generation=0,
         )
         msg = TelegramQueuedMessage(chat_id=711, user_id=1, text="hi")
-        memory_manager = MagicMock()
 
         with (
             patch.object(bot, "send_markdown", new_callable=AsyncMock) as send_markdown,
             patch.object(bot, "_edit_text", new_callable=AsyncMock) as edit_text,
-            patch("amcp.telegram.bot.get_memory_manager", return_value=memory_manager),
         ):
             task = asyncio.create_task(bot._process_message(session, msg))
             await started.wait()
@@ -1359,6 +1357,5 @@ def test_process_message_suppresses_result_chunks_and_memory_after_abandon():
 
         send_markdown.assert_not_awaited()
         edit_text.assert_not_awaited()
-        memory_manager.append_history.assert_not_called()
 
     asyncio.run(_run())

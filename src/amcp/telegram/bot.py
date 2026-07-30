@@ -16,7 +16,7 @@ from ..agent import Agent, BusyError, create_agent_by_name
 from ..agent_spec import get_default_agent_spec
 from ..config import load_config, save_config
 from ..event_bus import EventType, get_event_bus
-from ..memory import CONFIG_DIR, get_memory_manager
+from ..memory import CONFIG_DIR
 from ..memory_dream import MemoryDreamer
 from ..multi_agent import get_agent_registry
 from ..runtime import CancellationResult, TurnStatus
@@ -50,8 +50,6 @@ except ImportError:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_MEMORY_LOG_USER_LIMIT = 1000
-TELEGRAM_MEMORY_LOG_AGENT_LIMIT = 2000
 TELEGRAM_MEMORY_DREAM_INTERVAL_SECONDS = 60 * 60
 
 
@@ -396,6 +394,9 @@ class TelegramBot:
 
     def memory_project_root(self, chat_id: int) -> Path:
         """Return the isolated project-memory root for a Telegram chat."""
+        # TODO: Before considering group support production-ready, propagate
+        # sender identity into canonical turns and isolate forum topics by
+        # (chat_id, message_thread_id) for sessions, history, and memory.
         return CONFIG_DIR / "telegram" / f"chat_{chat_id}"
 
     def _bind_session_memory(self, chat_id: int, session: Any) -> None:
@@ -773,17 +774,6 @@ class TelegramBot:
             elif status_message_id is not None:
                 await self._edit_if_current(token, session, status_message_id, "Done.")
 
-        async with self._get_session_boundary_lock(message.chat_id):
-            if not self._is_delivery_current(token, session):
-                return
-            memory_manager = get_memory_manager(self.memory_project_root(message.chat_id))
-            memory_manager.append_history(
-                content=self._format_telegram_history_entry(message, response_text),
-                session_id=session.session_id,
-                tags=["telegram", "conversation"],
-                scope="project",
-            )
-
     def _is_delivery_current(self, token: TelegramDeliveryToken, session: Any) -> bool:
         if session.session_id != token.session_id or getattr(session, "generation", 0) != token.generation:
             return False
@@ -866,18 +856,6 @@ class TelegramBot:
         if InlineKeyboardButton is None or InlineKeyboardMarkup is None:
             return None
         return InlineKeyboardMarkup([[InlineKeyboardButton("Stop task", callback_data=f"cancel:{turn_id}")]])
-
-    @staticmethod
-    def _trim_memory_log_text(text: str, limit: int) -> str:
-        stripped = text.strip()
-        if len(stripped) <= limit:
-            return stripped
-        return stripped[:limit].rstrip() + "\n[... truncated ...]"
-
-    def _format_telegram_history_entry(self, message: TelegramQueuedMessage, response_text: str) -> str:
-        user = self._trim_memory_log_text(message.text, TELEGRAM_MEMORY_LOG_USER_LIMIT)
-        agent = self._trim_memory_log_text(response_text, TELEGRAM_MEMORY_LOG_AGENT_LIMIT)
-        return f"[Telegram] chat={message.chat_id} user={message.user_id}\n\nUser:\n{user}\n\nAgent:\n{agent}"
 
     def _build_application(self) -> Application:
         application = ApplicationBuilder().token(self._token).post_init(self._post_init).build()
