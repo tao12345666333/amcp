@@ -1,6 +1,8 @@
 """Tests for the task module."""
 
 import asyncio
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -194,6 +196,202 @@ class TestTaskManager:
     def test_get_running_count(self, task_manager):
         """Test counting running tasks."""
         assert task_manager.get_running_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_task_prevents_later_execution(self):
+        """A task waiting for a semaphore slot must never run after cancellation."""
+        manager = TaskManager(max_concurrent=1)
+        release = asyncio.Event()
+        started = asyncio.Event()
+        agents = []
+
+        class FakeAgent:
+            def __init__(self, config=None):
+                self.closed = False
+                agents.append(self)
+
+            async def run(self, **kwargs):
+                started.set()
+                await release.wait()
+                return "done"
+
+            async def close(self):
+                self.closed = True
+
+        with patch("amcp.agent.create_agent_from_config", side_effect=FakeAgent):
+            first = await manager.create_task("first", "explorer")
+            await started.wait()
+            second = await manager.create_task("second", "explorer")
+
+            assert second.state == TaskState.PENDING
+            assert await manager.cancel_task(second.id)
+            release.set()
+            await manager.wait_for_task(first.id)
+            await asyncio.sleep(0)
+
+        assert second.state == TaskState.CANCELLED
+        assert len(agents) == 1
+        assert agents[0].closed
+
+    @pytest.mark.asyncio
+    async def test_wait_timeout_does_not_cancel_shared_completion(self):
+        """A waiter timeout must not corrupt completion for later waiters."""
+        manager = TaskManager(max_concurrent=1)
+        release = asyncio.Event()
+
+        class FakeAgent:
+            async def run(self, **kwargs):
+                await release.wait()
+                return "done"
+
+            async def close(self):
+                pass
+
+        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+            task = await manager.create_task("slow", "explorer")
+            with pytest.raises(TimeoutError):
+                await manager.wait_for_task(task.id, timeout=0.01)
+
+            assert task._future is not None
+            assert not task._future.cancelled()
+            release.set()
+            completed = await manager.wait_for_task(task.id, timeout=1)
+
+        assert completed.state == TaskState.COMPLETED
+        assert completed.result == "done"
+
+    @pytest.mark.asyncio
+    async def test_failed_task_resolves_with_terminal_state(self):
+        """Task failures should not poison the shared completion future."""
+        manager = TaskManager(max_concurrent=1)
+
+        class FakeAgent:
+            async def run(self, **kwargs):
+                raise RuntimeError("boom")
+
+            async def close(self):
+                pass
+
+        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+            task = await manager.create_task("fail", "explorer")
+            completed = await manager.wait_for_task(task.id, timeout=1)
+
+        assert completed.state == TaskState.FAILED
+        assert completed.error == "boom"
+
+    @pytest.mark.asyncio
+    async def test_subagent_inherits_work_dir_and_is_closed(self, tmp_path):
+        """Sub-agents run in the parent's trusted workspace and always close."""
+        manager = TaskManager(max_concurrent=1)
+        observed_work_dir = None
+        closed = False
+
+        class FakeAgent:
+            async def run(self, **kwargs):
+                nonlocal observed_work_dir
+                observed_work_dir = kwargs["work_dir"]
+                return "done"
+
+            async def close(self):
+                nonlocal closed
+                closed = True
+
+        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+            task = await manager.create_task(
+                "work",
+                "explorer",
+                work_dir=Path(tmp_path),
+            )
+            await manager.wait_for_task(task.id, timeout=1)
+
+        assert observed_work_dir == tmp_path.resolve()
+        assert closed
+
+    @pytest.mark.asyncio
+    async def test_cancellation_waits_for_subagent_close(self):
+        """Cancellation settles sub-agent cleanup before completing waiters."""
+        manager = TaskManager(max_concurrent=1)
+        running = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+
+        class FakeAgent:
+            session_id = "fake-session"
+
+            async def run(self, **kwargs):
+                running.set()
+                await asyncio.Event().wait()
+
+            async def close(self):
+                close_started.set()
+                await release_close.wait()
+
+        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+            task = await manager.create_task("cancel", "explorer")
+            await running.wait()
+            cancellation = asyncio.create_task(manager.cancel_task(task.id))
+            await close_started.wait()
+
+            waiter = asyncio.create_task(manager.wait_for_task(task.id))
+            await asyncio.sleep(0)
+            assert not cancellation.done()
+            assert not waiter.done()
+
+            release_close.set()
+            assert await cancellation
+            completed = await waiter
+
+        assert completed.state == TaskState.CANCELLED
+
+    @pytest.mark.asyncio
+    async def test_terminal_task_retention_is_bounded(self):
+        """Old terminal task results are evicted from the in-memory manager."""
+        manager = TaskManager(max_concurrent=1, max_terminal_tasks=2)
+
+        class FakeAgent:
+            async def run(self, **kwargs):
+                return "done"
+
+            async def close(self):
+                pass
+
+        with patch("amcp.agent.create_agent_from_config", side_effect=lambda config: FakeAgent()):
+            tasks = []
+            for description in ("one", "two", "three"):
+                task = await manager.create_task(description, "explorer")
+                await manager.wait_for_task(task.id, timeout=1)
+                tasks.append(task)
+
+        assert manager.get_task(tasks[0].id) is None
+        assert manager.get_task(tasks[1].id) is tasks[1]
+        assert manager.get_task(tasks[2].id) is tasks[2]
+
+    @pytest.mark.asyncio
+    async def test_wait_for_any_survives_immediate_terminal_eviction(self):
+        """A waiter keeps its task reference when retention is disabled."""
+        manager = TaskManager(max_concurrent=1, max_terminal_tasks=0)
+        release = asyncio.Event()
+
+        class FakeAgent:
+            session_id = "fake-session"
+
+            async def run(self, **kwargs):
+                await release.wait()
+                return "done"
+
+            async def close(self):
+                pass
+
+        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+            task = await manager.create_task("evict", "explorer")
+            waiter = asyncio.create_task(manager.wait_for_any([task.id], timeout=1))
+            await asyncio.sleep(0)
+            release.set()
+            completed = await waiter
+
+        assert completed is task
+        assert completed.state == TaskState.COMPLETED
+        assert manager.get_task(task.id) is None
 
 
 class TestTaskTool:

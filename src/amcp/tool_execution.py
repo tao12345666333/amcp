@@ -189,7 +189,10 @@ class ToolExecutor:
         if name == "task":
             from .task import TaskTool
 
-            content = await TaskTool(session_id=self.context.session_id).execute(**args)
+            content = await TaskTool(
+                session_id=self.context.session_id,
+                work_dir=self.context.workspace_root,
+            ).execute(**args)
             return ToolResult(success=True, content=content)
         if name == "bash":
             return await self._execute_bash(args)

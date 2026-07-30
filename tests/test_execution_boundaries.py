@@ -171,6 +171,22 @@ async def test_mcp_alias_dispatches_to_the_original_tool_name(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_task_tool_inherits_trusted_runtime_workspace(tmp_path):
+    executor = _executor(tmp_path, exposed={"task"})
+    task_tool = MagicMock()
+    task_tool.execute = AsyncMock(return_value="created")
+
+    with patch("amcp.task.TaskTool", return_value=task_tool) as task_tool_class:
+        result = await executor.execute("task", {"action": "create", "description": "inspect"})
+
+    assert result.success
+    task_tool_class.assert_called_once_with(
+        session_id="session",
+        work_dir=tmp_path.resolve(),
+    )
+
+
+@pytest.mark.asyncio
 async def test_two_workspace_executors_are_isolated(tmp_path):
     first = tmp_path / "first"
     second = tmp_path / "second"

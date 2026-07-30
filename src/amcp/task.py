@@ -43,9 +43,11 @@ import asyncio
 import contextlib
 import logging
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from .event_bus import (
@@ -87,6 +89,7 @@ class Task:
         state: Current task state
         priority: Task priority
         parent_session_id: Parent session that created this task
+        work_dir: Trusted working directory inherited from the parent agent
         created_at: When the task was created
         started_at: When execution started
         completed_at: When execution completed
@@ -101,6 +104,7 @@ class Task:
     state: TaskState = TaskState.PENDING
     priority: TaskPriority = TaskPriority.NORMAL
     parent_session_id: str | None = None
+    work_dir: Path | None = None
     created_at: datetime = field(default_factory=datetime.now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -117,6 +121,7 @@ class Task:
         agent_type: str = "focused_coder",
         priority: TaskPriority = TaskPriority.NORMAL,
         parent_session_id: str | None = None,
+        work_dir: Path | None = None,
         **metadata: Any,
     ) -> Task:
         """Create a new task.
@@ -126,6 +131,7 @@ class Task:
             agent_type: Type of agent to use
             priority: Task priority
             parent_session_id: Parent session ID
+            work_dir: Trusted working directory inherited from the parent agent
             **metadata: Additional metadata
 
         Returns:
@@ -137,6 +143,7 @@ class Task:
             agent_type=agent_type,
             priority=priority,
             parent_session_id=parent_session_id,
+            work_dir=work_dir.expanduser().resolve() if work_dir else None,
             metadata=metadata,
         )
 
@@ -162,6 +169,7 @@ class Task:
             "state": self.state.value,
             "priority": self.priority.value,
             "parent_session_id": self.parent_session_id,
+            "work_dir": str(self.work_dir) if self.work_dir else None,
             "created_at": self.created_at.isoformat(),
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -192,14 +200,21 @@ class TaskManager:
         first_result = await manager.wait_for_any([task1.id, task2.id])
     """
 
-    def __init__(self, max_concurrent: int = 5):
+    def __init__(self, max_concurrent: int = 5, max_terminal_tasks: int = 200):
         """Initialize the task manager.
 
         Args:
             max_concurrent: Maximum number of concurrent tasks
+            max_terminal_tasks: Maximum completed, failed, or cancelled tasks retained
         """
+        if max_concurrent < 1:
+            raise ValueError("max_concurrent must be at least 1")
+        if max_terminal_tasks < 0:
+            raise ValueError("max_terminal_tasks must be non-negative")
         self._tasks: dict[str, Task] = {}
         self._max_concurrent = max_concurrent
+        self._max_terminal_tasks = max_terminal_tasks
+        self._terminal_task_ids: deque[str] = deque()
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._lock = asyncio.Lock()
 
@@ -209,6 +224,7 @@ class TaskManager:
         agent_type: str = "focused_coder",
         priority: TaskPriority = TaskPriority.NORMAL,
         parent_session_id: str | None = None,
+        work_dir: Path | None = None,
         auto_start: bool = True,
         **metadata: Any,
     ) -> Task:
@@ -219,6 +235,7 @@ class TaskManager:
             agent_type: Type of agent to use
             priority: Task priority
             parent_session_id: Parent session ID
+            work_dir: Trusted working directory inherited from the parent agent
             auto_start: Whether to start the task immediately
             **metadata: Additional metadata
 
@@ -237,6 +254,7 @@ class TaskManager:
             agent_type=agent_type,
             priority=priority,
             parent_session_id=parent_session_id,
+            work_dir=work_dir,
             **metadata,
         )
 
@@ -288,18 +306,21 @@ class TaskManager:
         Args:
             task: The task to execute
         """
-        # Acquire semaphore for concurrency limiting
-        async with self._semaphore:
-            self._mark_running(task)
+        try:
+            # Cancellation must cover semaphore acquisition as well as agent
+            # execution so a cancelled pending task can never start later.
+            async with self._semaphore:
+                if task.state != TaskState.PENDING:
+                    return
+                self._mark_running(task)
 
-            await emit_task_event(
-                EventType.TASK_STARTED,
-                task.id,
-                task.description,
-                task.parent_session_id,
-            )
+                await emit_task_event(
+                    EventType.TASK_STARTED,
+                    task.id,
+                    task.description,
+                    task.parent_session_id,
+                )
 
-            try:
                 # Import here to avoid circular imports
                 from .agent import create_agent_from_config
 
@@ -322,58 +343,83 @@ class TaskManager:
                 # Create agent
                 agent = create_agent_from_config(config)
 
-                # Execute the task
-                result = await agent.run(
-                    user_input=task.description,
-                    stream=False,
-                    show_progress=False,
-                )
+                try:
+                    # Execute the task in the same trusted workspace as its parent.
+                    result = await agent.run(
+                        user_input=task.description,
+                        work_dir=task.work_dir,
+                        stream=False,
+                        show_progress=False,
+                    )
+                finally:
+                    await self._close_agent(agent)
 
                 # Mark completed
                 self._mark_completed(task, result)
-
-                await emit_task_event(
-                    EventType.TASK_COMPLETED,
-                    task.id,
-                    task.description,
-                    task.parent_session_id,
-                    result=result[:500] if result else None,
-                    duration_ms=task.duration_ms,
-                )
+                try:
+                    await emit_task_event(
+                        EventType.TASK_COMPLETED,
+                        task.id,
+                        task.description,
+                        task.parent_session_id,
+                        result=result[:500] if result else None,
+                        duration_ms=task.duration_ms,
+                    )
+                finally:
+                    self._finish_task(task)
 
                 logger.info(f"Completed task {task.id} in {task.duration_ms:.0f}ms")
 
-                # Set future result
-                self._set_future_result(task)
-
-            except asyncio.CancelledError:
+        except asyncio.CancelledError:
+            if not task.is_done:
                 self._mark_cancelled(task, "Task was cancelled")
-
-                await emit_task_event(
-                    EventType.TASK_CANCELLED,
-                    task.id,
-                    task.description,
-                    task.parent_session_id,
-                )
+                try:
+                    await emit_task_event(
+                        EventType.TASK_CANCELLED,
+                        task.id,
+                        task.description,
+                        task.parent_session_id,
+                    )
+                finally:
+                    self._finish_task(task)
 
                 logger.info(f"Cancelled task {task.id}")
 
-                self._cancel_future(task)
-
-            except Exception as e:
+        except Exception as e:
+            if not task.is_done:
                 self._mark_failed(task, str(e))
-
-                await emit_task_event(
-                    EventType.TASK_FAILED,
-                    task.id,
-                    task.description,
-                    task.parent_session_id,
-                    error=str(e),
-                )
+                try:
+                    await emit_task_event(
+                        EventType.TASK_FAILED,
+                        task.id,
+                        task.description,
+                        task.parent_session_id,
+                        error=str(e),
+                    )
+                finally:
+                    self._finish_task(task)
 
                 logger.error(f"Task {task.id} failed: {e}")
 
-                self._set_future_exception(task, e)
+    @staticmethod
+    async def _close_agent(agent: Any) -> None:
+        """Settle sub-agent cleanup before propagating cancellation."""
+        session_id = getattr(agent, "session_id", "unknown")
+        close_task = asyncio.create_task(agent.close(), name=f"amcp-close-agent-{session_id}")
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as cancelled:
+            while not close_task.done():
+                try:
+                    await asyncio.shield(close_task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not close_task.cancelled():
+                with contextlib.suppress(Exception):
+                    close_task.result()
+            raise cancelled
 
     @staticmethod
     def _mark_running(task: Task) -> None:
@@ -402,23 +448,16 @@ class TaskManager:
         task.completed_at = datetime.now()
         task.error = error
 
-    @staticmethod
-    def _set_future_result(task: Task) -> None:
-        """Resolve task future with successful completion."""
+    def _finish_task(self, task: Task) -> None:
+        """Resolve terminal completion and retain only a bounded history."""
         if task._future and not task._future.done():
             task._future.set_result(task)
-
-    @staticmethod
-    def _cancel_future(task: Task) -> None:
-        """Cancel task future when task is cancelled."""
-        if task._future and not task._future.done():
-            task._future.cancel()
-
-    @staticmethod
-    def _set_future_exception(task: Task, exc: Exception) -> None:
-        """Resolve task future with exception."""
-        if task._future and not task._future.done():
-            task._future.set_exception(exc)
+        self._terminal_task_ids.append(task.id)
+        while len(self._terminal_task_ids) > self._max_terminal_tasks:
+            task_id = self._terminal_task_ids.popleft()
+            retained = self._tasks.get(task_id)
+            if retained is not None and retained.is_done:
+                self._tasks.pop(task_id, None)
 
     async def cancel_task(self, task_id: str) -> bool:
         """Cancel a running task.
@@ -433,16 +472,28 @@ class TaskManager:
         if task is None:
             return False
 
-        if task.state != TaskState.RUNNING:
+        if task.is_done:
             return False
 
-        if task._task is not None:
-            task._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task._task
-            return True
+        worker = task._task
+        self._mark_cancelled(task, "Task was cancelled")
 
-        return False
+        if worker is not None and not worker.done():
+            worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+
+        try:
+            await emit_task_event(
+                EventType.TASK_CANCELLED,
+                task.id,
+                task.description,
+                task.parent_session_id,
+            )
+        finally:
+            self._finish_task(task)
+        logger.info(f"Cancelled task {task.id}")
+        return True
 
     async def cancel_for_session(self, session_id: str) -> int:
         """Cancel all pending or running tasks owned by a parent session."""
@@ -450,11 +501,7 @@ class TaskManager:
         for task in list(self._tasks.values()):
             if task.parent_session_id != session_id or task.is_done:
                 continue
-            if task.state == TaskState.PENDING:
-                self._mark_cancelled(task, "Parent session was cancelled")
-                self._cancel_future(task)
-                cancelled += 1
-            elif await self.cancel_task(task.id):
+            if await self.cancel_task(task.id):
                 cancelled += 1
         return cancelled
 
@@ -476,16 +523,15 @@ class TaskManager:
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
 
-        if task.is_done:
-            return task
-
         if task._future is None:
+            if task.is_done:
+                return task
             raise ValueError(f"Task {task_id} was never started")
 
         if timeout is not None:
-            await asyncio.wait_for(task._future, timeout)
+            await asyncio.wait_for(asyncio.shield(task._future), timeout)
         else:
-            await task._future
+            await asyncio.shield(task._future)
 
         return task
 
@@ -503,24 +549,24 @@ class TaskManager:
         Returns:
             List of completed tasks
         """
+        tasks = []
         futures = []
         for task_id in task_ids:
             task = self._tasks.get(task_id)
             if task is None:
                 raise ValueError(f"Task not found: {task_id}")
+            tasks.append(task)
             if task._future:
                 futures.append(task._future)
 
         if futures:
+            completion = asyncio.gather(*(asyncio.shield(future) for future in futures))
             if timeout is not None:
-                await asyncio.wait_for(
-                    asyncio.gather(*futures, return_exceptions=True),
-                    timeout,
-                )
+                await asyncio.wait_for(completion, timeout)
             else:
-                await asyncio.gather(*futures, return_exceptions=True)
+                await completion
 
-        return [self._tasks[tid] for tid in task_ids]
+        return tasks
 
     async def wait_for_any(
         self,
@@ -537,7 +583,7 @@ class TaskManager:
             The first completed task
         """
         futures = []
-        future_to_task: dict[asyncio.Future, str] = {}
+        future_to_task: dict[asyncio.Future, Task] = {}
 
         for task_id in task_ids:
             task = self._tasks.get(task_id)
@@ -545,7 +591,7 @@ class TaskManager:
                 raise ValueError(f"Task not found: {task_id}")
             if task._future:
                 futures.append(task._future)
-                future_to_task[task._future] = task_id
+                future_to_task[task._future] = task
 
         if not futures:
             raise ValueError("No running tasks to wait for")
@@ -560,8 +606,7 @@ class TaskManager:
             raise TimeoutError("No task completed within timeout")
 
         first_future = next(iter(done))
-        task_id = future_to_task[first_future]
-        return self._tasks[task_id]
+        return future_to_task[first_future]
 
     def get_task(self, task_id: str) -> Task | None:
         """Get a task by ID."""
@@ -620,6 +665,11 @@ class TaskManager:
 
             for task_id in to_remove:
                 del self._tasks[task_id]
+            if to_remove:
+                removed = set(to_remove)
+                self._terminal_task_ids = deque(
+                    task_id for task_id in self._terminal_task_ids if task_id not in removed
+                )
 
         return len(to_remove)
 
@@ -731,13 +781,15 @@ Example:
         "required": ["action"],
     }
 
-    def __init__(self, session_id: str | None = None):
+    def __init__(self, session_id: str | None = None, work_dir: Path | None = None):
         """Initialize TaskTool.
 
         Args:
             session_id: Session ID for tracking parent tasks
+            work_dir: Trusted working directory inherited from the parent agent
         """
         self.session_id = session_id
+        self.work_dir = work_dir.expanduser().resolve() if work_dir else None
         self._manager = get_task_manager()
 
     async def execute(self, **kwargs: Any) -> str:
@@ -777,6 +829,7 @@ Example:
                 description=description,
                 agent_type=agent_type,
                 parent_session_id=self.session_id,
+                work_dir=self.work_dir,
             )
             return f"""Task created successfully!
 
