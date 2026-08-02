@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import string
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -19,9 +20,9 @@ from ..event_bus import EventType, get_event_bus
 from ..memory import CONFIG_DIR
 from ..memory_dream import MemoryDreamer
 from ..multi_agent import get_agent_registry
-from ..runtime import CancellationResult, TurnStatus
+from ..runtime import CancellationResult, TurnCancelledError, TurnStatus
 from .auth import AuthMiddleware
-from .config import TelegramConfig, normalize_dm_policy, normalize_group_policy
+from .config import TelegramConfig, TelegramStreamingConfig, normalize_dm_policy, normalize_group_policy
 from .formatter import TelegramFormatter
 from .handlers import (
     RateLimiter,
@@ -60,6 +61,112 @@ class PairingRequest:
     chat_id: int
     username: str | None
     created_at: datetime
+
+
+class _StreamingDeliveryManager:
+    """Accumulate LLM chunks and periodically edit a Telegram status message.
+
+    The manager throttles ``edit_message_text`` calls to respect Telegram
+    rate limits (roughly 30 per minute per chat).  When the accumulated text
+    exceeds ``max_chars``, the current message is sealed (final edit) and a
+    new message is started for overflow content.
+    """
+
+    def __init__(
+        self,
+        bot: Any,
+        chat_id: int,
+        status_message_id: int | None,
+        formatter: TelegramFormatter,
+        cfg: TelegramStreamingConfig,
+        is_current: Callable[[], bool],
+        stop_markup: Any = None,
+    ) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._message_id = status_message_id
+        self._formatter = formatter
+        self._cfg = cfg
+        self._is_current = is_current
+        self._stop_markup = stop_markup
+        self._buffer: str = ""
+        self._last_edit_time: float = 0.0
+        self._sealed_messages: list[str] = []
+        self._overflow_message_id: int | None = None
+        self._needs_flush: bool = False
+
+    def on_chunk(self, event_type: str, data: dict[str, Any]) -> None:
+        """Synchronous callback invoked by the agent event system.
+
+        Only accumulates text; the actual Telegram edit is deferred to
+        ``maybe_flush`` which runs in the async context of _process_message.
+        """
+        if event_type != "message.chunk":
+            return
+        chunk = data.get("content", "")
+        if not chunk:
+            return
+        self._buffer += chunk
+        now = time.monotonic()
+        if len(self._buffer) >= self._cfg.streaming_min_chars and (
+            now - self._last_edit_time >= self._cfg.streaming_interval_seconds
+        ):
+            self._needs_flush = True
+
+    async def maybe_flush(self) -> None:
+        """Edit the status message if enough content has accumulated.
+
+        Called periodically from the async context in ``_process_message``.
+        """
+        if not self._needs_flush or not self._buffer:
+            return
+        self._needs_flush = False
+        if not self._is_current():
+            return
+        self._last_edit_time = time.monotonic()
+        if len(self._buffer) > self._cfg.streaming_max_chars:
+            seal_text = self._buffer[: self._cfg.streaming_max_chars]
+            self._buffer = self._buffer[self._cfg.streaming_max_chars :]
+            await self._seal_and_send(seal_text)
+        else:
+            await self._edit_status(self._buffer)
+
+    async def _seal_and_send(self, sealed_text: str) -> None:
+        """Seal current message with sealed_text, start new message for buffer."""
+        await self._edit_status(sealed_text)
+        self._sealed_messages.append(sealed_text)
+        try:
+            msg = await self._bot.send_text(self._chat_id, self._buffer[: self._cfg.streaming_max_chars])
+            self._overflow_message_id = self._bot._get_telegram_message_id(msg)
+        except Exception:
+            logger.debug("Failed to send overflow streaming message", exc_info=True)
+
+    async def _edit_status(self, text: str) -> None:
+        if self._message_id is None:
+            return
+        try:
+            await self._bot._edit_text(self._chat_id, self._message_id, text, markdown=False)
+        except Exception:
+            logger.debug("Streaming edit failed for %s/%s", self._chat_id, self._message_id, exc_info=True)
+
+    async def finalize(self, full_response: str) -> None:
+        """Deliver the final formatted response with proper markdown."""
+        if not self._is_current():
+            return
+        self._buffer = ""
+        chunks = self._formatter.format_response(full_response) if full_response else []
+        if not chunks:
+            return
+        # Edit the status/overflow message with the first chunk (markdown formatted)
+        target_id = self._overflow_message_id or self._message_id
+        remaining = chunks
+        if target_id is not None and await self._bot._edit_text(self._chat_id, target_id, chunks[0], markdown=True):
+            remaining = chunks[1:]
+        # Send remaining chunks as new messages
+        for chunk in remaining:
+            if not self._is_current():
+                break
+            await self._bot.send_markdown(self._chat_id, chunk)
 
 
 class TelegramBot:
@@ -620,10 +727,11 @@ class TelegramBot:
                 else "Started processing your request..."
             )
             self._bind_session_memory(message.chat_id, session)
+            streaming = self._config.streaming.streaming_enabled
             handle = await session.agent.submit(
                 message.text,
                 work_dir=self._work_dir,
-                stream=False,
+                stream=streaming,
                 show_progress=False,
             )
             try:
@@ -724,6 +832,19 @@ class TelegramBot:
         )
         status_message_id = message.status_message_id
         self._bind_session_memory(message.chat_id, session)
+        streaming_cfg = self._config.streaming if self._config.streaming.streaming_enabled else None
+        streamer: _StreamingDeliveryManager | None = None
+        if streaming_cfg and handle is not None and status_message_id is not None:
+            streamer = _StreamingDeliveryManager(
+                bot=self,
+                chat_id=message.chat_id,
+                status_message_id=status_message_id,
+                formatter=self._formatter,
+                cfg=streaming_cfg,
+                is_current=lambda: self._is_delivery_current(token, session),
+                stop_markup=self._stop_task_markup(handle.id),
+            )
+            session.agent.add_event_callback(streamer.on_chunk)
         async with self._typing_session(message.chat_id):
             try:
                 if handle is None:
@@ -735,11 +856,16 @@ class TelegramBot:
                         queue_if_busy=False,
                     )
                 else:
-                    response = await handle.wait()
+                    if streamer is not None:
+                        response = await self._wait_with_streaming(handle, streamer)
+                    else:
+                        response = await handle.wait()
             except asyncio.CancelledError:
                 current = asyncio.current_task()
                 if current is not None and current.cancelling():
                     raise
+                if streamer is not None:
+                    session.agent.remove_event_callback(streamer.on_chunk)
                 await self._deliver_status_or_text_if_current(
                     token,
                     session,
@@ -748,6 +874,8 @@ class TelegramBot:
                 )
                 return
             except BusyError:
+                if streamer is not None:
+                    session.agent.remove_event_callback(streamer.on_chunk)
                 await self._deliver_status_or_text_if_current(
                     token,
                     session,
@@ -756,6 +884,8 @@ class TelegramBot:
                 )
                 return
             except Exception as exc:
+                if streamer is not None:
+                    session.agent.remove_event_callback(streamer.on_chunk)
                 logger.exception("Failed to process Telegram message.")
                 await self._deliver_status_or_markdown_if_current(
                     token,
@@ -765,14 +895,36 @@ class TelegramBot:
                 )
                 return
 
+            if streamer is not None:
+                session.agent.remove_event_callback(streamer.on_chunk)
+
             response_text = response or ""
             if not self._is_delivery_current(token, session):
                 return
             if response_text:
-                chunks = self._formatter.format_response(response_text)
-                await self._deliver_response_chunks(token, session, status_message_id, chunks)
+                if streamer is not None:
+                    await streamer.finalize(response_text)
+                else:
+                    chunks = self._formatter.format_response(response_text)
+                    await self._deliver_response_chunks(token, session, status_message_id, chunks)
             elif status_message_id is not None:
                 await self._edit_if_current(token, session, status_message_id, "Done.")
+
+    async def _wait_with_streaming(self, handle: Any, streamer: _StreamingDeliveryManager) -> str:
+        """Wait for a turn while periodically flushing streaming chunks to Telegram."""
+        flush_interval = max(0.3, self._config.streaming.streaming_interval_seconds)
+        while not handle.done:
+            try:
+                await asyncio.wait_for(asyncio.shield(handle.wait()), timeout=flush_interval)
+                break
+            except TimeoutError:
+                await streamer.maybe_flush()
+            except TurnCancelledError:
+                raise
+            except asyncio.CancelledError:
+                raise
+        await streamer.maybe_flush()
+        return await handle.wait()
 
     def _is_delivery_current(self, token: TelegramDeliveryToken, session: Any) -> bool:
         if session.session_id != token.session_id or getattr(session, "generation", 0) != token.generation:

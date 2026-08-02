@@ -24,6 +24,14 @@ class TelegramPairingConfig:
 
 
 @dataclass
+class TelegramStreamingConfig:
+    streaming_enabled: bool = True
+    streaming_interval_seconds: float = 1.5
+    streaming_min_chars: int = 50
+    streaming_max_chars: int = 3900
+
+
+@dataclass
 class TelegramTopicConfig:
     enabled: bool = True
     group_policy: str | None = None
@@ -58,6 +66,7 @@ class TelegramConfig:
     typing_interval_seconds: int = 4
     max_queue_size: int = 20
     pairing: TelegramPairingConfig = field(default_factory=TelegramPairingConfig)
+    streaming: TelegramStreamingConfig = field(default_factory=TelegramStreamingConfig)
     groups: dict[str, TelegramGroupConfig] = field(default_factory=dict)
     notifications: TelegramNotificationsConfig = field(default_factory=TelegramNotificationsConfig)
     assistant_mode: bool = False

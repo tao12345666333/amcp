@@ -20,6 +20,7 @@ from .telegram.config import (
     TelegramGroupConfig,
     TelegramNotificationsConfig,
     TelegramPairingConfig,
+    TelegramStreamingConfig,
     TelegramTopicConfig,
     apply_env_overrides,
     normalize_dm_policy,
@@ -561,6 +562,21 @@ def _decode_telegram_pairing(raw: Mapping[str, object] | None) -> TelegramPairin
     )
 
 
+def _decode_telegram_streaming(raw: Mapping[str, object] | None) -> TelegramStreamingConfig:
+    cfg = TelegramStreamingConfig()
+    if not raw:
+        return cfg
+    if "streaming_enabled" in raw:
+        cfg.streaming_enabled = bool(raw.get("streaming_enabled"))
+    if "streaming_interval_seconds" in raw and raw.get("streaming_interval_seconds") is not None:
+        cfg.streaming_interval_seconds = max(0.3, float(str(raw.get("streaming_interval_seconds"))))
+    if "streaming_min_chars" in raw and raw.get("streaming_min_chars") is not None:
+        cfg.streaming_min_chars = max(1, int(str(raw.get("streaming_min_chars"))))
+    if "streaming_max_chars" in raw and raw.get("streaming_max_chars") is not None:
+        cfg.streaming_max_chars = max(100, int(str(raw.get("streaming_max_chars"))))
+    return cfg
+
+
 def _decode_telegram_topic(raw: Mapping[str, object] | None) -> TelegramTopicConfig:
     if not raw:
         return TelegramTopicConfig()
@@ -630,6 +646,9 @@ def _decode_telegram(raw: Mapping[str, object] | None) -> TelegramConfig | None:
 
     pairing = raw.get("pairing")
     cfg.pairing = _decode_telegram_pairing(pairing if isinstance(pairing, dict) else None)
+
+    streaming = raw.get("streaming")
+    cfg.streaming = _decode_telegram_streaming(streaming if isinstance(streaming, dict) else None)
 
     groups: dict[str, TelegramGroupConfig] = {}
     raw_groups = raw.get("groups")
