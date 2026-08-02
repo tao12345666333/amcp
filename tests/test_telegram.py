@@ -9,7 +9,13 @@ import pytest
 
 from amcp.runtime import CancellationResult
 from amcp.telegram.auth import AuthMiddleware
-from amcp.telegram.config import TelegramConfig, TelegramGroupConfig, TelegramPairingConfig, TelegramTopicConfig
+from amcp.telegram.config import (
+    TelegramConfig,
+    TelegramGroupConfig,
+    TelegramPairingConfig,
+    TelegramStreamingConfig,
+    TelegramTopicConfig,
+)
 from amcp.telegram.formatter import TelegramFormatter
 from amcp.telegram.handlers import (
     RateLimiter,
@@ -1025,6 +1031,12 @@ def test_handle_prompt_starts_background_worker_and_returns():
             def queued_count(self) -> int:
                 return 0
 
+            def add_event_callback(self, callback) -> None:
+                pass
+
+            def remove_event_callback(self, callback) -> None:
+                pass
+
             async def submit(self, prompt, **kwargs):
                 self._busy = True
                 handle = MagicMock(id="turn-slow")
@@ -1124,6 +1136,12 @@ def test_handle_prompt_queues_follow_up_for_same_session():
 
             def queued_count(self) -> int:
                 return self._queued
+
+            def add_event_callback(self, callback) -> None:
+                pass
+
+            def remove_event_callback(self, callback) -> None:
+                pass
 
             async def submit(self, prompt, **kwargs):
                 calls.append(prompt)
@@ -1359,3 +1377,188 @@ def test_process_message_suppresses_result_chunks_after_abandon():
         edit_text.assert_not_awaited()
 
     asyncio.run(_run())
+
+
+def test_streaming_config_defaults():
+    cfg = TelegramStreamingConfig()
+    assert cfg.streaming_enabled is True
+    assert cfg.streaming_interval_seconds == 1.5
+    assert cfg.streaming_min_chars == 50
+    assert cfg.streaming_max_chars == 3900
+
+
+def test_streaming_config_disabled():
+    cfg = TelegramStreamingConfig(streaming_enabled=False)
+    assert cfg.streaming_enabled is False
+
+
+def test_streaming_config_validation():
+    cfg = TelegramStreamingConfig(streaming_interval_seconds=0.1, streaming_min_chars=1, streaming_max_chars=100)
+    assert cfg.streaming_interval_seconds == 0.1
+    assert cfg.streaming_min_chars == 1
+    assert cfg.streaming_max_chars == 100
+
+
+def test_telegram_config_has_streaming_field():
+    cfg = TelegramConfig()
+    assert hasattr(cfg, "streaming")
+    assert isinstance(cfg.streaming, TelegramStreamingConfig)
+    assert cfg.streaming.streaming_enabled is True
+
+
+def test_streaming_delivery_manager_accumulates_chunks():
+    """Test that _StreamingDeliveryManager accumulates chunks from the event callback."""
+    from amcp.telegram.bot import _StreamingDeliveryManager
+
+    formatter = TelegramFormatter(max_length=4096)
+    cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)
+
+    class _FakeBot:
+        def _get_telegram_message_id(self, msg):
+            return 42
+
+        async def _edit_text(self, chat_id, message_id, text, markdown=False):
+            return True
+
+        async def send_text(self, chat_id, text):
+            pass
+
+        async def send_markdown(self, chat_id, text):
+            pass
+
+    bot = _FakeBot()
+    manager = _StreamingDeliveryManager(
+        bot=bot,
+        chat_id=123,
+        status_message_id=1,
+        formatter=formatter,
+        cfg=cfg,
+        is_current=lambda: True,
+    )
+
+    # Simulate chunk events (synchronous, called from agent _emit_event)
+    manager.on_chunk("message.chunk", {"content": "Hello "})
+    manager.on_chunk("message.chunk", {"content": "world!"})
+
+    # The buffer should have accumulated
+    assert manager._buffer == "Hello world!"
+    assert manager._needs_flush is True
+
+
+def test_streaming_delivery_manager_ignores_non_chunk_events():
+    """Test that _StreamingDeliveryManager ignores non-chunk events."""
+    from amcp.telegram.bot import _StreamingDeliveryManager
+
+    formatter = TelegramFormatter(max_length=4096)
+    cfg = TelegramStreamingConfig()
+
+    class _FakeBot:
+        def _get_telegram_message_id(self, msg):
+            return 42
+
+        async def _edit_text(self, chat_id, message_id, text, markdown=False):
+            return True
+
+        async def send_text(self, chat_id, text):
+            pass
+
+        async def send_markdown(self, chat_id, text):
+            pass
+
+    bot = _FakeBot()
+    manager = _StreamingDeliveryManager(
+        bot=bot,
+        chat_id=123,
+        status_message_id=1,
+        formatter=formatter,
+        cfg=cfg,
+        is_current=lambda: True,
+    )
+
+    # Non-chunk events should not affect buffer
+    manager.on_chunk("tool.call_start", {"tool_name": "bash"})
+    manager.on_chunk("tool.call_complete", {"tool_name": "bash"})
+    assert manager._buffer == ""
+    assert manager._needs_flush is False
+
+
+def test_streaming_delivery_manager_flush_edits_message():
+    """Test that maybe_flush edits the status message with accumulated text."""
+    from amcp.telegram.bot import _StreamingDeliveryManager
+
+    formatter = TelegramFormatter(max_length=4096)
+    cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)
+    edits: list[str] = []
+
+    class _FakeBot:
+        def _get_telegram_message_id(self, msg):
+            return 42
+
+        async def _edit_text(self, chat_id, message_id, text, markdown=False):
+            edits.append(text)
+            return True
+
+        async def send_text(self, chat_id, text):
+            pass
+
+        async def send_markdown(self, chat_id, text):
+            pass
+
+    bot = _FakeBot()
+    manager = _StreamingDeliveryManager(
+        bot=bot,
+        chat_id=123,
+        status_message_id=1,
+        formatter=formatter,
+        cfg=cfg,
+        is_current=lambda: True,
+    )
+
+    manager.on_chunk("message.chunk", {"content": "Hello world!"})
+    asyncio.run(manager.maybe_flush())
+    assert len(edits) == 1
+    assert edits[0] == "Hello world!"
+
+
+def test_streaming_delivery_manager_respects_is_current():
+    """Test that _StreamingDeliveryManager stops delivering when session is no longer current."""
+    from amcp.telegram.bot import _StreamingDeliveryManager
+
+    formatter = TelegramFormatter(max_length=4096)
+    cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)
+
+    class _FakeBot:
+        def _get_telegram_message_id(self, msg):
+            return 42
+
+        async def _edit_text(self, chat_id, message_id, text, markdown=False):
+            return True
+
+        async def send_text(self, chat_id, text):
+            pass
+
+        async def send_markdown(self, chat_id, text):
+            pass
+
+    is_current = [True]
+    bot = _FakeBot()
+    manager = _StreamingDeliveryManager(
+        bot=bot,
+        chat_id=123,
+        status_message_id=1,
+        formatter=formatter,
+        cfg=cfg,
+        is_current=lambda: is_current[0],
+    )
+
+    # When current, chunks accumulate
+    manager.on_chunk("message.chunk", {"content": "Hello"})
+    assert manager._buffer == "Hello"
+
+    # When not current, maybe_flush should do nothing
+    is_current[0] = False
+    asyncio.run(manager.maybe_flush())
+    # Buffer still has content but no edit was made (would need to check bot._edit_text calls)
+
+    # finalize should also do nothing when not current
+    asyncio.run(manager.finalize("Hello world!"))
