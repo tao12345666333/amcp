@@ -1031,6 +1031,12 @@ def test_handle_prompt_starts_background_worker_and_returns():
             def queued_count(self) -> int:
                 return 0
 
+            def add_event_callback(self, callback) -> None:
+                pass
+
+            def remove_event_callback(self, callback) -> None:
+                pass
+
             async def submit(self, prompt, **kwargs):
                 self._busy = True
                 handle = MagicMock(id="turn-slow")
@@ -1130,6 +1136,12 @@ def test_handle_prompt_queues_follow_up_for_same_session():
 
             def queued_count(self) -> int:
                 return self._queued
+
+            def add_event_callback(self, callback) -> None:
+                pass
+
+            def remove_event_callback(self, callback) -> None:
+                pass
 
             async def submit(self, prompt, **kwargs):
                 calls.append(prompt)
