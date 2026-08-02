@@ -110,9 +110,9 @@ class TestAMCPClient:
 
     def test_remote_mode_creation(self):
         """Test creating client in remote mode."""
-        client = AMCPClient.remote("http://localhost:4096")
+        client = AMCPClient.remote("http://localhost:8080")
         assert client.mode == ClientMode.REMOTE
-        assert client.url == "http://localhost:4096"
+        assert client.url == "http://localhost:8080"
         assert client.is_connected is False
 
     def test_embedded_mode_creation(self):
@@ -123,7 +123,7 @@ class TestAMCPClient:
 
     def test_auto_mode_with_url(self):
         """Test auto mode with URL defaults to remote."""
-        client = AMCPClient.auto("http://localhost:4096")
+        client = AMCPClient.auto("http://localhost:8080")
         assert client.mode == ClientMode.REMOTE
 
     def test_auto_mode_without_url(self):
@@ -133,7 +133,7 @@ class TestAMCPClient:
 
     def test_url_based_mode_detection(self):
         """Test that URL presence determines mode."""
-        with_url = AMCPClient("http://localhost:4096")
+        with_url = AMCPClient("http://localhost:8080")
         assert with_url.mode == ClientMode.REMOTE
 
         without_url = AMCPClient()
@@ -150,25 +150,25 @@ class TestHTTPClient:
 
     def test_client_creation(self):
         """Test client creation."""
-        client = HTTPClient("http://localhost:4096")
-        assert client._url == "http://localhost:4096"
-        assert client.base_url == "http://localhost:4096/api/v1"
+        client = HTTPClient("http://localhost:8080")
+        assert client._url == "http://localhost:8080"
+        assert client.base_url == "http://localhost:8080/api/v1"
         assert client.is_connected is False
 
     def test_url_trailing_slash(self):
         """Test URL normalization."""
-        client = HTTPClient("http://localhost:4096/")
-        assert client._url == "http://localhost:4096"
+        client = HTTPClient("http://localhost:8080/")
+        assert client._url == "http://localhost:8080"
 
     def test_ensure_connected_raises(self):
         """Test that ensure_connected raises when not connected."""
-        client = HTTPClient("http://localhost:4096")
+        client = HTTPClient("http://localhost:8080")
         with pytest.raises(ConnectionError):
             client._ensure_connected()
 
     def test_api_key_adds_bearer_header_without_overriding_headers(self):
         client = HTTPClient(
-            "http://localhost:4096",
+            "http://localhost:8080",
             headers={"X-Custom": "value"},
             api_key="secret",
         )
@@ -178,7 +178,7 @@ class TestHTTPClient:
         }
 
         custom = HTTPClient(
-            "http://localhost:4096",
+            "http://localhost:8080",
             headers={"authorization": "Custom credential"},
             api_key="secret",
         )

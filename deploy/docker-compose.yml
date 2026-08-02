@@ -13,7 +13,7 @@ services:
   amcp:
     build: ..
     ports:
-      - "4096:4096"
+      - "8080:8080"
     volumes:
       - ./config.toml:/root/.config/amcp/config.toml:ro
       - amcp-data:/root/.config/amcp

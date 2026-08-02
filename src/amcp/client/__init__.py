@@ -5,7 +5,7 @@ or running agents in embedded mode locally.
 
 Example usage:
     # Remote mode - connect to a server
-    async with AMCPClient("http://localhost:4096") as client:
+    async with AMCPClient("http://localhost:8080") as client:
         session = await client.create_session(cwd="/my/project")
         async for chunk in session.prompt("Help me refactor this"):
             print(chunk.content, end="")
@@ -62,7 +62,7 @@ class AMCPClient:
 
     Examples:
         # Connect to remote server
-        async with AMCPClient("http://localhost:4096") as client:
+        async with AMCPClient("http://localhost:8080") as client:
             session = await client.create_session()
             async for chunk in session.prompt("Hello"):
                 print(chunk)

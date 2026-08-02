@@ -4,12 +4,12 @@
 #   docker build -t amcp .
 #
 # Run:
-#   docker run -p 4096:4096 amcp
-#   docker run -p 4096:4096 -v /path/to/project:/workspace amcp \
+#   docker run -p 8080:8080 amcp
+#   docker run -p 8080:8080 -v /path/to/project:/workspace amcp \
 #       serve --host 0.0.0.0 --work-dir /workspace
 #
 # With scheduler & reactor:
-#   docker run -p 4096:4096 -v ./config.toml:/root/.config/amcp/config.toml \
+#   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
 #       amcp serve --host 0.0.0.0 --scheduler --reactor
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
@@ -46,9 +46,9 @@ WORKDIR /workspace
 
 # Health check — hits the server /api/v1/health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:4096/api/v1/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')" || exit 1
 
-EXPOSE 4096
+EXPOSE 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--", "amcp"]
 CMD ["serve", "--host", "0.0.0.0"]

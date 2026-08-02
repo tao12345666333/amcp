@@ -163,7 +163,7 @@ class ServerConfig:
     """Configuration for AMCP Server."""
 
     host: str = "127.0.0.1"
-    port: int = 4096
+    port: int = 8080
     auth: AuthConfig = field(default_factory=AuthConfig)
     cors: CORSConfig = field(default_factory=CORSConfig)
     session_timeout_minutes: int = 60 * 24
@@ -210,7 +210,7 @@ _DEFAULT = {
     "servers": {},
     "server": {
         "host": "127.0.0.1",
-        "port": 4096,
+        "port": 8080,
         "auth": {
             "enabled": False,
         },
@@ -531,7 +531,7 @@ def _decode_server_config(raw: Mapping[str, object] | None) -> ServerConfig | No
     cors_raw = raw.get("cors")
     return ServerConfig(
         host=str(raw.get("host", "127.0.0.1")),
-        port=int(str(raw.get("port", 4096))),
+        port=int(str(raw.get("port", 8080))),
         auth=_decode_auth(auth_raw if isinstance(auth_raw, dict) else None),
         cors=_decode_cors(cors_raw if isinstance(cors_raw, dict) else None, raw.get("cors_origins")),
         session_timeout_minutes=int(str(raw.get("session_timeout_minutes", 1440))),
