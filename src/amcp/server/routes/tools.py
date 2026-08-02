@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException
 
 from ..models import ToolInfo, ToolListResponse
@@ -74,51 +72,6 @@ async def get_tool(tool_name: str) -> ToolInfo:
         parameters={},
         source="builtin",
     )
-
-
-@router.post("/{tool_name}/execute")
-async def execute_tool(tool_name: str, arguments: dict[str, Any]) -> dict:
-    """Execute a tool directly.
-
-    This is mainly for testing purposes. In normal operation,
-    tools are executed as part of agent conversations.
-
-    Warning: This bypasses normal safety checks.
-    """
-    from ...tools import ToolResult, get_tool_registry
-
-    tool_registry = get_tool_registry()
-    tool_func = tool_registry.get_tool(tool_name)
-
-    if tool_func is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": f"Tool not found: {tool_name}", "code": "TOOL_NOT_FOUND"},
-        )
-
-    try:
-        arguments = tool_registry.prepare_model_arguments(tool_name, arguments)
-        result = tool_registry.execute_tool(tool_name, **arguments)
-
-        if isinstance(result, ToolResult):
-            return {
-                "success": result.success,
-                "result": result.content,
-                "error": result.error,
-            }
-        else:
-            return {
-                "success": True,
-                "result": str(result),
-                "error": None,
-            }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "result": None,
-            "error": str(e),
-        }
 
 
 @router.get("/categories")

@@ -350,6 +350,11 @@ class TestToolEndpoints:
         response = client.get("/api/v1/tools/nonexistent_tool")
         assert response.status_code == 404
 
+    def test_execute_tool_endpoint_removed(self, client):
+        """Test that the direct execute endpoint is no longer available."""
+        response = client.post("/api/v1/tools/read_file/execute", json={"arguments": {}})
+        assert response.status_code == 404
+
 
 class TestAgentEndpoints:
     """Test agent management endpoints."""
