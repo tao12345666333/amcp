@@ -1,7 +1,7 @@
 # AMCP API Reference
 
-> **Version**: 1.0.0  
-> **Base URL**: `http://localhost:4096/api/v1`  
+> **Version**: 1.0.0
+> **Base URL**: `http://localhost:4096/api/v1`
 > **OpenAPI Spec**: `/openapi.json`
 
 This document provides comprehensive API documentation for the AMCP Server HTTP REST API, WebSocket API, and SSE event streams.
@@ -277,33 +277,6 @@ List all available tools.
     }
   ],
   "total": 15
-}
-```
-
-#### POST `/tools/{name}/execute`
-
-Execute a tool directly (bypassing the agent).
-
-**Path Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | string | Tool name |
-
-**Request Body**:
-```json
-{
-  "arguments": {
-    "path": "/src/main.py"
-  }
-}
-```
-
-**Response** `200 OK`:
-```json
-{
-  "success": true,
-  "result": "file contents...",
-  "error": null
 }
 ```
 
@@ -601,11 +574,11 @@ from amcp.client import AMCPClient
 async with AMCPClient("http://localhost:4096") as client:
     # Create session
     session = await client.create_session(cwd="/my/project")
-    
+
     # Stream response
     async for chunk in await session.prompt_stream("Help me refactor"):
         print(chunk.content, end="")
-    
+
     # Full response
     response = await session.prompt_full("What did you do?")
 ```
