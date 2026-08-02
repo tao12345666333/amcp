@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .._version import __version__
-from .config import ServerConfig, get_server_config, set_server_config
+from ..llm import ProviderError, ProviderErrorKind
+from .config import AuthConfig, ServerConfig, get_server_config, set_server_config
 from .events import router as events_router
 from .routes import agents_router, health_router, sessions_router, tools_router
 from .session_manager import SessionManager, set_session_manager
@@ -21,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 # Global app instance
 _app: FastAPI | None = None
+
+
+def _request_api_key(request: Request) -> str | None:
+    """Extract an API key from supported HTTP authentication headers."""
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, credential = authorization.partition(" ")
+    if scheme.lower() == "bearer" and credential:
+        return credential
+    return request.headers.get("X-API-Key")
 
 
 @asynccontextmanager
@@ -74,6 +85,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         set_server_config(config)
 
     cfg = get_server_config()
+    cfg.validate_security()
     set_session_manager(SessionManager(cfg))
 
     # Create FastAPI app
@@ -86,6 +98,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    app.state.server_config = cfg
 
     # Configure CORS
     if cfg.cors.enabled:
@@ -97,7 +110,40 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
             allow_headers=cfg.cors.allow_headers,
         )
 
+    if cfg.auth.enabled:
+        expected_key = cfg.auth.api_key or ""
+
+        @app.middleware("http")
+        async def require_api_key(request: Request, call_next):
+            """Authenticate all versioned API routes except the health probe."""
+            if request.url.path.startswith("/api/v1/") and request.url.path != "/api/v1/health":
+                supplied_key = _request_api_key(request)
+                if supplied_key is None or not secrets.compare_digest(supplied_key, expected_key):
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": "Invalid or missing API key", "code": "UNAUTHORIZED"},
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+            return await call_next(request)
+
     # Add exception handlers
+    @app.exception_handler(ProviderError)
+    async def provider_exception_handler(request: Request, exc: ProviderError) -> JSONResponse:
+        """Return stable provider diagnostics without leaking SDK exception details."""
+        status_by_kind = {
+            ProviderErrorKind.RATE_LIMIT: 503,
+            ProviderErrorKind.TIMEOUT: 504,
+        }
+        return JSONResponse(
+            status_code=status_by_kind.get(exc.kind, 502),
+            content={
+                "error": str(exc),
+                "code": f"PROVIDER_{exc.kind.value.upper()}",
+                "retryable": exc.retryable,
+                "upstream_status": exc.status_code,
+            },
+        )
+
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Handle uncaught exceptions."""
@@ -158,6 +204,7 @@ def run_server(
     port: int = 4096,
     work_dir: str | None = None,
     reload: bool = False,
+    auth: AuthConfig | None = None,
 ) -> None:
     """Run the AMCP server.
 
@@ -166,6 +213,7 @@ def run_server(
         port: Port to listen on.
         work_dir: Working directory for sessions.
         reload: Enable auto-reload for development.
+        auth: Authentication config from the application configuration.
     """
     from pathlib import Path
 
@@ -176,7 +224,9 @@ def run_server(
         host=host,
         port=port,
         work_dir=Path(work_dir) if work_dir else None,
+        auth=auth or AuthConfig(),
     )
+    config.validate_security()
     set_server_config(config)
 
     # Create app

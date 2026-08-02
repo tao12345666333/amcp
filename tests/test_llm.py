@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
 from any_llm.types.completion import Reasoning
 
@@ -13,6 +14,8 @@ from amcp.llm import (
     LLMResponse,
     OpenAIClient,
     OpenAIResponsesClient,
+    ProviderErrorKind,
+    classify_provider_error,
     create_llm_client,
 )
 
@@ -31,6 +34,52 @@ class TestLLMResponse:
         assert resp.tool_calls == tool_calls
 
 
+class TestProviderErrors:
+    """Tests for safe provider exception classification."""
+
+    @pytest.mark.parametrize(
+        ("status", "kind", "retryable"),
+        [
+            (401, ProviderErrorKind.AUTH, False),
+            (400, ProviderErrorKind.INVALID_REQUEST, False),
+            (429, ProviderErrorKind.RATE_LIMIT, True),
+            (503, ProviderErrorKind.SERVER, True),
+        ],
+    )
+    def test_classifies_http_statuses(self, status, kind, retryable):
+        error = RuntimeError("secret provider response")
+        error.status_code = status
+
+        classified = classify_provider_error(error)
+
+        assert classified.kind == kind
+        assert classified.retryable is retryable
+        assert "secret provider response" not in str(classified)
+
+    def test_partial_stream_output_disables_retry(self):
+        error = classify_provider_error(TimeoutError(), partial_output=True)
+
+        assert error.kind == ProviderErrorKind.TIMEOUT
+        assert error.retryable is False
+        assert error.partial_output is True
+
+    @pytest.mark.parametrize(
+        ("wrapped", "kind"),
+        [
+            (httpx.ReadError("connection reset"), ProviderErrorKind.CONNECTION),
+            (httpx.ReadTimeout("slow provider"), ProviderErrorKind.TIMEOUT),
+        ],
+    )
+    def test_classifies_httpx_transport_errors(self, wrapped, kind):
+        outer = RuntimeError("provider wrapper")
+        outer.original_exception = wrapped
+
+        classified = classify_provider_error(outer)
+
+        assert classified.kind == kind
+        assert classified.retryable is True
+
+
 class TestCreateLLMClient:
     """Tests for create_llm_client factory."""
 
@@ -43,6 +92,15 @@ class TestCreateLLMClient:
         cfg = ChatConfig(api_type="openai", model="gpt-5.5", api_key="test-key")
         client = create_llm_client(cfg)
         assert isinstance(client, OpenAIClient)
+
+    @pytest.mark.parametrize("api_type", ["openai", "anthropic", "gmi"])
+    def test_known_providers_disable_sdk_retries(self, api_type):
+        cfg = ChatConfig(api_type=api_type, model="test-model", api_key="test-key")
+
+        with patch("any_llm.AnyLLM.create") as create:
+            create_llm_client(cfg)
+
+        assert create.call_args.kwargs["max_retries"] == 0
 
     def test_openai_responses_type(self):
         cfg = ChatConfig(api_type="openai_responses", model="gpt-5.5", api_key="test-key")

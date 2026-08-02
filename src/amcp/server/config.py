@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,19 @@ class AuthConfig(BaseModel):
     api_key: str | None = None
 
 
+def is_loopback_host(host: str) -> bool:
+    """Return whether a bind host is explicitly local without resolving DNS."""
+    normalized = host.strip().lower().rstrip(".")
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 class ServerConfig(BaseModel):
     """AMCP Server configuration."""
 
@@ -57,6 +71,13 @@ class ServerConfig(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return self.model_dump()
+
+    def validate_security(self) -> None:
+        """Reject insecure or incomplete authentication configuration."""
+        if self.auth.enabled and not (self.auth.api_key and self.auth.api_key.strip()):
+            raise ValueError("server authentication is enabled but api_key is empty")
+        if not is_loopback_host(self.host) and not self.auth.enabled:
+            raise ValueError(f"refusing to bind to non-loopback host {self.host!r} without authentication")
 
 
 # Global server config instance

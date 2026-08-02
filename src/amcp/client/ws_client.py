@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -40,6 +41,8 @@ class WebSocketClient:
         session_id: str | None = None,
         *,
         timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
+        api_key: str | None = None,
     ):
         """Initialize the WebSocket client.
 
@@ -47,10 +50,15 @@ class WebSocketClient:
             url: Server URL (HTTP URL will be converted to WS).
             session_id: Optional session ID to bind to.
             timeout: Connection timeout in seconds.
+            headers: Optional WebSocket handshake headers.
+            api_key: Optional API key sent as a Bearer token.
         """
         self._url = url.rstrip("/")
         self._session_id = session_id
         self._timeout = timeout
+        self._headers = dict(headers or {})
+        if api_key is not None and not any(key.lower() == "authorization" for key in self._headers):
+            self._headers["Authorization"] = f"Bearer {api_key}"
         self._ws: Any = None  # websockets.WebSocketClientProtocol
         self._message_queue: asyncio.Queue[dict] = asyncio.Queue()
         self._receive_task: asyncio.Task | None = None
@@ -68,7 +76,7 @@ class WebSocketClient:
 
         ws_url = f"{url}/ws"
         if self._session_id:
-            ws_url += f"?session_id={self._session_id}"
+            ws_url += "?" + urlencode({"session_id": self._session_id})
         return ws_url
 
     @property
@@ -84,7 +92,7 @@ class WebSocketClient:
         """
         try:
             self._ws = await asyncio.wait_for(
-                websockets.connect(self.ws_url),
+                websockets.connect(self.ws_url, additional_headers=self._headers),
                 timeout=self._timeout,
             )
 

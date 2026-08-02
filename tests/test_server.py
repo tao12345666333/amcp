@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from amcp.server import ServerConfig, create_app
+from amcp.server.config import AuthConfig, is_loopback_host
 from amcp.server.models import SessionStatus
 from amcp.server.session_manager import (
     ManagedSession,
@@ -17,6 +19,7 @@ from amcp.server.session_manager import (
     SessionNotFoundError,
     get_session_manager,
 )
+from amcp.session_store import SessionTimelineStore
 
 
 @pytest.fixture
@@ -78,6 +81,87 @@ class TestHealthEndpoints:
         assert "sessions" in data["capabilities"]
 
 
+class TestServerAuthentication:
+    """Test unified HTTP and WebSocket API-key authentication."""
+
+    @pytest.fixture
+    def authenticated_client(self):
+        config = ServerConfig(auth=AuthConfig(enabled=True, api_key="test-secret"))
+        return TestClient(create_app(config))
+
+    @pytest.mark.parametrize(
+        "headers",
+        [{}, {"Authorization": "Bearer wrong"}, {"X-API-Key": "wrong"}],
+    )
+    def test_http_rejects_missing_or_wrong_key(self, authenticated_client, headers):
+        response = authenticated_client.get("/api/v1/info", headers=headers)
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"Authorization": "Bearer test-secret"},
+            {"X-API-Key": "test-secret"},
+        ],
+    )
+    def test_http_accepts_supported_key_headers(self, authenticated_client, headers):
+        response = authenticated_client.get("/api/v1/info", headers=headers)
+        assert response.status_code == 200
+
+    def test_health_and_root_are_public(self, authenticated_client):
+        assert authenticated_client.get("/api/v1/health").status_code == 200
+        assert authenticated_client.get("/").status_code == 200
+
+    @pytest.mark.parametrize(
+        ("url", "headers"),
+        [
+            ("/ws?api_key=test-secret", {}),
+            ("/ws?api_key=wrong", {}),
+            ("/ws", {"Authorization": "Bearer wrong"}),
+        ],
+    )
+    def test_websocket_rejects_missing_or_wrong_key(self, authenticated_client, url, headers):
+        with pytest.raises(WebSocketDisconnect), authenticated_client.websocket_connect(url, headers=headers):
+            pass
+
+    @pytest.mark.parametrize(
+        ("url", "headers"),
+        [
+            ("/ws", {"Authorization": "Bearer test-secret"}),
+            ("/ws", {"X-API-Key": "test-secret"}),
+        ],
+    )
+    def test_websocket_accepts_supported_headers(self, authenticated_client, url, headers):
+        with authenticated_client.websocket_connect(url, headers=headers) as websocket:
+            message = websocket.receive_json()
+            assert message["payload"]["kind"] == "connected"
+
+    def test_websocket_auth_is_scoped_to_its_app(self):
+        authenticated_app = create_app(ServerConfig(auth=AuthConfig(enabled=True, api_key="app-secret")))
+        create_app(ServerConfig())
+
+        with (
+            TestClient(authenticated_app) as client,
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect("/ws"),
+        ):
+            pass
+
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "example.internal"])
+    def test_non_loopback_without_auth_is_rejected(self, host):
+        with pytest.raises(ValueError, match="non-loopback"):
+            create_app(ServerConfig(host=host))
+
+    @pytest.mark.parametrize("host", ["localhost", "localhost.", "127.0.0.1", "::1"])
+    def test_loopback_hosts_are_recognized(self, host):
+        assert is_loopback_host(host)
+
+    @pytest.mark.parametrize("api_key", [None, "", "   "])
+    def test_enabled_auth_requires_nonempty_key(self, api_key):
+        with pytest.raises(ValueError, match="api_key is empty"):
+            create_app(ServerConfig(auth=AuthConfig(enabled=True, api_key=api_key)))
+
+
 class TestSessionEndpoints:
     """Test session management endpoints."""
 
@@ -119,11 +203,40 @@ class TestSessionEndpoints:
         response = client.get("/api/v1/sessions/nonexistent-id")
         assert response.status_code == 404
 
+    def test_get_durable_sanitized_timeline(self, client, tmp_path):
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.agent._timeline_store = SessionTimelineStore(tmp_path, session_id)
+        managed.agent._emit_event(
+            "tool.call_start",
+            {
+                "tool_name": "bash",
+                "tool_id": "call-1",
+                "arguments": {"command": "echo secret"},
+            },
+        )
+
+        response = client.get(f"/api/v1/sessions/{session_id}/timeline")
+
+        assert response.status_code == 200
+        events = response.json()["events"]
+        assert events[-1]["type"] == "tool.call_start"
+        assert events[-1]["data"] == {"tool_name": "bash", "tool_id": "call-1"}
+        assert "secret" not in managed.agent._timeline_store.path.read_text(encoding="utf-8")
+
     def test_delete_session(self, client):
         """Test deleting a session."""
         # Create a session
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
         session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+        managed.agent._emit_event("turn.completed", {"turn_id": "turn-delete"})
+        timeline_path = managed.agent._timeline_store.path
+        managed.agent._save_conversation_history()
+        snapshot_path = managed.agent.session_file
+        assert timeline_path.exists()
+        assert snapshot_path.exists()
 
         # Delete the session
         response = client.delete(f"/api/v1/sessions/{session_id}")
@@ -132,6 +245,8 @@ class TestSessionEndpoints:
         # Verify it's deleted
         get_resp = client.get(f"/api/v1/sessions/{session_id}")
         assert get_resp.status_code == 404
+        assert not timeline_path.exists()
+        assert not snapshot_path.exists()
 
     def test_prompt_stream_new_session_command(self, client):
         """Test /new through the server prompt stream creates a session."""

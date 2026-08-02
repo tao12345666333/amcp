@@ -9,6 +9,7 @@ Provides real-time bidirectional communication for:
 from __future__ import annotations
 
 import asyncio
+import secrets
 import uuid
 from datetime import datetime
 from typing import Any
@@ -173,6 +174,17 @@ async def websocket_endpoint(
         - subscribe: Subscribe to session events
         - ping: Keep-alive ping
     """
+    auth = websocket.scope["app"].state.server_config.auth
+    if auth.enabled:
+        authorization = websocket.headers.get("Authorization", "")
+        scheme, _, bearer_key = authorization.partition(" ")
+        header_key = bearer_key if scheme.lower() == "bearer" and bearer_key else None
+        supplied_key = header_key or websocket.headers.get("X-API-Key")
+        expected_key = auth.api_key or ""
+        if supplied_key is None or not secrets.compare_digest(supplied_key, expected_key):
+            await websocket.close(code=1008, reason="Invalid or missing API key")
+            return
+
     await connection_manager.connect(websocket, session_id)
 
     try:

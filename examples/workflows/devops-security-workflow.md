@@ -2,6 +2,10 @@
 
 This workflow demonstrates how DevOps and Security agents can collaborate to create secure, production-ready infrastructure and deployment pipelines.
 
+> **Illustrative example:** The generated configurations, compliance language, and
+> production-readiness statements below are hypothetical workflow output. They are not audited,
+> certified, or evidence that AMCP itself meets a compliance or production benchmark.
+
 ## Workflow Overview
 
 ```
@@ -388,8 +392,8 @@ DevOps Engineer: Perfect! Your secure CI/CD pipeline is now complete with all se
 ## Workflow Benefits
 
 1. **Security First**: Built-in security at every layer
-2. **Compliance Ready**: Meets common security standards
-3. **Production Ready**: Scalable and reliable infrastructure
+2. **Compliance-oriented example**: Illustrates checks that still require expert validation
+3. **Deployment-oriented example**: Illustrates scalable infrastructure patterns
 4. **Comprehensive Documentation**: Complete operational guides
 5. **Automated Security**: Continuous security validation
 

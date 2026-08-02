@@ -8,8 +8,10 @@ import re
 import tempfile
 import threading
 from contextlib import contextmanager, suppress
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 if os.name == "nt":
     import msvcrt
@@ -28,6 +30,32 @@ _SENSITIVE_KEYS = {
     "password",
     "secret",
     "token",
+}
+_TIMELINE_FIELDS = {
+    "attempt",
+    "cached_input_tokens",
+    "context_tokens",
+    "context_window",
+    "delay_seconds",
+    "duration_ms",
+    "error_kind",
+    "input_tokens",
+    "model",
+    "output_tokens",
+    "partial_output",
+    "priority",
+    "result_length",
+    "settled",
+    "status_code",
+    "step",
+    "success",
+    "task_id",
+    "tool_id",
+    "tool_name",
+    "total_tokens",
+    "turn_id",
+    "turn_status",
+    "usage_from_api",
 }
 
 
@@ -49,6 +77,109 @@ class SessionSaveError(SessionStoreError):
 
 class SessionConflictError(SessionSaveError):
     """Raised when another live owner committed the session first."""
+
+
+def sanitize_timeline_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only non-content metadata approved for durable timeline records."""
+    return {
+        key: value
+        for key, value in data.items()
+        if key in _TIMELINE_FIELDS and isinstance(value, (str, int, float, bool, type(None)))
+    }
+
+
+class SessionTimelineStore:
+    """Bounded append-only JSONL timeline for one session."""
+
+    def __init__(self, root: Path, session_id: str, *, max_events: int = 2000):
+        if max_events < 1:
+            raise ValueError("max_events must be positive")
+        self.root = root.expanduser()
+        self.session_id = validate_session_id(session_id)
+        self.max_events = max_events
+        self.path = self.root / f"{self.session_id}.timeline.jsonl"
+        self.lock_path = self.root / f".{self.session_id}.timeline.lock"
+        self._lock = threading.RLock()
+
+    def append(
+        self,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+        *,
+        timestamp: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one sanitized event and enforce bounded retention."""
+        event = {
+            "id": uuid4().hex,
+            "type": str(event_type),
+            "timestamp": timestamp or datetime.now().isoformat(),
+            "session_id": self.session_id,
+            "data": sanitize_timeline_data(data or {}),
+        }
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            with self.lock_path.open("a+b") as lock_handle, _exclusive_file_lock(lock_handle):
+                event_count = len(self._read_unlocked())
+                fd = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                event_count += 1
+                if event_count > self.max_events:
+                    retained_count = max(1, int(self.max_events * 0.9))
+                    retained = self._read_unlocked()[-retained_count:]
+                    self._write_unlocked(retained)
+        return event
+
+    def read(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return the newest retained events in chronological order."""
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            if not self.path.exists():
+                return []
+            with self.lock_path.open("a+b") as lock_handle, _exclusive_file_lock(lock_handle):
+                return self._read_unlocked()[-limit:]
+
+    def delete(self) -> None:
+        """Delete this session's durable timeline."""
+        with self._lock:
+            if not self.root.exists():
+                return
+            with self.lock_path.open("a+b") as lock_handle, _exclusive_file_lock(lock_handle):
+                self.path.unlink(missing_ok=True)
+
+    def _read_unlocked(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return events
+
+    def _write_unlocked(self, events: list[dict[str, Any]]) -> None:
+        fd, temp_name = tempfile.mkstemp(
+            dir=self.root,
+            prefix=f".{self.session_id}.timeline.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                for event in events:
+                    handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, self.path)
+        except BaseException:
+            with suppress(OSError):
+                os.unlink(temp_name)
+            raise
 
 
 def validate_session_id(session_id: str) -> str:

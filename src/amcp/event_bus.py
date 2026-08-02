@@ -639,11 +639,22 @@ async def emit_task_event(
     **data: Any,
 ) -> None:
     """Emit a task event."""
-    await get_event_bus().emit(
-        Event(
-            type=event_type,
-            source=f"task:{task_id}",
-            session_id=session_id,
-            data={"task_id": task_id, "description": task_description, **data},
-        )
+    event = Event(
+        type=event_type,
+        source=f"task:{task_id}",
+        session_id=session_id,
+        data={"task_id": task_id, "description": task_description, **data},
     )
+    await get_event_bus().emit(event)
+    if session_id:
+        try:
+            from pathlib import Path
+
+            from .session_store import SessionTimelineStore
+
+            SessionTimelineStore(
+                Path.home() / ".config" / "amcp" / "sessions",
+                session_id,
+            ).append(event_type.value, event.data, timestamp=event.timestamp.isoformat())
+        except Exception as exc:
+            logger.debug("Task timeline persistence failed (non-critical): %s", exc)

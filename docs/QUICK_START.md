@@ -1,17 +1,44 @@
 # Quick Start Guide
 
+## For Users
+
+### Prerequisites
+
+- Python 3.11 or newer
+- Credentials for a supported model provider, or access to an OpenAI-compatible endpoint
+
+### Install and run
+
+```bash
+python -m pip install amcp-agent
+amcp init
+amcp
+
+# Run one task and exit
+amcp --once "summarize this repository"
+```
+
+`amcp-agent` is the package name. Installation provides `amcp` (the recommended command) and
+`amcp-agent` (a compatibility alias). The initialization wizard stores configuration in
+`~/.config/amcp/config.toml`. Alternatively, run without installing via `uvx amcp-agent init`
+and `uvx amcp-agent`.
+
+Telegram support is optional: `python -m pip install "amcp-agent[telegram]"`. Provider support,
+including Anthropic, is included in the base package; do not install an `anthropic` extra.
+
 ## For Contributors
 
 ### 1. Clone and Setup
 ```bash
-git clone <repo-url>
-cd AMCP
+git clone https://github.com/tao12345666333/amcp.git
+cd amcp
 
 # Install with development dependencies
 pip install -e ".[dev]"
 
 # Or using uv (recommended)
-uv pip install -e ".[dev]"
+uv sync --extra dev --extra telegram
+source .venv/bin/activate
 ```
 
 ### 2. Install Pre-commit Hooks
@@ -64,28 +91,6 @@ git commit -m "feat: add new feature"
 
 # 5. Push and create PR
 git push origin feature/my-feature
-```
-
-## For Users
-
-### Installation
-```bash
-pip install amcp
-```
-
-### Basic Usage
-```bash
-# Interactive mode
-amcp
-
-# Single command
-amcp --once "create a hello.py file"
-
-# List available agents
-amcp --list
-
-# Use specific agent
-amcp --agent path/to/agent.yaml
 ```
 
 ## Common Tasks

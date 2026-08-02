@@ -124,7 +124,6 @@ When creating plugins:
 ## Learn More
 
 - [AMCP Documentation](../../README.md)
-- [Commands Guide](../../docs/commands.md)
-- [Agents Guide](../../docs/agents.md)
-- [Skills Guide](../../docs/skills.md)
+- [Commands and Skills Guide](../../docs/skills-and-commands.md)
+- [Agent Capabilities](../../docs/phase2-agent-capabilities.md)
 - [Hooks Guide](../../docs/hooks.md)

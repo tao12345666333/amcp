@@ -40,6 +40,7 @@ class HTTPClient(BaseClient):
         timeout: float = 30.0,
         retry_attempts: int = 3,
         headers: dict[str, str] | None = None,
+        api_key: str | None = None,
     ):
         """Initialize the HTTP client.
 
@@ -48,11 +49,14 @@ class HTTPClient(BaseClient):
             timeout: Default timeout in seconds.
             retry_attempts: Number of retry attempts for failed requests.
             headers: Optional custom headers.
+            api_key: Optional API key sent as a Bearer token.
         """
         self._url = url.rstrip("/")
         self._timeout = timeout
         self._retry_attempts = retry_attempts
-        self._headers = headers or {}
+        self._headers = dict(headers or {})
+        if api_key is not None and not any(key.lower() == "authorization" for key in self._headers):
+            self._headers["Authorization"] = f"Bearer {api_key}"
         self._client: httpx.AsyncClient | None = None
 
     @property

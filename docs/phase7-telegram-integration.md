@@ -1,5 +1,8 @@
 # AMCP Phase 7: Telegram Integration
 
+> Historical design document. For current installation and configuration, use the
+> [README](../README.md). Some examples below describe the original design direction.
+
 Remote interaction channel for AMCP via Telegram Bot API, enabling users to command, monitor, and receive notifications from their agent on any device.
 
 ## Motivation
@@ -275,12 +278,15 @@ amcp telegram setup
 
 ## Security Considerations
 
-1. **User Whitelist**: Only explicitly allowed user IDs can interact with the bot
+1. **Access Policy**: DM and group access depends on the configured allowlist, pairing, mention,
+   open, or disabled policy
 2. **Admin Separation**: Destructive operations (config, shutdown) require admin role
-3. **Token Storage**: Bot token stored in config.toml with restricted file permissions (0600)
+3. **Token Storage**: Prefer the `TELEGRAM_BOT_TOKEN` environment variable; protect config files
+   that contain a token with appropriate operating-system permissions
 4. **Rate Limiting**: Per-user rate limits to prevent abuse
-5. **No Sensitive Data in Logs**: Bot token and user messages are not logged verbatim
-6. **Session Isolation**: Each Telegram user gets their own isolated session
+5. **Logging**: Do not expose bot tokens or credentials in logs
+6. **Session Scope**: Sessions are currently scoped by chat; authorized users in the same group
+   share that chat's agent context
 
 ## Dependencies
 
@@ -293,9 +299,9 @@ telegram = [
 
 Install with:
 ```bash
-pip install amcp[telegram]
+pip install amcp-agent[telegram]
 # or
-uv pip install amcp[telegram]
+uv pip install amcp-agent[telegram]
 ```
 
 ## Event Bus Integration
