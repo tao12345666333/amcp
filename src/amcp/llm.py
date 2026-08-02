@@ -12,7 +12,12 @@ from typing import Any, cast
 
 import httpx
 
-from .config import ChatConfig
+from .compaction import (
+    estimate_request_tokens,
+    get_model_context_window,
+    get_model_output_limit,
+)
+from .config import ChatConfig, ModelConfig
 
 # Type aliases for commonly used complex types
 ToolCall = dict[str, Any]
@@ -28,6 +33,7 @@ class ProviderErrorKind(StrEnum):
     CONNECTION = "connection"
     SERVER = "server"
     INVALID_REQUEST = "invalid_request"
+    CONTEXT_OVERFLOW = "context_overflow"
     PROTOCOL = "protocol"
     UNKNOWN = "unknown"
 
@@ -57,10 +63,30 @@ class ProviderError(RuntimeError):
             ProviderErrorKind.CONNECTION: "Could not connect to the model provider",
             ProviderErrorKind.SERVER: "Model provider is temporarily unavailable",
             ProviderErrorKind.INVALID_REQUEST: "Model provider rejected the request",
+            ProviderErrorKind.CONTEXT_OVERFLOW: "Model request exceeds the configured context window",
             ProviderErrorKind.PROTOCOL: "Model provider returned an invalid response",
             ProviderErrorKind.UNKNOWN: "Model provider request failed",
         }
         super().__init__(messages[kind] + status)
+
+
+class ContextOverflowError(ProviderError):
+    """A local, non-retryable failure raised before an oversized model request."""
+
+    def __init__(
+        self,
+        *,
+        input_tokens: int,
+        input_limit: int,
+        context_window: int,
+        output_reserve: int,
+    ):
+        self.input_tokens = input_tokens
+        self.input_limit = input_limit
+        self.context_window = context_window
+        self.output_reserve = output_reserve
+        self.timeline_emitted = False
+        super().__init__(ProviderErrorKind.CONTEXT_OVERFLOW)
 
 
 def _provider_status_code(error: BaseException) -> int | None:
@@ -162,6 +188,12 @@ def _response_field(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+def _largest_output_limit(values: tuple[Any, ...]) -> int | None:
+    """Return the largest explicitly requested output-token limit."""
+    limits = [max(0, int(value)) for value in values if value is not None]
+    return max(limits) if limits else None
 
 
 def _first_chat_choice(response: Any) -> Any:
@@ -300,6 +332,71 @@ class BaseLLMClient(ABC):
 
     model: str  # Model name/identifier
 
+    def _configure_request_limits(
+        self,
+        *,
+        model_config: ModelConfig | None = None,
+        provider_id: str | None = None,
+    ) -> None:
+        """Configure model metadata used by the final request-size guard."""
+        self._model_config = model_config
+        self._provider_id = provider_id
+        self._request_limit_cache: dict[str, tuple[int, int]] = {}
+        self._context_overflow_callback: Any | None = None
+
+    def set_context_overflow_callback(self, callback: Any | None) -> None:
+        """Set a callback invoked when local request validation detects overflow."""
+        self._context_overflow_callback = callback
+
+    def _validate_request_size(
+        self,
+        messages: list[Message],
+        tools: list[Message] | None,
+        *,
+        model: str,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Reject a known-oversized request before invoking a provider SDK."""
+        model_config = getattr(self, "_model_config", None)
+        configured_model = getattr(self, "model", None)
+        model_config_id = getattr(model_config, "model_id", None)
+        if (model_config_id and model_config_id != model) or (model != configured_model and model_config_id != model):
+            model_config = None
+        provider_id = getattr(self, "_provider_id", None)
+        limit_cache = getattr(self, "_request_limit_cache", {})
+        limits = limit_cache.get(model)
+        if limits is None:
+            limits = (
+                get_model_context_window(
+                    model,
+                    provider_id=provider_id,
+                    model_config=model_config,
+                ),
+                get_model_output_limit(
+                    model,
+                    provider_id=provider_id,
+                    model_config=model_config,
+                ),
+            )
+            limit_cache[model] = limits
+            self._request_limit_cache = limit_cache
+        context_window, configured_output = limits
+        requested_output = configured_output if max_tokens is None else max(0, int(max_tokens))
+        output_reserve = min(requested_output, context_window)
+        input_limit = max(context_window - output_reserve, 0)
+        input_tokens = estimate_request_tokens(messages, tools)
+        if input_tokens > input_limit:
+            error = ContextOverflowError(
+                input_tokens=input_tokens,
+                input_limit=input_limit,
+                context_window=context_window,
+                output_reserve=output_reserve,
+            )
+            callback = getattr(self, "_context_overflow_callback", None)
+            if callable(callback):
+                callback(error)
+            raise error
+
     @abstractmethod
     def chat(
         self,
@@ -337,6 +434,7 @@ class AnyLLMClient(BaseLLMClient):
         base_url: str | None,
         api_key: str | None,
         model: str,
+        model_config: ModelConfig | None = None,
     ):
         from any_llm import AnyLLM
 
@@ -349,6 +447,7 @@ class AnyLLMClient(BaseLLMClient):
         )
         self.provider = provider
         self.model = model
+        self._configure_request_limits(model_config=model_config, provider_id=provider)
 
     def chat(
         self,
@@ -358,6 +457,17 @@ class AnyLLMClient(BaseLLMClient):
         **kwargs,
     ) -> LLMResponse:
         model = kwargs.pop("model", self.model)
+        output_limits = (
+            kwargs.get("max_tokens"),
+            kwargs.get("max_completion_tokens"),
+            kwargs.get("max_output_tokens"),
+        )
+        self._validate_request_size(
+            messages,
+            tools,
+            model=model,
+            max_tokens=_largest_output_limit(output_limits),
+        )
         callback = stream_callback
         stream = callback is not None
         params: dict[str, Any] = {
@@ -503,6 +613,17 @@ class AnyLLMClient(BaseLLMClient):
     ) -> LLMResponse:
         """Send a cancellable asynchronous completion request."""
         model = kwargs.pop("model", self.model)
+        output_limits = (
+            kwargs.get("max_tokens"),
+            kwargs.get("max_completion_tokens"),
+            kwargs.get("max_output_tokens"),
+        )
+        self._validate_request_size(
+            messages,
+            tools,
+            model=model,
+            max_tokens=_largest_output_limit(output_limits),
+        )
         params: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -612,21 +733,39 @@ class AnyLLMClient(BaseLLMClient):
 class OpenAIClient(AnyLLMClient):
     """Backward-compatible OpenAI completion client."""
 
-    def __init__(self, base_url: str, api_key: str | None, model: str):
-        super().__init__("openai", base_url, api_key, model)
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        model_config: ModelConfig | None = None,
+    ):
+        super().__init__("openai", base_url, api_key, model, model_config)
 
 
 class AnthropicClient(AnyLLMClient):
     """Backward-compatible Anthropic completion client."""
 
-    def __init__(self, api_key: str | None, model: str, base_url: str | None = None):
-        super().__init__("anthropic", base_url, api_key, model)
+    def __init__(
+        self,
+        api_key: str | None,
+        model: str,
+        base_url: str | None = None,
+        model_config: ModelConfig | None = None,
+    ):
+        super().__init__("anthropic", base_url, api_key, model, model_config)
 
 
 class OpenAIResponsesClient(BaseLLMClient):
     """OpenAI Responses API client backed by any-llm."""
 
-    def __init__(self, base_url: str, api_key: str | None, model: str):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        model_config: ModelConfig | None = None,
+    ):
         from any_llm import AnyLLM
 
         self.client = AnyLLM.create(
@@ -636,6 +775,7 @@ class OpenAIResponsesClient(BaseLLMClient):
             max_retries=0,
         )
         self.model = model
+        self._configure_request_limits(model_config=model_config, provider_id="openai")
 
     def chat(
         self,
@@ -659,6 +799,13 @@ class OpenAIResponsesClient(BaseLLMClient):
 
         model = kwargs.pop("model", self.model)
         max_tokens = kwargs.pop("max_tokens", None)
+        output_limit = _largest_output_limit((max_tokens, kwargs.get("max_output_tokens")))
+        self._validate_request_size(
+            messages,
+            tools,
+            model=model,
+            max_tokens=output_limit,
+        )
         params: dict[str, Any] = {
             "model": model,
             "input_data": cast(Any, self._convert_messages(messages)),
@@ -707,6 +854,13 @@ class OpenAIResponsesClient(BaseLLMClient):
             ]
         model = kwargs.pop("model", self.model)
         max_tokens = kwargs.pop("max_tokens", None)
+        output_limit = _largest_output_limit((max_tokens, kwargs.get("max_output_tokens")))
+        self._validate_request_size(
+            messages,
+            tools,
+            model=model,
+            max_tokens=output_limit,
+        )
         params: dict[str, Any] = {
             "model": model,
             "input_data": cast(Any, self._convert_messages(messages)),
@@ -807,6 +961,9 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
     """
     api_type = (cfg.api_type if cfg else None) or os.environ.get("AMCP_API_TYPE", "openai")
     model = (cfg.model if cfg else None) or "gpt-5.5"
+    model_config = cfg.model_config if cfg else None
+    if model_config and model_config.model_id and model_config.model_id != model:
+        model_config = None
 
     if api_type == "openai_responses":
         responses_base_url = (cfg.base_url if cfg else None) or os.environ.get(
@@ -817,6 +974,7 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
             base_url=responses_base_url,
             api_key=api_key,
             model=model,
+            model_config=model_config,
         )
 
     base_url: str | None = cfg.base_url if cfg else None
@@ -830,12 +988,23 @@ def create_llm_client(cfg: ChatConfig | None) -> BaseLLMClient:
 
     if api_type == "openai":
         assert base_url is not None
-        return OpenAIClient(base_url=base_url, api_key=api_key, model=model)
+        return OpenAIClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            model_config=model_config,
+        )
     if api_type == "anthropic":
-        return AnthropicClient(base_url=base_url, api_key=api_key, model=model)
+        return AnthropicClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            model_config=model_config,
+        )
     return AnyLLMClient(
         provider=api_type,
         base_url=base_url,
         api_key=api_key,
         model=model,
+        model_config=model_config,
     )

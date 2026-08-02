@@ -69,6 +69,7 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 
 # Default context window for unknown models
 DEFAULT_CONTEXT_WINDOW = 200_000
+DEFAULT_OUTPUT_LIMIT = 8192
 
 
 class CompactionStrategy(Enum):
@@ -269,6 +270,27 @@ def get_model_context_window(
 
     logger.warning(f"Unknown model '{model}', using default context window of {DEFAULT_CONTEXT_WINDOW}")
     return DEFAULT_CONTEXT_WINDOW
+
+
+def get_model_output_limit(
+    model: str,
+    provider_id: str | None = None,
+    model_config: ModelConfig | None = None,
+) -> int:
+    """Get the model output limit, preferring an explicit configuration override."""
+    if model_config and model_config.output_limit and model_config.output_limit > 0:
+        return model_config.output_limit
+
+    effective_provider_id = provider_id or (model_config.provider_id if model_config else None)
+    try:
+        from .models_db import get_output_limit_from_database
+
+        return get_output_limit_from_database(model, effective_provider_id)
+    except ImportError:
+        return DEFAULT_OUTPUT_LIMIT
+    except Exception as e:
+        logger.debug(f"Failed to get output limit from database: {e}")
+        return DEFAULT_OUTPUT_LIMIT
 
 
 def estimate_tokens(messages: list[dict[str, Any]], use_tiktoken: bool = True) -> int:

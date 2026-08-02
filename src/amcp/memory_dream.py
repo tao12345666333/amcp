@@ -118,7 +118,7 @@ class MemoryDreamer:
         existing = manager.read_long_term(scope="project").strip()
         event_text = self._format_events(events)
         client = self._client or self._make_client()
-        model = self._model or self._resolve_model()
+        model_override = {"model": self._model} if self._model else {}
         response = client.chat(
             messages=[
                 {"role": "system", "content": DREAM_PROMPT},
@@ -127,7 +127,7 @@ class MemoryDreamer:
                     "content": f"Existing MEMORY.md:\n\n{existing or '(empty)'}\n\nRecent events:\n\n{event_text}",
                 },
             ],
-            model=model,
+            **model_override,
         )
         content = (response.content or "").strip()
         if not content or content == "NO_REPLY":
@@ -150,12 +150,6 @@ class MemoryDreamer:
     def _make_client(self) -> Any:
         cfg = load_config()
         return create_llm_client(cfg.chat)
-
-    def _resolve_model(self) -> str:
-        cfg = load_config()
-        if cfg.chat and cfg.chat.model:
-            return cfg.chat.model
-        return "DeepSeek-V3.1-Terminus"
 
     def _load_state(self) -> dict[str, Any]:
         try:

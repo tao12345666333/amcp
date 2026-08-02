@@ -27,9 +27,24 @@ def test_context_budget_allocation_is_stable():
     manager = ContextBudgetManager(model="unknown-model", config=cfg)
     budget = manager.calculate_budget(conversation_tokens=24000)
 
-    assert budget.prompt_budget >= 1800
+    assert budget.prompt_budget == 116000
     allocated = budget.base_prompt + budget.tools + budget.skills + budget.memory + budget.rules + budget.buffer
     assert allocated == budget.prompt_budget
+
+
+def test_context_budget_never_exceeds_remaining_headroom():
+    cfg = ContextConfig(response_ratio=0.25, min_prompt_budget=2500)
+    manager = ContextBudgetManager(model="unknown-model", config=cfg)
+
+    exhausted = manager.calculate_budget(conversation_tokens=190000)
+
+    assert exhausted.prompt_budget == 0
+    assert exhausted.base_prompt == 0
+    assert exhausted.tools == 0
+    assert exhausted.skills == 0
+    assert exhausted.memory == 0
+    assert exhausted.rules == 0
+    assert exhausted.buffer == 0
 
 
 def test_progressive_tool_view_keeps_always_tools_and_respects_budget():

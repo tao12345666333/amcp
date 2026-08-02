@@ -35,7 +35,7 @@ from .hooks import (
     run_pre_tool_use_hooks,
     run_user_prompt_hooks,
 )
-from .llm import ProviderError, classify_provider_error
+from .llm import ContextOverflowError, ProviderError, classify_provider_error
 from .mcp_client import list_mcp_tools
 from .mcp_naming import is_mcp_tool_name, mcp_tool_name, unique_function_name
 from .memory import get_memory_manager
@@ -488,6 +488,10 @@ class Agent:
         cfg = deepcopy(load_config())
         chat = cfg.chat or ChatConfig()
         if self.agent_spec.model:
+            if chat.model != self.agent_spec.model and (
+                chat.model_config is None or chat.model_config.model_id != self.agent_spec.model
+            ):
+                chat.model_config = None
             chat.model = self.agent_spec.model
         if self.agent_spec.base_url:
             chat.base_url = self.agent_spec.base_url
@@ -525,19 +529,22 @@ class Agent:
         if current_tokens <= token_budget:
             return text
 
-        char_budget = max(token_budget * 4, 200)
+        # ``estimate_text_tokens`` uses floor(chars / 4), so this is the
+        # largest character count that can still fit the requested budget.
+        char_budget = token_budget * 4 + 3
         if len(text) <= char_budget:
             return text
 
-        head_chars = int(char_budget * 0.7)
-        tail_chars = max(char_budget - head_chars, 0)
+        marker = "\n\n[... trimmed for context budget ...]\n\n"
+        if len(marker) >= char_budget:
+            return text[:char_budget]
+
+        content_budget = char_budget - len(marker)
+        head_chars = int(content_budget * 0.7)
+        tail_chars = max(content_budget - head_chars, 0)
         if tail_chars > 0:
-            return (
-                text[:head_chars].rstrip()
-                + "\n\n[... trimmed for context budget ...]\n\n"
-                + text[-tail_chars:].lstrip()
-            )
-        return text[:char_budget].rstrip() + "\n\n[... trimmed for context budget ...]"
+            return text[:head_chars].rstrip() + marker + text[-tail_chars:].lstrip()
+        return text[:head_chars].rstrip() + marker
 
     def _get_system_prompt(
         self,
@@ -602,20 +609,34 @@ class Agent:
             )
             skills_summary = skill_result.prompt
         else:
-            skills_summary = skill_manager.build_skills_summary()
-            skills_content = skill_manager.get_active_skills_content()
+            combined_skills = "\n\n".join(
+                part
+                for part in (
+                    skill_manager.build_skills_summary(),
+                    skill_manager.get_active_skills_content(),
+                )
+                if part
+            )
+            skills_summary = self._trim_to_token_budget(combined_skills, budget.skills)
 
         # Get session-frozen persona and memory context. Freezing keeps the
         # prompt prefix stable across a long Telegram session.
         persona_context, memory_context = self._get_memory_prompt_context(work_dir)
 
-        # Respect per-component budgets for noisy sections
+        # Respect per-component budgets for every system-prompt section.
+        base_prompt = self._trim_to_token_budget(
+            base_prompt + "\n\n" + MEMORY_GUIDANCE,
+            budget.base_prompt,
+        )
         if project_rules:
             project_rules = self._trim_to_token_budget(project_rules, budget.rules)
         if persona_context:
-            persona_context = self._trim_to_token_budget(persona_context, max(500, budget.memory))
+            persona_context = self._trim_to_token_budget(persona_context, budget.memory)
+        remaining_memory_budget = max(budget.memory - estimate_text_tokens(persona_context), 0)
         if memory_context:
-            memory_context = self._trim_to_token_budget(memory_context, budget.memory)
+            memory_context = self._trim_to_token_budget(memory_context, remaining_memory_budget)
+        if skills_content:
+            skills_content = self._trim_to_token_budget(skills_content, budget.skills)
 
         # Combine all parts
         combined_prompt = base_prompt
@@ -623,7 +644,6 @@ class Agent:
             combined_prompt = persona_context + "\n\n" + combined_prompt
         if project_rules:
             combined_prompt += "\n\n" + project_rules
-        combined_prompt += "\n\n" + MEMORY_GUIDANCE
         if skills_summary:
             combined_prompt += "\n\n" + skills_summary
         if memory_context:
@@ -923,6 +943,7 @@ class Agent:
                 from .llm import create_llm_client
 
                 client = create_llm_client(compaction_chat)
+                self._attach_context_overflow_observer(client)
                 compactor = SmartCompactor(
                     client,
                     model,
@@ -976,6 +997,12 @@ class Agent:
                             },
                         )
                         history_to_add = draft.model_context(turn_messages)
+                        system_prompt = self._get_system_prompt(
+                            work_dir,
+                            user_input=user_input,
+                            cfg=turn_config,
+                        )
+                        messages[0]["content"] = system_prompt
                         self.reset_memory_context_snapshot()
                         self.console.print("[dim]Context compacted to reduce token usage[/dim]")
 
@@ -1074,6 +1101,7 @@ class Agent:
             from .llm import create_llm_client
 
             client = create_llm_client(memory_chat)
+            self._attach_context_overflow_observer(client)
 
             # Build memory-only tool list from the global registry
             from .tools import get_tool_registry
@@ -1484,6 +1512,7 @@ class Agent:
         from .llm import create_llm_client
 
         llm_client = create_llm_client(cfg.chat)
+        self._attach_context_overflow_observer(llm_client)
 
         # Override the chat function to add our tracking
         result = await self._enhanced_chat_with_tools(
@@ -1598,7 +1627,11 @@ class Agent:
                     "Provider rejected tool-call history (%s); repairing pairing and retrying once",
                     call_error,
                 )
-                messages = _repair_tool_call_pairing(messages)
+                messages = self._fit_tool_context(
+                    _repair_tool_call_pairing(messages),
+                    tools,
+                    input_token_budget,
+                )
                 estimated_input_tokens = estimate_request_tokens(messages, tools)
                 resp = await self._call_llm(
                     llm_client,
@@ -1686,6 +1719,8 @@ class Agent:
                         return completed(final_text)
                     except Exception as e:
                         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
+                        if isinstance(e, ProviderError):
+                            raise
                         raise AgentExecutionError(f"Could not get final response: {e}") from e
 
                 append_canonical(
@@ -1989,6 +2024,10 @@ class Agent:
                 raise
             except Exception as exc:
                 provider_error = classify_provider_error(exc, partial_output=emitted_output)
+                if isinstance(provider_error, ContextOverflowError):
+                    if not provider_error.timeline_emitted:
+                        self._record_context_overflow(provider_error)
+                    raise provider_error from exc
                 if not provider_error.retryable or attempt >= max_retries:
                     self._emit_event(
                         "provider.error",
@@ -2017,6 +2056,27 @@ class Agent:
                 await asyncio.sleep(retry_delay)
 
         raise AssertionError("provider retry loop exhausted without returning or raising")
+
+    def _attach_context_overflow_observer(self, llm_client: Any) -> None:
+        """Attach timeline reporting to a client when it supports local overflow checks."""
+        setter = getattr(llm_client, "set_context_overflow_callback", None)
+        if callable(setter):
+            setter(self._record_context_overflow)
+
+    def _record_context_overflow(self, error: ContextOverflowError) -> None:
+        """Record one sanitized context-overflow event for the active session."""
+        if error.timeline_emitted:
+            return
+        error.timeline_emitted = True
+        self._emit_event(
+            "context.overflow",
+            {
+                "input_tokens": error.input_tokens,
+                "input_limit": error.input_limit,
+                "context_window": error.context_window,
+                "output_reserve": error.output_reserve,
+            },
+        )
 
     def _record_llm_usage(
         self,
