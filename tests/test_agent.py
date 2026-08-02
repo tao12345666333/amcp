@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
+from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached, _is_tool_call_pairing_error
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig
 from amcp.hooks import HookDecision, HookOutput
@@ -1162,6 +1162,23 @@ class TestAgentContextBudget:
         trimmed = agent._trim_to_token_budget("abcdefgh", 1)
 
         assert estimate_text_tokens(trimmed) <= 1
+
+    def test_is_tool_call_pairing_error_handles_self_referencing_cause(self):
+        """Regression: _is_tool_call_pairing_error must not infinite-loop when
+        __cause__ points to the same object (self-reference from raise ... from exc).
+        """
+        from amcp.llm import ContextOverflowError
+
+        error = ContextOverflowError(
+            input_tokens=100,
+            input_limit=80,
+            context_window=100,
+            output_reserve=20,
+        )
+        error.__cause__ = error  # simulate the self-reference
+
+        # Must return quickly (not hang)
+        assert _is_tool_call_pairing_error(error) is False
 
     def test_non_progressive_skills_share_one_budget(self, tmp_path):
         cfg = AMCPConfig(

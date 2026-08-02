@@ -144,7 +144,9 @@ def _repair_tool_call_pairing(messages: list[dict[str, Any]]) -> list[dict[str, 
 def _is_tool_call_pairing_error(error: Exception) -> bool:
     """Check whether an error is a provider-side tool-call pairing rejection."""
     current: BaseException | None = error
-    while current is not None:
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
         text = str(current).lower()
         if "function response parts" in text or ("function call" in text and "invalid_argument" in text):
             return True
@@ -2027,7 +2029,7 @@ class Agent:
                 if isinstance(provider_error, ContextOverflowError):
                     if not provider_error.timeline_emitted:
                         self._record_context_overflow(provider_error)
-                    raise provider_error from exc
+                    raise provider_error from exc if exc is not provider_error else None
                 if not provider_error.retryable or attempt >= max_retries:
                     self._emit_event(
                         "provider.error",
@@ -2038,7 +2040,7 @@ class Agent:
                             "attempt": attempt + 1,
                         },
                     )
-                    raise provider_error from exc
+                    raise provider_error from exc if exc is not provider_error else None
 
                 retry_delay = provider_error.retry_after
                 if retry_delay is None:
