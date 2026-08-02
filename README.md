@@ -4,11 +4,8 @@
 [![CI](https://github.com/tao12345666333/amcp/workflows/CI/badge.svg)](https://github.com/tao12345666333/amcp/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Deploy your own on GMI Cloud](https://img.shields.io/badge/Deploy%20your%20own-GMI%20Cloud-ddea4d)](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/amcp-agent)
-
-New to GMI Cloud? [Create an account with my referral link](https://console.gmicloud.ai/ref/KP3NWZV4).
-
-**An out-of-the-box coding-agent runtime for your terminal, server, and Telegram.**
+**A batteries-included, self-hostable, persistent coding-agent runtime for CLI, API, and
+Telegram.**
 
 AMCP is built for developers who want a useful agent immediately, not a framework they must
 assemble first. It ships with file editing, shell execution, web access, memory, skills,
@@ -22,8 +19,9 @@ agent workflows.
 
 - **Ready on the first run**: read/search/edit files, apply patches, run commands, browse the web,
   keep todos, and remember project context without installing a pile of plugins.
-- **One runtime, many surfaces**: use the same sessions from the CLI, an HTTP/WebSocket server,
-  Telegram, or cron/systemd/Kubernetes jobs.
+- **One runtime, many surfaces**: run agents through the CLI, HTTP/WebSocket API, Telegram, or
+  cron/systemd/Kubernetes jobs. Each surface supports persistent sessions; session discovery and
+  management are not yet identical across every surface.
 - **Autonomous but inspectable**: persistent sessions, request-scoped tool limits, context
   compaction, progress events, and cancellation support make long-running work easier to trust.
 - **Extensible when you need it**: add MCP servers, skills, slash commands, hooks, and custom agent
@@ -31,16 +29,24 @@ agent workflows.
 
 ## 30-second start
 
-```bash
-# Configure your model provider interactively
-uvx amcp-agent init
+Requires **Python 3.11+** and credentials for a supported model provider (or an
+OpenAI-compatible endpoint). `init` writes the provider configuration to
+`~/.config/amcp/config.toml`.
 
-# Start the coding agent in the current project
-uvx amcp-agent
+```bash
+# Install the PyPI package
+python -m pip install amcp-agent
+
+# Configure your model provider, then start in the current project
+amcp init
+amcp
 
 # Or run a single task
-uvx amcp-agent --once "summarize this repository and suggest the next test to run"
+amcp --once "summarize this repository and suggest the next test to run"
 ```
+
+The package is named `amcp-agent`. It installs the recommended `amcp` command and the
+backward-compatible `amcp-agent` command. For a no-install run, use `uvx amcp-agent`.
 
 ## What you get
 
@@ -70,9 +76,6 @@ uvx amcp-agent
 
 ```bash
 pip install amcp-agent
-
-# With Anthropic Claude support
-pip install amcp-agent[anthropic]
 
 # With Telegram bot support
 pip install amcp-agent[telegram]
@@ -117,9 +120,10 @@ amcp mcp call --server custom --tool example_tool --args '{"query":"rust async"}
 
 # HTTP/WebSocket server
 amcp serve                              # start on localhost:4096
-amcp serve --port 8080 --host 0.0.0.0   # custom host/port
+amcp serve --port 8080 --host 0.0.0.0   # requires [server.auth] configuration
 amcp serve --telegram                   # start Telegram bot alongside
 amcp attach http://localhost:4096       # connect to a running server
+amcp attach https://server.example --api-key "$AMCP_SERVER_API_KEY"
 
 # Telegram bot
 amcp telegram start                     # start polling
@@ -208,12 +212,31 @@ amcp attach http://localhost:4096  # connect from another terminal
 - `POST /api/v1/sessions/{id}/prompt` - submit a prompt and return request status
 - `POST /api/v1/sessions/{id}/prompt/stream` - submit a prompt and stream JSON-line events
 - `POST /api/v1/sessions/{id}/cancel` - cancel current session work
+- `GET /api/v1/sessions/{id}/timeline` - read durable metadata-only execution events
 - `DELETE /api/v1/sessions/{id}` - delete a session
 - `GET /api/v1/tools` - list available tools
 - `GET /api/v1/agents` - list agent types
 - `WS /ws` - WebSocket for live events
 
-Supports CORS configuration and optional server-side authentication.
+### Server authentication
+
+API authentication uses one configured API key, sent as `Authorization: Bearer <api-key>`.
+Unauthenticated operation is permitted only when the server binds to a loopback address. A
+non-loopback bind (for example `0.0.0.0`) requires authentication; configure an API key before
+exposing the service. This is transport authentication, so use TLS or a trusted reverse proxy for
+traffic that leaves the machine.
+
+Authenticated CLI clients can pass `--api-key` or set `AMCP_SERVER_API_KEY`. HTTP clients send
+`Authorization: Bearer <api-key>`; WebSocket clients may use the same header. The health endpoint
+remains public for probes.
+
+### Durable execution timeline
+
+AMCP stores a bounded per-session timeline beside each session snapshot. It records turn, tool,
+subagent task, context-compaction, provider retry/error, and token-usage metadata so interrupted
+sessions remain inspectable. Prompt content, tool arguments, tool output, and raw
+provider exception text are deliberately excluded. The newest 2,000 events are retained by
+default and can be queried with `GET /api/v1/sessions/{id}/timeline`.
 
 ## Telegram Integration
 
@@ -287,6 +310,9 @@ amcp init
 ```toml
 [chat]
 active_provider = "primary"    # optional: selected [chat.providers.<name>] profile
+request_timeout_seconds = 120
+max_retries = 2                 # transient connection, timeout, 429, and 5xx failures only
+retry_base_delay_seconds = 0.5  # exponential backoff with jitter
 mcp_tools_enabled = true
 write_tool_enabled = true
 edit_tool_enabled = true
@@ -319,7 +345,7 @@ api_type = "anthropic"
 model = "claude-model-name"
 ```
 
-Install with: `pip install amcp-agent[anthropic]`
+Anthropic support is included in the base `amcp-agent` package; no separate extra is required.
 
 ### MCP Servers
 
@@ -355,7 +381,19 @@ response_ratio = 0.30          # reserve 30% of context for response
 [server]
 host = "127.0.0.1"
 port = 4096
+
+[server.auth]
+enabled = false              # valid without a key only for loopback binds
+# api_key = "replace-with-a-secret"
 ```
+
+For a non-loopback host, set `enabled = true` and `api_key`, then send the key as a Bearer token.
+
+### Provider and deployment options
+
+[Deploy AMCP on GMI Cloud](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/amcp-agent).
+New GMI Cloud users can optionally sign up with the maintainer's
+[referral link](https://console.gmicloud.ai/ref/KP3NWZV4) (a referral, not a requirement).
 
 ### Telegram Configuration
 
@@ -419,7 +457,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
 
 - `rg` (ripgrep) must be installed and on PATH for the grep tool.
 - MCP servers must be installed separately and runnable (stdio transport).
-- The agent does not add an application-level retry around model provider failures; provider client behavior applies.
+- Foreground tool-loop model calls classify provider failures and retry transient connection,
+  timeout, rate-limit, and server errors with bounded exponential backoff. Authentication,
+  invalid-request, protocol, and streaming failures after output has started are not retried.
+  Compaction and memory-maintenance model calls currently retain their existing provider behavior.
 - Tool-call guardrails include per-request `bash` limits, output truncation for `bash`, and
   per-conversation plus per-session `read_file` limits.
 

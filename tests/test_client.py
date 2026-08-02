@@ -10,6 +10,7 @@ from amcp.client import (
     ClientMode,
     ClientSession,
     HTTPClient,
+    WebSocketClient,
 )
 from amcp.client.base import ResponseChunk
 from amcp.client.embedded import EmbeddedClient
@@ -164,6 +165,57 @@ class TestHTTPClient:
         client = HTTPClient("http://localhost:4096")
         with pytest.raises(ConnectionError):
             client._ensure_connected()
+
+    def test_api_key_adds_bearer_header_without_overriding_headers(self):
+        client = HTTPClient(
+            "http://localhost:4096",
+            headers={"X-Custom": "value"},
+            api_key="secret",
+        )
+        assert client._headers == {
+            "X-Custom": "value",
+            "Authorization": "Bearer secret",
+        }
+
+        custom = HTTPClient(
+            "http://localhost:4096",
+            headers={"authorization": "Custom credential"},
+            api_key="secret",
+        )
+        assert custom._headers["authorization"] == "Custom credential"
+
+
+class TestWebSocketClient:
+    """Test WebSocket authentication and URL construction."""
+
+    def test_api_key_and_session_query(self):
+        client = WebSocketClient(
+            "https://example.test/",
+            session_id="session with spaces",
+            headers={"X-Custom": "value"},
+            api_key="secret",
+        )
+        assert client.ws_url == "wss://example.test/ws?session_id=session+with+spaces"
+        assert client._headers == {
+            "X-Custom": "value",
+            "Authorization": "Bearer secret",
+        }
+
+    @pytest.mark.asyncio
+    async def test_amcp_client_passes_auth_to_http_client(self, monkeypatch):
+        async def connect_without_network(client):
+            client._client = object()
+
+        monkeypatch.setattr(HTTPClient, "connect", connect_without_network)
+        client = AMCPClient.remote(
+            "https://example.test",
+            headers={"X-Custom": "value"},
+            api_key="secret",
+        )
+        await client.connect()
+        assert isinstance(client._client, HTTPClient)
+        assert client._client._headers["Authorization"] == "Bearer secret"
+        assert client._client._headers["X-Custom"] == "value"
 
 
 # ============================================================================

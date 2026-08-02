@@ -322,11 +322,10 @@ To contribute new examples:
 ## 📖 Additional Resources
 
 - [AMCP Main Documentation](../README.md)
-- [Agent Configuration Guide](../docs/agents.md)
-- [Command System Guide](../docs/commands.md)
-- [Skills System Guide](../docs/skills.md)
+- [Agent Capabilities](../docs/phase2-agent-capabilities.md)
+- [Commands and Skills Guide](../docs/skills-and-commands.md)
 - [Hooks System Guide](../docs/hooks.md)
-- [Multi-Agent Workflows](../docs/multi-agent.md)
+- [Project Structure](../docs/PROJECT_STRUCTURE.md)
 
 ## 🐛 Troubleshooting
 
@@ -340,7 +339,7 @@ To contribute new examples:
 ### Getting Help
 
 - Check the [AMCP documentation](../README.md)
-- Review the [troubleshooting guide](../docs/troubleshooting.md)
+- Review the setup and notes in the [main documentation](../README.md)
 - Open an issue on the GitHub repository
 
 ---

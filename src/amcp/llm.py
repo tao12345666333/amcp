@@ -7,13 +7,143 @@ import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, cast
+
+import httpx
 
 from .config import ChatConfig
 
 # Type aliases for commonly used complex types
 ToolCall = dict[str, Any]
 Message = dict[str, Any]
+
+
+class ProviderErrorKind(StrEnum):
+    """Stable categories for failures returned by model providers."""
+
+    AUTH = "auth"
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    SERVER = "server"
+    INVALID_REQUEST = "invalid_request"
+    PROTOCOL = "protocol"
+    UNKNOWN = "unknown"
+
+
+class ProviderError(RuntimeError):
+    """A safe, structured provider failure suitable for transport responses."""
+
+    def __init__(
+        self,
+        kind: ProviderErrorKind,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+        retryable: bool = False,
+        partial_output: bool = False,
+    ):
+        self.kind = kind
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.retryable = retryable
+        self.partial_output = partial_output
+        status = f" (HTTP {status_code})" if status_code is not None else ""
+        messages = {
+            ProviderErrorKind.AUTH: "Model provider authentication failed",
+            ProviderErrorKind.RATE_LIMIT: "Model provider rate limit was exceeded",
+            ProviderErrorKind.TIMEOUT: "Model provider request timed out",
+            ProviderErrorKind.CONNECTION: "Could not connect to the model provider",
+            ProviderErrorKind.SERVER: "Model provider is temporarily unavailable",
+            ProviderErrorKind.INVALID_REQUEST: "Model provider rejected the request",
+            ProviderErrorKind.PROTOCOL: "Model provider returned an invalid response",
+            ProviderErrorKind.UNKNOWN: "Model provider request failed",
+        }
+        super().__init__(messages[kind] + status)
+
+
+def _provider_status_code(error: BaseException) -> int | None:
+    """Extract an HTTP status code from common provider SDK exception shapes."""
+    direct = getattr(error, "status_code", None)
+    response = getattr(error, "response", None)
+    value = direct if direct is not None else getattr(response, "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _provider_retry_after(error: BaseException) -> float | None:
+    """Extract a numeric Retry-After value when exposed by an SDK response."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return max(0.0, float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def classify_provider_error(error: BaseException, *, partial_output: bool = False) -> ProviderError:
+    """Classify an arbitrary provider SDK exception without exposing its message."""
+    if isinstance(error, ProviderError):
+        if partial_output and not error.partial_output:
+            error.partial_output = True
+            error.retryable = False
+        return error
+
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        chain.append(current)
+        nested = getattr(current, "original_exception", None)
+        current = nested if isinstance(nested, BaseException) else current.__cause__
+
+    status = next((code for item in chain if (code := _provider_status_code(item)) is not None), None)
+    names = " ".join(type(item).__name__.lower() for item in chain)
+    text = " ".join(str(item).lower() for item in chain)
+    if status in {401, 403} or "authentication" in names or "permissiondenied" in names:
+        kind = ProviderErrorKind.AUTH
+    elif status == 429 or "ratelimit" in names or "rate limit" in text:
+        kind = ProviderErrorKind.RATE_LIMIT
+    elif any(isinstance(item, (TimeoutError, asyncio.TimeoutError, httpx.TimeoutException)) for item in chain) or (
+        "timeout" in names
+    ):
+        kind = ProviderErrorKind.TIMEOUT
+    elif any(isinstance(item, (ConnectionError, httpx.NetworkError)) for item in chain) or any(
+        marker in names for marker in ("connection", "connecterror", "networkerror")
+    ):
+        kind = ProviderErrorKind.CONNECTION
+    elif status is not None and status >= 500:
+        kind = ProviderErrorKind.SERVER
+    elif status is not None and 400 <= status < 500:
+        kind = ProviderErrorKind.INVALID_REQUEST
+    elif any(isinstance(item, (ValueError, TypeError)) for item in chain):
+        kind = ProviderErrorKind.PROTOCOL
+    else:
+        kind = ProviderErrorKind.UNKNOWN
+
+    retryable = kind in {
+        ProviderErrorKind.RATE_LIMIT,
+        ProviderErrorKind.TIMEOUT,
+        ProviderErrorKind.CONNECTION,
+        ProviderErrorKind.SERVER,
+    }
+    return ProviderError(
+        kind,
+        status_code=status,
+        retry_after=next(
+            (value for item in chain if (value := _provider_retry_after(item)) is not None),
+            None,
+        ),
+        retryable=retryable and not partial_output,
+        partial_output=partial_output,
+    )
 
 
 def _extract_think_tags(content: str) -> tuple[str | None, str]:
@@ -210,7 +340,13 @@ class AnyLLMClient(BaseLLMClient):
     ):
         from any_llm import AnyLLM
 
-        self.client = AnyLLM.create(provider, api_key=api_key, api_base=base_url)
+        client_options = {"max_retries": 0} if provider in {"anthropic", "gmi", "openai"} else {}
+        self.client = AnyLLM.create(
+            provider,
+            api_key=api_key,
+            api_base=base_url,
+            **client_options,
+        )
         self.provider = provider
         self.model = model
 
@@ -493,7 +629,12 @@ class OpenAIResponsesClient(BaseLLMClient):
     def __init__(self, base_url: str, api_key: str | None, model: str):
         from any_llm import AnyLLM
 
-        self.client = AnyLLM.create("openai", api_key=api_key, api_base=base_url)
+        self.client = AnyLLM.create(
+            "openai",
+            api_key=api_key,
+            api_base=base_url,
+            max_retries=0,
+        )
         self.model = model
 
     def chat(

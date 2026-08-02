@@ -13,6 +13,7 @@ from amcp.session_store import (
     SessionLoadError,
     SessionSaveError,
     SessionStore,
+    SessionTimelineStore,
 )
 
 
@@ -43,6 +44,44 @@ def test_save_is_versioned_atomic_and_redacts_sensitive_fields(tmp_path):
     assert data["tool"]["api_key"] == "[REDACTED]"
     assert data["tool"]["headers"]["Authorization"] == "[REDACTED]"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_timeline_is_sanitized_bounded_and_restartable(tmp_path):
+    store = SessionTimelineStore(tmp_path, "timeline", max_events=3)
+    store.append(
+        "tool.call_start",
+        {
+            "tool_name": "bash",
+            "tool_id": "call-1",
+            "arguments": {"command": "echo secret"},
+            "error": "Bearer secret",
+        },
+    )
+    store.append("tool.call_complete", {"tool_name": "bash", "success": True})
+    store.append("llm.usage", {"input_tokens": 10, "output_tokens": 2})
+    store.append("turn.completed", {"turn_id": "turn-1", "turn_status": "completed"})
+
+    restarted = SessionTimelineStore(tmp_path, "timeline", max_events=3)
+    events = restarted.read(limit=10)
+
+    assert [event["type"] for event in events] == ["llm.usage", "turn.completed"]
+    assert events[0]["data"] == {"input_tokens": 10, "output_tokens": 2}
+    raw = restarted.path.read_text(encoding="utf-8")
+    assert "echo secret" not in raw
+    assert "Bearer secret" not in raw
+
+
+def test_timeline_retention_is_shared_across_writers(tmp_path):
+    first = SessionTimelineStore(tmp_path, "shared-timeline", max_events=3)
+    second = SessionTimelineStore(tmp_path, "shared-timeline", max_events=3)
+
+    for index in range(8):
+        writer = first if index % 2 == 0 else second
+        writer.append("turn.completed", {"turn_id": f"turn-{index}"})
+
+    events = first.read(limit=10)
+    assert len(events) <= 3
+    assert events[-1]["data"]["turn_id"] == "turn-7"
 
 
 def test_atomic_replace_failure_preserves_previous_session(tmp_path):

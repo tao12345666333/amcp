@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import random
 import time
 import uuid
 from collections.abc import Callable
@@ -34,6 +35,7 @@ from .hooks import (
     run_pre_tool_use_hooks,
     run_user_prompt_hooks,
 )
+from .llm import ProviderError, classify_provider_error
 from .mcp_client import list_mcp_tools
 from .mcp_naming import is_mcp_tool_name, mcp_tool_name, unique_function_name
 from .memory import get_memory_manager
@@ -49,7 +51,7 @@ from .project_rules import ProjectRulesLoader
 from .runtime import CancellationResult, RuntimeClosedError, SessionRuntime, TurnCancelledError, TurnHandle, TurnRequest
 from .session_search import get_transcript_store
 from .session_state import CompactionCheckpoint, SessionState
-from .session_store import SessionStore
+from .session_store import SessionStore, SessionTimelineStore
 from .skills import get_skill_manager
 from .tool_execution import (
     ToolCallProtocolError,
@@ -141,8 +143,13 @@ def _repair_tool_call_pairing(messages: list[dict[str, Any]]) -> list[dict[str, 
 
 def _is_tool_call_pairing_error(error: Exception) -> bool:
     """Check whether an error is a provider-side tool-call pairing rejection."""
-    text = str(error).lower()
-    return "function response parts" in text or ("function call" in text and "invalid_argument" in text)
+    current: BaseException | None = error
+    while current is not None:
+        text = str(current).lower()
+        if "function response parts" in text or ("function call" in text and "invalid_argument" in text):
+            return True
+        current = current.__cause__
+    return False
 
 
 class BusyError(Exception):
@@ -178,6 +185,10 @@ class Agent:
         self.conversation_history: list[dict[str, Any]] = []
         self._session_store = SessionStore(
             Path.home() / ".config" / "amcp" / "sessions",
+            self.session_id,
+        )
+        self._timeline_store = SessionTimelineStore(
+            self._session_store.root,
             self.session_id,
         )
         self.session_file = self._session_store.path
@@ -376,6 +387,15 @@ class Agent:
             "session_file": str(self.session_file),
         }
 
+    def get_timeline(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return recent durable execution events for this session."""
+        return self._timeline_store.read(limit=limit)
+
+    def delete_persisted_session(self) -> None:
+        """Delete the durable conversation snapshot and execution timeline."""
+        self._session_store.delete()
+        self._timeline_store.delete()
+
     def get_token_usage_summary(self) -> dict[str, Any]:
         """Return current context usage and provider-reported session totals."""
         context_window = self.last_context_window
@@ -441,6 +461,15 @@ class Agent:
             "timestamp": datetime.now().isoformat(),
             **data,
         }
+        if event_type.startswith(("turn.", "tool.", "provider.", "llm.", "context.", "memory.")):
+            try:
+                self._timeline_store.append(
+                    event_type,
+                    data,
+                    timestamp=event_data["timestamp"],
+                )
+            except Exception as exc:
+                logger.debug("Timeline persistence failed (non-critical): %s", exc)
         for callback in self._event_callbacks:
             with contextlib.suppress(Exception):
                 callback(event_type, event_data)
@@ -814,13 +843,15 @@ class Agent:
         )
 
     def _on_runtime_event(self, event: str, handle: TurnHandle) -> None:
-        self._emit_event(
-            event,
-            {
-                "turn_id": handle.id,
-                "turn_status": handle.status.value,
-            },
-        )
+        data: dict[str, Any] = {
+            "turn_id": handle.id,
+            "turn_status": handle.status.value,
+        }
+        outcome = handle.outcome
+        if outcome and isinstance(outcome.error, ProviderError):
+            data["error_kind"] = outcome.error.kind.value
+            data["status_code"] = outcome.error.status_code
+        self._emit_event(event, data)
 
     async def _process_message(self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool) -> str:
         """
@@ -937,6 +968,13 @@ class Agent:
                             original_tokens=compaction_result.original_tokens,
                             compacted_tokens=compaction_result.compacted_tokens,
                         )
+                        self._emit_event(
+                            "context.compacted",
+                            {
+                                "input_tokens": compaction_result.original_tokens,
+                                "output_tokens": compaction_result.compacted_tokens,
+                            },
+                        )
                         history_to_add = draft.model_context(turn_messages)
                         self.reset_memory_context_snapshot()
                         self.console.print("[dim]Context compacted to reduce token usage[/dim]")
@@ -1003,7 +1041,7 @@ class Agent:
         except asyncio.CancelledError:
             self._apply_session_state(committed_state)
             raise
-        except (AgentExecutionError, MaxStepsReached, ToolCallProtocolError):
+        except (AgentExecutionError, MaxStepsReached, ProviderError, ToolCallProtocolError):
             self._apply_session_state(committed_state)
             raise
         except Exception as e:
@@ -1530,10 +1568,7 @@ class Agent:
 
         for step in range(max_steps):
             self.step_count = step + 1
-            # Update LLM call counters (both per-request and session total)
-            self.current_request_llm_calls += 1
-            self.total_llm_calls += 1
-            status.update(f"[bold]Agent {self.name}[/bold] - LLM Call {self.current_request_llm_calls}")
+            status.update(f"[bold]Agent {self.name}[/bold] - LLM Call {self.current_request_llm_calls + 1}")
 
             # Define stream callback if streaming is enabled
             stream_callback = None
@@ -1552,8 +1587,11 @@ class Agent:
                     messages=messages,
                     tools=tools,
                     stream_callback=stream_callback,
+                    cfg=cfg.chat,
                 )
             except Exception as call_error:
+                if isinstance(call_error, ProviderError) and call_error.partial_output:
+                    raise
                 if not _is_tool_call_pairing_error(call_error):
                     raise
                 logger.warning(
@@ -1567,6 +1605,7 @@ class Agent:
                     messages=messages,
                     tools=tools,
                     stream_callback=stream_callback,
+                    cfg=cfg.chat,
                 )
             self._record_llm_usage(resp, estimated_input_tokens, context_window)
 
@@ -1634,11 +1673,13 @@ class Agent:
                     )
                     # Get a final response from the LLM with the current messages
                     try:
-                        self.current_request_llm_calls += 1
-                        self.total_llm_calls += 1
                         messages = self._fit_tool_context(messages, [], input_token_budget)
                         estimated_input_tokens = estimate_request_tokens(messages)
-                        final_resp = await self._call_llm(llm_client, messages=messages)
+                        final_resp = await self._call_llm(
+                            llm_client,
+                            messages=messages,
+                            cfg=cfg.chat,
+                        )
                         self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
                         final_text = final_resp.content or ""
                         status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
@@ -1900,28 +1941,82 @@ class Agent:
         status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
         raise MaxStepsReached(self.max_steps)
 
-    @staticmethod
     async def _call_llm(
+        self,
         llm_client: Any,
         *,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         stream_callback: Any | None = None,
+        cfg: ChatConfig | None = None,
     ) -> Any:
-        """Call native async providers and adapt legacy synchronous test clients."""
-        async_chat = getattr(llm_client, "achat", None)
-        if callable(async_chat):
-            return await async_chat(
+        """Call a provider with timeout and bounded transient-error retries."""
+        policy = cfg or ChatConfig()
+        timeout = max(0.1, float(policy.request_timeout_seconds))
+        max_retries = max(0, int(policy.max_retries))
+        base_delay = max(0.0, float(policy.retry_base_delay_seconds))
+        emitted_output = False
+
+        def tracked_callback(chunk: str) -> None:
+            nonlocal emitted_output
+            emitted_output = True
+            if stream_callback is not None:
+                stream_callback(chunk)
+
+        callback = tracked_callback if stream_callback is not None else None
+
+        async def call_once() -> Any:
+            async_chat = getattr(llm_client, "achat", None)
+            if callable(async_chat):
+                return await async_chat(
+                    messages=messages,
+                    tools=tools,
+                    stream_callback=callback,
+                )
+            return await asyncio.to_thread(
+                llm_client.chat,
                 messages=messages,
                 tools=tools,
-                stream_callback=stream_callback,
+                stream_callback=callback,
             )
-        return await asyncio.to_thread(
-            llm_client.chat,
-            messages=messages,
-            tools=tools,
-            stream_callback=stream_callback,
-        )
+
+        for attempt in range(max_retries + 1):
+            try:
+                self.current_request_llm_calls += 1
+                self.total_llm_calls += 1
+                return await asyncio.wait_for(call_once(), timeout=timeout)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                provider_error = classify_provider_error(exc, partial_output=emitted_output)
+                if not provider_error.retryable or attempt >= max_retries:
+                    self._emit_event(
+                        "provider.error",
+                        {
+                            "error_kind": provider_error.kind.value,
+                            "status_code": provider_error.status_code,
+                            "partial_output": provider_error.partial_output,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    raise provider_error from exc
+
+                retry_delay = provider_error.retry_after
+                if retry_delay is None:
+                    retry_delay = random.uniform(0.0, min(30.0, base_delay * (2**attempt)))
+                retry_delay = min(retry_delay, 60.0)
+                self._emit_event(
+                    "provider.retry",
+                    {
+                        "error_kind": provider_error.kind.value,
+                        "status_code": provider_error.status_code,
+                        "attempt": attempt + 2,
+                        "delay_seconds": retry_delay,
+                    },
+                )
+                await asyncio.sleep(retry_delay)
+
+        raise AssertionError("provider retry loop exhausted without returning or raising")
 
     def _record_llm_usage(
         self,
@@ -1938,6 +2033,15 @@ class Agent:
             self.last_usage_from_api = False
             self.total_input_tokens += estimated_input_tokens
             self.estimated_input_llm_calls += 1
+            self._emit_event(
+                "llm.usage",
+                {
+                    "input_tokens": estimated_input_tokens,
+                    "output_tokens": None,
+                    "context_window": context_window,
+                    "usage_from_api": False,
+                },
+            )
             return
 
         self.last_context_tokens = usage.prompt_tokens
@@ -1948,6 +2052,17 @@ class Agent:
         self.total_cached_input_tokens += usage.cached_input_tokens
         self.total_cache_write_input_tokens += usage.cache_write_input_tokens
         self.usage_reported_llm_calls += 1
+        self._emit_event(
+            "llm.usage",
+            {
+                "input_tokens": usage.prompt_tokens,
+                "output_tokens": usage.output_tokens,
+                "cached_input_tokens": usage.cached_input_tokens,
+                "total_tokens": usage.total_tokens,
+                "context_window": context_window,
+                "usage_from_api": True,
+            },
+        )
 
     @staticmethod
     def _fit_tool_context(

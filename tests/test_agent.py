@@ -13,7 +13,7 @@ from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ChatConfig, ContextConfig
 from amcp.hooks import HookDecision, HookOutput
-from amcp.llm import LLMResponse, TokenUsage
+from amcp.llm import LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 from amcp.runtime import RuntimeClosedError, TurnStatus
@@ -316,6 +316,101 @@ class TestAgentToolLimits:
         synthesized = llm.seen_messages[1]
         assert synthesized["tool_call_id"] == "missing"
         assert synthesized["name"] == "read_file"
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_provider_failure_and_records_timeline(self, tmp_path):
+        class TransientError(RuntimeError):
+            status_code = 503
+
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def achat(self, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise TransientError("upstream detail with secret")
+                return SimpleNamespace(content="recovered", tool_calls=None, usage=None)
+
+        with patch("amcp.agent.Path.home", return_value=tmp_path):
+            agent = Agent(session_id="provider-retry")
+
+        llm = FakeLLM()
+        response = await agent._call_llm(
+            llm,
+            messages=[{"role": "user", "content": "hello"}],
+            cfg=ChatConfig(max_retries=1, retry_base_delay_seconds=0),
+        )
+
+        assert response.content == "recovered"
+        assert llm.calls == 2
+        events = agent.get_timeline(limit=10)
+        assert events[-1]["type"] == "provider.retry"
+        assert events[-1]["data"]["error_kind"] == "server"
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_after_streaming_output(self, tmp_path):
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def achat(self, stream_callback=None, **_kwargs):
+                self.calls += 1
+                stream_callback("partial")
+                raise TimeoutError("late timeout")
+
+        with patch("amcp.agent.Path.home", return_value=tmp_path):
+            agent = Agent(session_id="provider-stream")
+
+        llm = FakeLLM()
+        with pytest.raises(ProviderError) as error:
+            await agent._call_llm(
+                llm,
+                messages=[{"role": "user", "content": "hello"}],
+                stream_callback=lambda _chunk: None,
+                cfg=ChatConfig(max_retries=3, retry_base_delay_seconds=0),
+            )
+
+        assert error.value.kind == ProviderErrorKind.TIMEOUT
+        assert error.value.partial_output is True
+        assert llm.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_pairing_repair_does_not_retry_after_streaming_output(self, tmp_path):
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def achat(self, stream_callback=None, **_kwargs):
+                self.calls += 1
+                stream_callback("partial")
+                error = RuntimeError("INVALID_ARGUMENT: function response parts must equal function call parts")
+                error.status_code = 400
+                raise error
+
+        with patch("amcp.agent.Path.home", return_value=tmp_path):
+            agent = Agent(session_id="pairing-stream")
+
+        llm = FakeLLM()
+        with pytest.raises(ProviderError) as error:
+            await agent._enhanced_chat_with_tools(
+                llm_client=llm,
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+                tool_registry={},
+                stream=True,
+                status=MagicMock(),
+                work_dir=tmp_path,
+                cfg=AMCPConfig(
+                    servers={},
+                    chat=ChatConfig(max_retries=2, retry_base_delay_seconds=0),
+                    context=ContextConfig(),
+                ),
+            )
+
+        assert error.value.partial_output is True
+        assert llm.calls == 1
+        assert agent.current_request_llm_calls == 1
 
     @pytest.mark.asyncio
     async def test_grep_path_is_canonicalized_before_pre_tool_hooks(self, tmp_path):

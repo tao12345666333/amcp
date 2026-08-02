@@ -2,6 +2,9 @@
 
 This workflow demonstrates how multiple agents can collaborate on a data science project, from data analysis to model deployment and documentation.
 
+> **Illustrative example:** All metrics, outputs, and readiness labels below are hypothetical
+> conversation content. They are not AMCP benchmark results or production-readiness claims.
+
 ## Workflow Overview
 
 ```
@@ -31,7 +34,9 @@ User Request → Data Scientist Agent → AI Engineer Agent → Documentation Wr
 
 **Delegation Prompt:**
 ```
-"I've developed a customer churn prediction model with 85% accuracy. Please help me optimize it for production deployment, including model optimization, API creation, and MLOps setup."
+"In this hypothetical example, I've developed a customer churn prediction model with an
+illustrative 85% accuracy. Please help me optimize it for production deployment, including model
+optimization, API creation, and MLOps setup."
 ```
 
 **AI Engineer Agent Tasks:**
@@ -225,7 +230,8 @@ Data Scientist: I'll help you build a comprehensive customer churn prediction mo
 
 [Data Scientist performs EDA, preprocessing, and model training]
 
-Data Scientist: I've developed a Random Forest model with 85% accuracy. Now I'll delegate the optimization and deployment tasks to our AI Engineer.
+Data Scientist: In this hypothetical scenario, the Random Forest model has an illustrative 85%
+accuracy. Now I'll delegate the optimization and deployment tasks to our AI Engineer.
 
 Data Scientist: /delegate ai-engineer "Please help me optimize this churn prediction model for production deployment..."
 
@@ -247,7 +253,7 @@ Data Scientist: Perfect! Your customer churn prediction system is now complete w
 ## Workflow Benefits
 
 1. **End-to-End Solution**: Complete pipeline from data to deployment
-2. **Production Ready**: Optimized for real-world usage
+2. **Deployment-oriented example**: Illustrates optimization steps for real-world usage
 3. **Comprehensive Documentation**: Self-contained with guides
 4. **Quality Assurance**: Multiple validation points
 5. **Scalable Architecture**: Ready for production scaling

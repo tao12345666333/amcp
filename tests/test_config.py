@@ -58,6 +58,36 @@ def test_decode_encode_chat_tool_limits_roundtrip():
     assert encoded["bash_tool_limit"] == 100
 
 
+def test_decode_encode_provider_reliability_policy_roundtrip():
+    raw = {
+        "request_timeout_seconds": 45.5,
+        "max_retries": 4,
+        "retry_base_delay_seconds": 0.25,
+        "active_provider": "backup",
+        "providers": {
+            "backup": {
+                "api_type": "anthropic",
+                "model": "backup-model",
+                "request_timeout_seconds": 30,
+                "max_retries": 1,
+                "retry_base_delay_seconds": 0.1,
+            }
+        },
+    }
+
+    cfg = config_module._decode_chat(raw)
+
+    assert cfg is not None
+    assert cfg.request_timeout_seconds == 30
+    assert cfg.max_retries == 1
+    assert cfg.retry_base_delay_seconds == 0.1
+    encoded = config_module._encode_chat(cfg)
+    assert encoded is not None
+    assert encoded["providers"]["backup"]["request_timeout_seconds"] == 30.0
+    assert encoded["providers"]["backup"]["max_retries"] == 1
+    assert encoded["providers"]["backup"]["retry_base_delay_seconds"] == 0.1
+
+
 def test_default_chat_uses_gmi_without_api_key():
     cfg = config_module._decode_chat(config_module._DEFAULT["chat"])
 

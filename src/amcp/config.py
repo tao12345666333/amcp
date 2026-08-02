@@ -67,6 +67,9 @@ class ChatProviderConfig:
     api_key: str | None = None
     api_type: str | None = None  # any-llm provider ID, or "openai_responses"
     model_config: ModelConfig | None = None
+    request_timeout_seconds: float | None = None
+    max_retries: int | None = None
+    retry_base_delay_seconds: float | None = None
 
 
 @dataclass
@@ -78,6 +81,12 @@ class ChatConfig:
 
     # Model configuration (from models.dev or custom)
     model_config: ModelConfig | None = None
+
+    # Provider reliability policy. Retries are only attempted for transient
+    # failures and never after a streaming response emitted content.
+    request_timeout_seconds: float = 120.0
+    max_retries: int = 2
+    retry_base_delay_seconds: float = 0.5
 
     # Named provider profiles. ``active_provider`` selects which profile is copied
     # into the top-level chat fields at load time so existing call sites keep working.
@@ -346,6 +355,9 @@ def _decode_chat_provider(raw: Mapping[str, object]) -> ChatProviderConfig:
     model = raw.get("model")
     api_key = raw.get("api_key")
     api_type = raw.get("api_type")
+    request_timeout_seconds = raw.get("request_timeout_seconds")
+    max_retries = raw.get("max_retries")
+    retry_base_delay_seconds = raw.get("retry_base_delay_seconds")
     raw_model_config = raw.get("model_config")
     model_config = _decode_model_config(raw_model_config) if isinstance(raw_model_config, dict) else None
     return ChatProviderConfig(
@@ -354,6 +366,11 @@ def _decode_chat_provider(raw: Mapping[str, object]) -> ChatProviderConfig:
         api_key=str(api_key) if api_key is not None else None,
         api_type=str(api_type) if api_type is not None else None,
         model_config=model_config,
+        request_timeout_seconds=(float(str(request_timeout_seconds)) if request_timeout_seconds is not None else None),
+        max_retries=int(str(max_retries)) if max_retries is not None else None,
+        retry_base_delay_seconds=(
+            float(str(retry_base_delay_seconds)) if retry_base_delay_seconds is not None else None
+        ),
     )
 
 
@@ -378,6 +395,12 @@ def _apply_active_provider(chat: ChatConfig) -> ChatConfig:
         )
     chat.api_type = provider.api_type
     chat.model_config = provider.model_config
+    if provider.request_timeout_seconds is not None:
+        chat.request_timeout_seconds = provider.request_timeout_seconds
+    if provider.max_retries is not None:
+        chat.max_retries = provider.max_retries
+    if provider.retry_base_delay_seconds is not None:
+        chat.retry_base_delay_seconds = provider.retry_base_delay_seconds
     return chat
 
 
@@ -388,6 +411,9 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     model = raw.get("model")
     api_key = raw.get("api_key")
     api_type = raw.get("api_type")
+    request_timeout_seconds = raw.get("request_timeout_seconds", 120.0)
+    max_retries = raw.get("max_retries", 2)
+    retry_base_delay_seconds = raw.get("retry_base_delay_seconds", 0.5)
     tool_loop_limit = raw.get("tool_loop_limit")
     bash_tool_limit = raw.get("bash_tool_limit")
     default_max_lines = raw.get("default_max_lines")
@@ -419,6 +445,9 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         api_key=str(api_key) if api_key is not None else None,
         api_type=str(api_type) if api_type is not None else None,
         model_config=model_config,
+        request_timeout_seconds=float(str(request_timeout_seconds)),
+        max_retries=int(str(max_retries)),
+        retry_base_delay_seconds=float(str(retry_base_delay_seconds)),
         active_provider=str(active_provider) if active_provider is not None else None,
         providers=providers,
         tool_loop_limit=int(str(tool_loop_limit)) if tool_loop_limit is not None else None,
@@ -687,6 +716,12 @@ def _encode_chat_provider(p: ChatProviderConfig) -> dict:
         out["api_key"] = p.api_key
     if p.api_type:
         out["api_type"] = p.api_type
+    if p.request_timeout_seconds is not None:
+        out["request_timeout_seconds"] = float(p.request_timeout_seconds)
+    if p.max_retries is not None:
+        out["max_retries"] = int(p.max_retries)
+    if p.retry_base_delay_seconds is not None:
+        out["retry_base_delay_seconds"] = float(p.retry_base_delay_seconds)
     model_config_dict = _encode_model_config(p.model_config)
     if model_config_dict:
         out["model_config"] = model_config_dict
@@ -706,6 +741,9 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["api_key"] = c.api_key
     if c.api_type and not provider_profiles_enabled:
         out["api_type"] = c.api_type
+    out["request_timeout_seconds"] = float(c.request_timeout_seconds)
+    out["max_retries"] = int(c.max_retries)
+    out["retry_base_delay_seconds"] = float(c.retry_base_delay_seconds)
     # Model config
     model_config_dict = _encode_model_config(c.model_config)
     if model_config_dict and not provider_profiles_enabled:

@@ -285,6 +285,18 @@ def serve_command(
     Deploy with Docker or systemd for production.
     """
     from .server import run_server
+    from .server.config import AuthConfig as RuntimeAuthConfig
+
+    cfg = load_config()
+    configured_auth = cfg.server.auth if cfg.server else None
+    runtime_auth = (
+        RuntimeAuthConfig(
+            enabled=configured_auth.enabled,
+            api_key=configured_auth.api_key,
+        )
+        if configured_auth
+        else RuntimeAuthConfig()
+    )
 
     if telegram_enabled:
         _start_telegram_bot(work_dir)
@@ -296,6 +308,7 @@ def serve_command(
         port=port,
         work_dir=str(work_dir) if work_dir else None,
         reload=reload,
+        auth=runtime_auth,
     )
 
 
@@ -364,6 +377,14 @@ def attach_command(
             readable=True,
         ),
     ] = None,
+    api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--api-key",
+            help="Server API key (or set AMCP_SERVER_API_KEY)",
+            envvar="AMCP_SERVER_API_KEY",
+        ),
+    ] = None,
 ) -> None:
     """Connect to a running AMCP server and interact with it.
 
@@ -376,13 +397,14 @@ def attach_command(
         amcp attach http://localhost:4096 -w /path/to/project
     """
     # Use synchronous implementation to avoid event loop issues
-    _attach_sync(url, session_id, work_dir)
+    _attach_sync(url, session_id, work_dir, api_key)
 
 
 def _attach_sync(
     url: str,
     session_id: str | None,
     work_dir: Path | None,
+    api_key: str | None = None,
 ) -> None:
     """Synchronous implementation of attach command using httpx directly.
 
@@ -393,10 +415,11 @@ def _attach_sync(
     from prompt_toolkit.history import FileHistory
 
     base_url = url.rstrip("/")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     # Check server health
     try:
-        with httpx.Client(timeout=5.0) as http:
+        with httpx.Client(timeout=5.0, headers=headers) as http:
             health_resp = http.get(f"{base_url}/api/v1/health")
             health_resp.raise_for_status()
             health = health_resp.json()
@@ -407,7 +430,7 @@ def _attach_sync(
 
     # Create or get session
     try:
-        with httpx.Client(timeout=30.0) as http:
+        with httpx.Client(timeout=30.0, headers=headers) as http:
             if session_id:
                 # Try to get existing session
                 try:
@@ -476,7 +499,7 @@ def _attach_sync(
 
             if user_input.lower() in {"/new", "/session new"}:
                 try:
-                    with httpx.Client(timeout=30.0) as http:
+                    with httpx.Client(timeout=30.0, headers=headers) as http:
                         sess_resp = http.post(
                             f"{base_url}/api/v1/sessions",
                             json={"cwd": str(work_dir) if work_dir else None},
@@ -493,7 +516,7 @@ def _attach_sync(
             if user_input.lower().startswith("/session switch "):
                 target_session_id = user_input.split(maxsplit=2)[2].strip()
                 try:
-                    with httpx.Client(timeout=10.0) as http:
+                    with httpx.Client(timeout=10.0, headers=headers) as http:
                         resp = http.get(f"{base_url}/api/v1/sessions/{target_session_id}")
                         resp.raise_for_status()
                         session_id = target_session_id
@@ -505,7 +528,7 @@ def _attach_sync(
 
             if user_input.lower() == "/cancel":
                 try:
-                    with httpx.Client(timeout=5.0) as http:
+                    with httpx.Client(timeout=5.0, headers=headers) as http:
                         http.post(f"{base_url}/api/v1/sessions/{session_id}/cancel")
                         console.print("[green]Cancel request sent.[/green]")
                 except Exception as e:
@@ -514,7 +537,7 @@ def _attach_sync(
                 continue
 
             if user_input.lower() == "/sessions":
-                with httpx.Client(timeout=10.0) as http:
+                with httpx.Client(timeout=10.0, headers=headers) as http:
                     resp = http.get(f"{base_url}/api/v1/sessions")
                     sessions = resp.json()
                     console.print("[bold]Sessions:[/bold]")
@@ -525,7 +548,7 @@ def _attach_sync(
                 continue
 
             if user_input.lower() == "/info":
-                with httpx.Client(timeout=10.0) as http:
+                with httpx.Client(timeout=10.0, headers=headers) as http:
                     resp = http.get(f"{base_url}/api/v1/sessions/{session_id}")
                     session_info = resp.json()
                     console.print("[bold]Session Info:[/bold]")
@@ -537,7 +560,7 @@ def _attach_sync(
                 continue
 
             if user_input.lower() == "/tools":
-                with httpx.Client(timeout=10.0) as http:
+                with httpx.Client(timeout=10.0, headers=headers) as http:
                     resp = http.get(f"{base_url}/api/v1/tools")
                     tools_data = resp.json()
                     tools = tools_data.get("tools", [])
@@ -550,7 +573,7 @@ def _attach_sync(
                 continue
 
             if user_input.lower() == "/agents":
-                with httpx.Client(timeout=10.0) as http:
+                with httpx.Client(timeout=10.0, headers=headers) as http:
                     resp = http.get(f"{base_url}/api/v1/agents")
                     agents_data = resp.json()
                     agents = agents_data.get("agents", [])
@@ -563,7 +586,7 @@ def _attach_sync(
             # Send prompt to server with streaming
             try:
                 with (
-                    httpx.Client(timeout=300.0) as http,
+                    httpx.Client(timeout=300.0, headers=headers) as http,
                     http.stream(
                         "POST",
                         f"{base_url}/api/v1/sessions/{session_id}/prompt/stream",
@@ -623,8 +646,11 @@ def _attach_sync(
                                 )
                             )
                             try:
-                                with httpx.Client(timeout=5.0) as cancel_http:
-                                    cancel_http.post(f"{base_url}/api/v1/sessions/{session_id}/cancel")
+                                with httpx.Client(timeout=5.0, headers=headers) as cancel_http:
+                                    cancel_response = cancel_http.post(
+                                        f"{base_url}/api/v1/sessions/{session_id}/cancel"
+                                    )
+                                    cancel_response.raise_for_status()
                                     console.print("\n[yellow]Operation cancelled.[/yellow]")
                             except Exception as e:
                                 console.print(f"\n[red]Failed to send cancel request: {e}[/red]")

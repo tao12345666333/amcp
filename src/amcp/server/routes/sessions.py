@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ...llm import ProviderError
 from ..interaction import apply_interaction_result, route_server_interaction
 from ..models import (
     CancelRequest,
@@ -359,11 +360,14 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
             )
 
         except Exception as e:
+            provider = e if isinstance(e, ProviderError) else None
             yield (
                 json.dumps(
                     {
                         "type": "error",
                         "error": str(e),
+                        "code": f"PROVIDER_{provider.kind.value.upper()}" if provider else "AGENT_ERROR",
+                        "retryable": provider.retryable if provider else False,
                     }
                 )
                 + "\n"
@@ -434,6 +438,28 @@ async def get_session_history(
             "messages": history,
             "total": len(session.agent.conversation_history),
             "returned": len(history),
+        }
+    except SessionNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": f"Session not found: {session_id}", "code": "SESSION_NOT_FOUND"},
+        ) from None
+
+
+@router.get("/{session_id}/timeline")
+async def get_session_timeline(
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Get recent durable, metadata-only execution events for a session."""
+    session_manager = get_session_manager()
+    try:
+        session = await session_manager.get_session(session_id)
+        events = session.agent.get_timeline(limit=limit)
+        return {
+            "session_id": session_id,
+            "events": events,
+            "returned": len(events),
         }
     except SessionNotFoundError:
         raise HTTPException(

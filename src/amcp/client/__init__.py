@@ -83,6 +83,8 @@ class AMCPClient:
         timeout: float = 30.0,
         retry_attempts: int = 3,
         mode: ClientMode | None = None,
+        headers: dict[str, str] | None = None,
+        api_key: str | None = None,
     ):
         """Initialize the AMCP client.
 
@@ -91,11 +93,15 @@ class AMCPClient:
             timeout: Default timeout in seconds.
             retry_attempts: Number of retry attempts for failed requests.
             mode: Explicit mode selection. If None, auto-detects.
+            headers: Optional custom remote request headers.
+            api_key: Optional remote server API key.
         """
         self._url = url
         self._timeout = timeout
         self._retry_attempts = retry_attempts
         self._mode = mode or (ClientMode.REMOTE if url else ClientMode.EMBEDDED)
+        self._headers = headers
+        self._api_key = api_key
         self._client: BaseClient | None = None
         self._ws_client: WebSocketClient | None = None
 
@@ -167,6 +173,8 @@ class AMCPClient:
                 url=self._url,
                 timeout=self._timeout,
                 retry_attempts=self._retry_attempts,
+                headers=self._headers,
+                api_key=self._api_key,
             )
         else:
             # Embedded mode - import here to avoid circular imports
@@ -316,6 +324,8 @@ class AMCPClient:
         ws_client = WebSocketClient(
             url=self._url,
             session_id=session_id,
+            headers=self._headers,
+            api_key=self._api_key,
         )
         await ws_client.connect()
         return ws_client
