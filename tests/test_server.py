@@ -27,7 +27,7 @@ def server_config():
     """Create a test server configuration."""
     return ServerConfig(
         host="127.0.0.1",
-        port=4096,
+        port=8080,
         max_sessions=5,
     )
 

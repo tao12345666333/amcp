@@ -1,7 +1,7 @@
 # AMCP API Reference
 
 > **Version**: 1.0.0
-> **Base URL**: `http://localhost:4096/api/v1`
+> **Base URL**: `http://localhost:8080/api/v1`
 > **OpenAPI Spec**: `/openapi.json`
 
 This document provides comprehensive API documentation for the AMCP Server HTTP REST API, WebSocket API, and SSE event streams.
@@ -365,7 +365,7 @@ Same event format as global events, but filtered to the specific session.
 ### Connection
 
 ```
-ws://localhost:4096/ws?session_id={session_id}
+ws://localhost:8080/ws?session_id={session_id}
 ```
 
 ### Message Format
@@ -571,7 +571,7 @@ All errors follow this format:
 ```python
 from amcp.client import AMCPClient
 
-async with AMCPClient("http://localhost:4096") as client:
+async with AMCPClient("http://localhost:8080") as client:
     # Create session
     session = await client.create_session(cwd="/my/project")
 
@@ -588,7 +588,7 @@ async with AMCPClient("http://localhost:4096") as client:
 ```typescript
 import type { paths, Session } from './types/amcp-api';
 
-const response = await fetch('http://localhost:4096/api/v1/sessions', {
+const response = await fetch('http://localhost:8080/api/v1/sessions', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ cwd: '/my/project' })
@@ -600,7 +600,7 @@ const session: Session = await response.json();
 ### WebSocket (JavaScript)
 
 ```javascript
-const ws = new WebSocket('ws://localhost:4096/ws?session_id=my-session');
+const ws = new WebSocket('ws://localhost:8080/ws?session_id=my-session');
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);

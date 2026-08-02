@@ -209,7 +209,7 @@ Generate TypeScript types for web clients:
 
 ```bash
 # From running server
-python scripts/generate_types.py --server http://localhost:4096
+python scripts/generate_types.py --server http://localhost:8080
 
 # Manual generation
 python scripts/generate_types.py --manual

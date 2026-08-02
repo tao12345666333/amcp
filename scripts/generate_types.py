@@ -245,8 +245,8 @@ def main() -> int:
     parser.add_argument(
         "--server",
         "-s",
-        default="http://localhost:4096",
-        help="AMCP server URL (default: http://localhost:4096)",
+        default="http://localhost:8080",
+        help="AMCP server URL (default: http://localhost:8080)",
     )
     parser.add_argument(
         "--output",

@@ -201,7 +201,7 @@ def get_app() -> FastAPI:
 
 def run_server(
     host: str = "127.0.0.1",
-    port: int = 4096,
+    port: int = 8080,
     work_dir: str | None = None,
     reload: bool = False,
     auth: AuthConfig | None = None,

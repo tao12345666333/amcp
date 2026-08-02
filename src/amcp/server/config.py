@@ -49,7 +49,7 @@ class ServerConfig(BaseModel):
     """AMCP Server configuration."""
 
     host: str = "127.0.0.1"
-    port: int = 4096
+    port: int = 8080
     cors: CORSConfig = Field(default_factory=CORSConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
 

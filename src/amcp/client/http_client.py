@@ -27,7 +27,7 @@ class HTTPClient(BaseClient):
     Uses httpx for async HTTP requests with streaming support.
 
     Example:
-        async with HTTPClient("http://localhost:4096") as client:
+        async with HTTPClient("http://localhost:8080") as client:
             session = await client.create_session()
             async for chunk in await client.prompt(session["id"], "Hello"):
                 print(chunk.content)

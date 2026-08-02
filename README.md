@@ -119,10 +119,10 @@ amcp mcp tools --server custom
 amcp mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
 
 # HTTP/WebSocket server
-amcp serve                              # start on localhost:4096
+amcp serve                              # start on localhost:8080
 amcp serve --port 8080 --host 0.0.0.0   # requires [server.auth] configuration
 amcp serve --telegram                   # start Telegram bot alongside
-amcp attach http://localhost:4096       # connect to a running server
+amcp attach http://localhost:8080       # connect to a running server
 amcp attach https://server.example --api-key "$AMCP_SERVER_API_KEY"
 
 # Telegram bot
@@ -200,10 +200,10 @@ See [docs/skills-and-commands.md](docs/skills-and-commands.md) for details and [
 AMCP can run as an HTTP/WebSocket server for remote access:
 
 ```bash
-amcp serve                    # start on localhost:4096
+amcp serve                    # start on localhost:8080
 amcp serve --port 8080        # custom port
 amcp serve -w /path/to/project  # set working directory
-amcp attach http://localhost:4096  # connect from another terminal
+amcp attach http://localhost:8080  # connect from another terminal
 ```
 
 **API endpoints** (visit `/docs` for interactive Swagger UI):
@@ -380,7 +380,7 @@ response_ratio = 0.30          # reserve 30% of context for response
 ```toml
 [server]
 host = "127.0.0.1"
-port = 4096
+port = 8080
 
 [server.auth]
 enabled = false              # valid without a key only for loopback binds

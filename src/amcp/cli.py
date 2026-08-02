@@ -243,7 +243,7 @@ def serve_command(
     port: Annotated[
         int,
         typer.Option("--port", "-p", help="Port to listen on"),
-    ] = 4096,
+    ] = 8080,
     work_dir: Annotated[
         Path | None,
         typer.Option(
@@ -271,16 +271,16 @@ def serve_command(
     AMCP does not start in-process daemon background orchestration.
 
     Examples:
-        amcp serve                          # Start on localhost:4096
+        amcp serve                          # Start on localhost:8080
         amcp serve --port 8080             # Use custom port
         amcp serve --host 0.0.0.0          # Listen on all interfaces
         amcp serve -w /path/to/project     # Set default working directory
 
     API Documentation:
-        Once running, visit http://localhost:4096/docs for API docs.
+        Once running, visit http://localhost:8080/docs for API docs.
 
     Connect with:
-        amcp attach http://localhost:4096   # Connect CLI to running server
+        amcp attach http://localhost:8080   # Connect CLI to running server
 
     Deploy with Docker or systemd for production.
     """
@@ -359,7 +359,7 @@ def _start_telegram_bot(work_dir: Path | None) -> None:
 def attach_command(
     url: Annotated[
         str,
-        typer.Argument(help="URL of the AMCP server (e.g., http://localhost:4096)"),
+        typer.Argument(help="URL of the AMCP server (e.g., http://localhost:8080)"),
     ],
     session_id: Annotated[
         str | None,
@@ -392,9 +392,9 @@ def attach_command(
     or in another process.
 
     Examples:
-        amcp attach http://localhost:4096
-        amcp attach http://remote-server:4096 --session my-session
-        amcp attach http://localhost:4096 -w /path/to/project
+        amcp attach http://localhost:8080
+        amcp attach http://remote-server:8080 --session my-session
+        amcp attach http://localhost:8080 -w /path/to/project
     """
     # Use synchronous implementation to avoid event loop issues
     _attach_sync(url, session_id, work_dir, api_key)

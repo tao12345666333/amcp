@@ -8,10 +8,10 @@ This module provides a FastAPI-based server that allows:
 
 Example usage:
     # Start server
-    amcp serve --port 4096
+    amcp serve --port 8080
 
     # Connect from another terminal
-    amcp attach http://localhost:4096
+    amcp attach http://localhost:8080
 """
 
 from .app import create_app, get_app, run_server

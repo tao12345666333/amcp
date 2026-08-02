@@ -82,7 +82,7 @@ This document describes the Client-Server (C/S) architecture for AMCP, enabling 
 http://{host}:{port}/api/v1
 ```
 
-Default: `http://localhost:4096/api/v1`
+Default: `http://localhost:8080/api/v1`
 
 ### Authentication
 
@@ -407,7 +407,7 @@ class EventType(str, Enum):
    from amcp.client import AMCPClient
    
    # For Python applications (async)
-   async with AMCPClient("http://localhost:4096") as client:
+   async with AMCPClient("http://localhost:8080") as client:
        # Create session
        session = await client.create_session(cwd="/my/project")
        
@@ -423,7 +423,7 @@ class EventType(str, Enum):
    ```python
    from amcp.client import WebSocketClient
    
-   async with WebSocketClient("http://localhost:4096", session_id="my-session") as ws:
+   async with WebSocketClient("http://localhost:8080", session_id="my-session") as ws:
        await ws.send_prompt("Hello")
        async for chunk in ws.prompt_stream("What can you do?"):
            if chunk.done:
@@ -513,7 +513,7 @@ class EventType(str, Enum):
 5. ✅ TypeScript type generation
    - Created `scripts/generate_types.py`
    - Supports both npx-based and manual generation
-   - Usage: `python scripts/generate_types.py --server http://localhost:4096`
+   - Usage: `python scripts/generate_types.py --server http://localhost:8080`
 
 6. ✅ Comprehensive API documentation
    - `docs/api/README.md` - Full API reference with examples
@@ -628,14 +628,14 @@ src/amcp/
 
 ```bash
 # Start server in headless mode
-amcp serve [--port 4096] [--host 0.0.0.0]
+amcp serve [--port 8080] [--host 0.0.0.0]
 
 # Connect to running server
 amcp attach <url> [--session <id>]
 
 # Example usage
-amcp serve --port 4096
-amcp attach http://localhost:4096 --session my-session
+amcp serve --port 8080
+amcp attach http://localhost:8080 --session my-session
 ```
 
 ### Modified Commands
@@ -657,7 +657,7 @@ amcp --mode remote --server http://... "help me"  # Force remote
 # ~/.config/amcp/server.yaml
 server:
   host: "0.0.0.0"
-  port: 4096
+  port: 8080
   cors_origins:
     - "http://localhost:*"
     - "tauri://localhost"
@@ -671,7 +671,7 @@ server:
 ```yaml
 # ~/.config/amcp/config.yaml
 client:
-  default_server: "http://localhost:4096"
+  default_server: "http://localhost:8080"
   timeout: 30
   retry_attempts: 3
 ```

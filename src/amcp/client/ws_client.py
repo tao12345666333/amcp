@@ -27,7 +27,7 @@ class WebSocketClient:
     Provides bidirectional streaming with the server.
 
     Example:
-        async with WebSocketClient("http://localhost:4096", session_id="my-session") as ws:
+        async with WebSocketClient("http://localhost:8080", session_id="my-session") as ws:
             await ws.send_prompt("Hello")
             async for message in ws:
                 if message.done:
