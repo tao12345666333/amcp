@@ -23,6 +23,7 @@ DEFAULT_CACHE_TTL_DAYS = 7
 
 # Default context window for unknown models
 DEFAULT_CONTEXT_WINDOW = 200_000
+DEFAULT_OUTPUT_LIMIT = 8192
 
 
 @dataclass
@@ -34,7 +35,7 @@ class ModelInfo:
     family: str = ""
     provider_id: str = ""
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    output_limit: int = 8192
+    output_limit: int = DEFAULT_OUTPUT_LIMIT
     tool_call: bool = False
     reasoning: bool = False
     attachment: bool = False
@@ -58,7 +59,7 @@ class ModelInfo:
             family=data.get("family", ""),
             provider_id=provider_id,
             context_window=limit.get("context", DEFAULT_CONTEXT_WINDOW),
-            output_limit=limit.get("output", 8192),
+            output_limit=limit.get("output", DEFAULT_OUTPUT_LIMIT),
             tool_call=data.get("tool_call", False),
             reasoning=data.get("reasoning", False),
             attachment=data.get("attachment", False),
@@ -220,7 +221,7 @@ class ModelsDatabase:
                     family=mdata.get("family", ""),
                     provider_id=mdata.get("provider_id", pid),
                     context_window=mdata.get("context_window", DEFAULT_CONTEXT_WINDOW),
-                    output_limit=mdata.get("output_limit", 8192),
+                    output_limit=mdata.get("output_limit", DEFAULT_OUTPUT_LIMIT),
                     tool_call=mdata.get("tool_call", False),
                     reasoning=mdata.get("reasoning", False),
                     attachment=mdata.get("attachment", False),
@@ -444,3 +445,23 @@ def get_context_window_from_database(
     # Default
     logger.debug(f"Unknown model '{model_name}', using default context window")
     return DEFAULT_CONTEXT_WINDOW
+
+
+def get_output_limit_from_database(
+    model_name: str,
+    provider_id: str | None = None,
+) -> int:
+    """Get the maximum output size for a model from the cached model database."""
+    db = load_models_cache()
+
+    if db:
+        if provider_id:
+            model = db.get_model(provider_id, model_name)
+            if model and model.output_limit > 0:
+                return model.output_limit
+
+        model, _ = db.find_model_by_name(model_name)
+        if model and model.output_limit > 0:
+            return model.output_limit
+
+    return DEFAULT_OUTPUT_LIMIT

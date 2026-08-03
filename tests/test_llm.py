@@ -7,10 +7,11 @@ import httpx
 import pytest
 from any_llm.types.completion import Reasoning
 
-from amcp.config import ChatConfig
+from amcp.config import ChatConfig, ModelConfig
 from amcp.llm import (
     AnthropicClient,
     AnyLLMClient,
+    ContextOverflowError,
     LLMResponse,
     OpenAIClient,
     OpenAIResponsesClient,
@@ -145,6 +146,96 @@ class TestOpenAIClient:
     def test_client_creation(self):
         client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         assert client.model == "gpt-5.5"
+
+    def test_rejects_oversized_request_before_provider_dispatch(self):
+        client = OpenAIClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="tiny-model",
+            model_config=ModelConfig(context_window=100, output_limit=20),
+        )
+        provider_called = False
+
+        def completion(**_kwargs):
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider must not be called")
+
+        client.client.completion = completion
+
+        with pytest.raises(ContextOverflowError) as error:
+            client.chat([{"role": "user", "content": "oversized " * 200}])
+
+        assert error.value.kind == ProviderErrorKind.CONTEXT_OVERFLOW
+        assert error.value.input_limit == 80
+        assert error.value.output_reserve == 20
+        assert error.value.retryable is False
+        assert provider_called is False
+
+    def test_request_guard_includes_tool_schemas(self):
+        client = OpenAIClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="tiny-model",
+            model_config=ModelConfig(context_window=200, output_limit=20),
+        )
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "large_tool",
+                    "description": "schema " * 500,
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with pytest.raises(ContextOverflowError):
+            client.chat([{"role": "user", "content": "hello"}], tools=tools)
+
+    @pytest.mark.parametrize("output_parameter", ["max_completion_tokens", "max_output_tokens"])
+    def test_request_guard_reserves_native_output_limit_aliases(self, output_parameter):
+        client = OpenAIClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="tiny-model",
+            model_config=ModelConfig(context_window=100, output_limit=10),
+        )
+        client.client.completion = lambda **_kwargs: pytest.fail("provider must not be called")
+
+        with pytest.raises(ContextOverflowError) as error:
+            client.chat(
+                [{"role": "user", "content": "input " * 30}],
+                **{output_parameter: 90},
+            )
+
+        assert error.value.output_reserve == 90
+
+    def test_request_model_override_does_not_reuse_default_model_limits(self):
+        client = OpenAIClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="large-model",
+            model_config=ModelConfig(
+                model_id="large-model",
+                context_window=1_000_000,
+                output_limit=10,
+            ),
+        )
+        client.client.completion = lambda **_kwargs: pytest.fail("provider must not be called")
+
+        with (
+            patch("amcp.llm.get_model_context_window", return_value=100),
+            patch("amcp.llm.get_model_output_limit", return_value=20),
+            pytest.raises(ContextOverflowError) as error,
+        ):
+            client.chat(
+                [{"role": "user", "content": "oversized " * 200}],
+                model="small-model",
+            )
+
+        assert error.value.context_window == 100
+        assert error.value.output_reserve == 20
 
     def test_chat_preserves_tool_call_extra_content(self):
         client = OpenAIClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
@@ -305,6 +396,44 @@ class TestOpenAIResponsesClient:
     def test_client_creation(self):
         client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")
         assert client.model == "gpt-5.5"
+
+    def test_rejects_oversized_request_before_responses_dispatch(self):
+        client = OpenAIResponsesClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="tiny-model",
+            model_config=ModelConfig(context_window=100, output_limit=20),
+        )
+        provider_called = False
+
+        def responses(**_kwargs):
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider must not be called")
+
+        client.client.responses = responses
+
+        with pytest.raises(ContextOverflowError):
+            client.chat([{"role": "user", "content": "oversized " * 200}])
+
+        assert provider_called is False
+
+    def test_request_guard_reserves_native_max_output_tokens(self):
+        client = OpenAIResponsesClient(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="tiny-model",
+            model_config=ModelConfig(context_window=100, output_limit=10),
+        )
+        client.client.responses = lambda **_kwargs: pytest.fail("provider must not be called")
+
+        with pytest.raises(ContextOverflowError) as error:
+            client.chat(
+                [{"role": "user", "content": "input " * 30}],
+                max_output_tokens=90,
+            )
+
+        assert error.value.output_reserve == 90
 
     def test_responses_captures_provider_usage(self):
         client = OpenAIResponsesClient(base_url="https://api.openai.com/v1", api_key="test-key", model="gpt-5.5")

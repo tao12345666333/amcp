@@ -9,13 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached
+from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached, _is_tool_call_pairing_error
 from amcp.agent_spec import ResolvedAgentSpec
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig
+from amcp.config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig
 from amcp.hooks import HookDecision, HookOutput
-from amcp.llm import LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
+from amcp.llm import ContextOverflowError, LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
 from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
+from amcp.progressive.context_budget import ContextBudget, estimate_text_tokens
 from amcp.runtime import RuntimeClosedError, TurnStatus
 from amcp.session_state import SessionState
 from amcp.session_store import SessionConflictError, SessionLoadError, SessionSaveError
@@ -837,7 +838,7 @@ class TestAgentHistoryManagement:
                 ]
 
 
-class TestAgentContextBudget:
+class TestAgentContextFit:
     def test_fit_tool_context_synthesizes_missing_tool_results(self):
         messages = [
             {"role": "system", "content": "system"},
@@ -919,6 +920,162 @@ class TestAgentContextBudget:
         assert "trimmed for context budget" in fitted[2]["content"]
         assert fitted[4]["content"] == latest_content
         assert messages[2]["content"] == old_content
+
+    @pytest.mark.asyncio
+    async def test_context_overflow_is_not_retried_and_records_timeline_event(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        class OversizedClient:
+            async def achat(self, **_kwargs):
+                raise ContextOverflowError(
+                    input_tokens=120,
+                    input_limit=80,
+                    context_window=100,
+                    output_reserve=20,
+                )
+
+        events = []
+        agent.add_event_callback(lambda event_type, data: events.append((event_type, data)))
+
+        with pytest.raises(ContextOverflowError):
+            await agent._call_llm(
+                OversizedClient(),
+                messages=[{"role": "user", "content": "too large"}],
+                cfg=ChatConfig(max_retries=3),
+            )
+
+        overflow_events = [data for event_type, data in events if event_type == "context.overflow"]
+        assert len(overflow_events) == 1
+        assert overflow_events[0]["input_tokens"] == 120
+        assert overflow_events[0]["input_limit"] == 80
+        assert agent.current_request_llm_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_context_overflow_through_call_llm_has_no_self_referencing_cause(self, tmp_path):
+        """Verify the real _call_llm path does not produce a self-referencing __cause__.
+
+        classify_provider_error() returns the same ContextOverflowError object,
+        so ``raise provider_error from exc`` would set ``__cause__ = self``.
+        The bare ``raise`` guard must prevent this.
+        """
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        original_overflow = ContextOverflowError(
+            input_tokens=120,
+            input_limit=80,
+            context_window=100,
+            output_reserve=20,
+        )
+
+        class OversizedClient:
+            async def achat(self, **_kwargs):
+                raise original_overflow
+
+        with pytest.raises(ContextOverflowError) as caught:
+            await agent._call_llm(
+                OversizedClient(),
+                messages=[{"role": "user", "content": "too large"}],
+                cfg=ChatConfig(max_retries=3),
+            )
+
+        # The caught exception must be the same object (classify returns it unchanged)
+        assert caught.value is original_overflow
+        # Must NOT have a self-referencing __cause__
+        assert caught.value.__cause__ is not caught.value
+        # Must not be misidentified as a pairing error
+        assert _is_tool_call_pairing_error(caught.value) is False
+
+    @pytest.mark.asyncio
+    async def test_call_llm_preserves_existing_cause_on_non_retryable_provider_error(self, tmp_path):
+        """When a non-retryable ProviderError is freshly created by classify_provider_error,
+        ``raise provider_error from exc`` must link the original exception as __cause__.
+        """
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        class ProtocolErrorClient:
+            async def achat(self, **_kwargs):
+                raise ValueError("malformed response")
+
+        with pytest.raises(ProviderError) as caught:
+            await agent._call_llm(
+                ProtocolErrorClient(),
+                messages=[{"role": "user", "content": "hello"}],
+                cfg=ChatConfig(max_retries=0),
+            )
+
+        # classify_provider_error wraps ValueError into a new non-retryable ProviderError
+        assert caught.value.kind == ProviderErrorKind.PROTOCOL
+        assert caught.value.retryable is False
+        # The bare-raise guard must NOT apply here (provider_error is a fresh object),
+        # so the original exception is linked as __cause__
+        assert caught.value.__cause__ is not None
+        assert isinstance(caught.value.__cause__, ValueError)
+
+    def test_context_overflow_observer_records_auxiliary_client_failures(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        client = MagicMock()
+        agent._attach_context_overflow_observer(client)
+        callback = client.set_context_overflow_callback.call_args.args[0]
+        error = ContextOverflowError(
+            input_tokens=120,
+            input_limit=80,
+            context_window=100,
+            output_reserve=20,
+        )
+
+        callback(error)
+        callback(error)
+
+        timeline = agent._timeline_store.read(limit=10)
+        overflows = [event for event in timeline if event["type"] == "context.overflow"]
+        assert len(overflows) == 1
+        assert overflows[0]["data"]["input_limit"] == 80
+
+    def test_agent_model_override_drops_mismatched_model_metadata(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = AMCPConfig(
+                servers={},
+                chat=ChatConfig(
+                    model="large-model",
+                    model_config=ModelConfig(
+                        model_id="large-model",
+                        context_window=1_000_000,
+                        output_limit=10,
+                    ),
+                ),
+            )
+            spec = ResolvedAgentSpec(
+                name="test",
+                description="",
+                mode=AgentMode.PRIMARY,
+                system_prompt="",
+                tools=[],
+                exclude_tools=[],
+                max_steps=20,
+                model="small-model",
+                base_url="",
+            )
+            agent = Agent(agent_spec=spec)
+
+        resolved = agent._resolve_turn_config()
+
+        assert resolved.chat is not None
+        assert resolved.chat.model == "small-model"
+        assert resolved.chat.model_config is None
 
     def test_records_provider_usage_for_status(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
@@ -1063,6 +1220,67 @@ class TestAgentContextBudget:
                 agent = Agent()
                 text = "short text"
                 assert agent._trim_to_token_budget(text, 1000) == text
+
+    def test_trim_to_token_budget_honors_one_token_limit(self, tmp_path):
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent()
+
+        trimmed = agent._trim_to_token_budget("abcdefgh", 1)
+
+        assert estimate_text_tokens(trimmed) <= 1
+
+    def test_is_tool_call_pairing_error_handles_self_referencing_cause(self):
+        """Regression: _is_tool_call_pairing_error must not infinite-loop when
+        __cause__ points to the same object (self-reference from raise ... from exc).
+        """
+        from amcp.llm import ContextOverflowError
+
+        error = ContextOverflowError(
+            input_tokens=100,
+            input_limit=80,
+            context_window=100,
+            output_reserve=20,
+        )
+        error.__cause__ = error  # simulate the self-reference
+
+        # Must return quickly (not hang)
+        assert _is_tool_call_pairing_error(error) is False
+
+    def test_non_progressive_skills_share_one_budget(self, tmp_path):
+        cfg = AMCPConfig(
+            servers={},
+            chat=ChatConfig(model="test-model"),
+            context=ContextConfig(progressive_skills=False),
+        )
+        skill_manager = MagicMock()
+        skill_manager.get_all_skills.return_value = [object()]
+        skill_manager.build_skills_summary.return_value = "S" * 200
+        skill_manager.get_active_skills_content.return_value = "C" * 200
+        budget = ContextBudget(
+            total_available=100,
+            prompt_budget=30,
+            base_prompt=20,
+            tools=0,
+            skills=10,
+            memory=0,
+            rules=0,
+            buffer=0,
+        )
+        with (
+            patch("amcp.agent.Path.home") as mock_home,
+            patch("amcp.agent.load_config", return_value=cfg),
+            patch("amcp.agent.get_skill_manager", return_value=skill_manager),
+            patch.object(Agent, "_calculate_context_budget", return_value=budget),
+            patch.object(Agent, "_load_project_rules", return_value=""),
+            patch.object(Agent, "_get_memory_prompt_context", return_value=("", "")),
+        ):
+            mock_home.return_value = tmp_path
+            agent = Agent()
+            prompt = agent._get_system_prompt(tmp_path)
+
+        assert prompt.count("S") + prompt.count("C") <= budget.skills * 4 + 3
 
     def test_system_prompt_includes_persona_and_memory(self, tmp_path):
         """System prompt includes durable soul, identity, and memory."""

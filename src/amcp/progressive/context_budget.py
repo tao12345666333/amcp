@@ -53,8 +53,9 @@ class ContextBudgetManager:
         response_reserve = int(self.model_window * response_ratio)
 
         available_for_prompt = self.model_window - response_reserve - max(conversation_tokens, 0)
-        min_prompt_budget = int(max(getattr(self.config, "min_prompt_budget", 2500), 0))
-        prompt_budget = max(available_for_prompt, min_prompt_budget)
+        # ``min_prompt_budget`` is a compaction target, not permission to
+        # allocate tokens that do not exist in the model context window.
+        prompt_budget = max(available_for_prompt, 0)
 
         base_prompt = min(
             int(max(getattr(self.config, "base_prompt_max_tokens", 2200), 0)),

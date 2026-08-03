@@ -131,6 +131,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     async def provider_exception_handler(request: Request, exc: ProviderError) -> JSONResponse:
         """Return stable provider diagnostics without leaking SDK exception details."""
         status_by_kind = {
+            ProviderErrorKind.CONTEXT_OVERFLOW: 400,
             ProviderErrorKind.RATE_LIMIT: 503,
             ProviderErrorKind.TIMEOUT: 504,
         }
