@@ -177,4 +177,3 @@ The recommended architecture is:
 - **Skill-driven automation logic**
 - **External orchestrator-managed scheduling and lifecycle**
 - **AMCP as execution engine, not process supervisor**
-

@@ -30,7 +30,16 @@ AMCP/
 │       └── ci.yml         # GitHub Actions CI/CD
 │
 ├── docs/                  # Documentation
-│   └── PROJECT_STRUCTURE.md
+│   ├── QUICK_START.md     # Getting started guide
+│   ├── apply-patch.md     # Patch tool reference
+│   ├── hooks.md           # Hooks system reference
+│   ├── prompts.md         # Prompt system reference
+│   ├── skills-and-commands.md  # Skills and slash commands
+│   ├── PROJECT_STRUCTURE.md    # This file
+│   ├── api/               # API documentation
+│   ├── architecture/      # Architecture documents
+│   └── design/            # Internal design docs (development phases, feature specs)
+├── examples/              # Example agents, commands, hooks, skills, and plugins
 │
 ├── pyproject.toml         # Project metadata & dependencies
 ├── pytest.ini             # Pytest configuration

@@ -25,7 +25,7 @@ No new components or modules are required. The change integrates seamlessly with
 while True:
     try:
         user_input = console.input("[bold]You:[/bold] ").strip()
-        
+
         if user_input.lower() in ['exit', 'quit', 'q']:
             console.print("[green]Goodbye! 👋[/green]")
             break

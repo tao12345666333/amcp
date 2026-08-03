@@ -18,15 +18,15 @@
   - [ ] 3.1 Write property test for graceful exit on EOF
     - **Property 1: EOF signal triggers graceful exit**
     - **Validates: Requirements 1.1, 1.2**
-  
+
   - [ ] 3.2 Write property test for conversation history persistence
     - **Property 2: Conversation history persists on EOF exit**
     - **Validates: Requirements 1.3**
-  
+
   - [ ] 3.3 Write property test for cleanup equivalence
     - **Property 3: EOF exit performs same cleanup as explicit exit**
     - **Validates: Requirements 1.4**
-  
+
   - [ ] 3.4 Write property test for backward compatibility
     - **Property 4: Backward compatibility maintained**
     - **Validates: Requirements 1.5**
