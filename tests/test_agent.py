@@ -838,7 +838,7 @@ class TestAgentHistoryManagement:
                 ]
 
 
-class TestAgentContextBudget:
+class TestAgentContextFit:
     def test_fit_tool_context_synthesizes_missing_tool_results(self):
         messages = [
             {"role": "system", "content": "system"},
@@ -953,6 +953,73 @@ class TestAgentContextBudget:
         assert overflow_events[0]["input_limit"] == 80
         assert agent.current_request_llm_calls == 1
 
+    @pytest.mark.asyncio
+    async def test_context_overflow_through_call_llm_has_no_self_referencing_cause(self, tmp_path):
+        """Verify the real _call_llm path does not produce a self-referencing __cause__.
+
+        classify_provider_error() returns the same ContextOverflowError object,
+        so ``raise provider_error from exc`` would set ``__cause__ = self``.
+        The bare ``raise`` guard must prevent this.
+        """
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        original_overflow = ContextOverflowError(
+            input_tokens=120,
+            input_limit=80,
+            context_window=100,
+            output_reserve=20,
+        )
+
+        class OversizedClient:
+            async def achat(self, **_kwargs):
+                raise original_overflow
+
+        with pytest.raises(ContextOverflowError) as caught:
+            await agent._call_llm(
+                OversizedClient(),
+                messages=[{"role": "user", "content": "too large"}],
+                cfg=ChatConfig(max_retries=3),
+            )
+
+        # The caught exception must be the same object (classify returns it unchanged)
+        assert caught.value is original_overflow
+        # Must NOT have a self-referencing __cause__
+        assert caught.value.__cause__ is not caught.value
+        # Must not be misidentified as a pairing error
+        assert _is_tool_call_pairing_error(caught.value) is False
+
+    @pytest.mark.asyncio
+    async def test_call_llm_preserves_existing_cause_on_non_retryable_provider_error(self, tmp_path):
+        """When a non-retryable ProviderError is freshly created by classify_provider_error,
+        ``raise provider_error from exc`` must link the original exception as __cause__.
+        """
+        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+            mock_home.return_value = tmp_path
+            mock_load.return_value = MagicMock()
+            agent = Agent(session_id="test-session")
+
+        class ProtocolErrorClient:
+            async def achat(self, **_kwargs):
+                raise ValueError("malformed response")
+
+        with pytest.raises(ProviderError) as caught:
+            await agent._call_llm(
+                ProtocolErrorClient(),
+                messages=[{"role": "user", "content": "hello"}],
+                cfg=ChatConfig(max_retries=0),
+            )
+
+        # classify_provider_error wraps ValueError into a new non-retryable ProviderError
+        assert caught.value.kind == ProviderErrorKind.PROTOCOL
+        assert caught.value.retryable is False
+        # The bare-raise guard must NOT apply here (provider_error is a fresh object),
+        # so the original exception is linked as __cause__
+        assert caught.value.__cause__ is not None
+        assert isinstance(caught.value.__cause__, ValueError)
+
     def test_context_overflow_observer_records_auxiliary_client_failures(self, tmp_path):
         with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
@@ -981,6 +1048,7 @@ class TestAgentContextBudget:
         with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = AMCPConfig(
+                servers={},
                 chat=ChatConfig(
                     model="large-model",
                     model_config=ModelConfig(
@@ -988,7 +1056,7 @@ class TestAgentContextBudget:
                         context_window=1_000_000,
                         output_limit=10,
                     ),
-                )
+                ),
             )
             spec = ResolvedAgentSpec(
                 name="test",

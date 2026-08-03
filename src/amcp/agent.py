@@ -2029,7 +2029,9 @@ class Agent:
                 if isinstance(provider_error, ContextOverflowError):
                     if not provider_error.timeline_emitted:
                         self._record_context_overflow(provider_error)
-                    raise provider_error from exc if exc is not provider_error else None
+                    if provider_error is exc:
+                        raise
+                    raise provider_error from exc
                 if not provider_error.retryable or attempt >= max_retries:
                     self._emit_event(
                         "provider.error",
@@ -2040,7 +2042,9 @@ class Agent:
                             "attempt": attempt + 1,
                         },
                     )
-                    raise provider_error from exc if exc is not provider_error else None
+                    if provider_error is exc:
+                        raise
+                    raise provider_error from exc
 
                 retry_delay = provider_error.retry_after
                 if retry_delay is None:
