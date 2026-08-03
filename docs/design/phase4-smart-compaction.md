@@ -229,7 +229,7 @@ The `compact()` method returns a `CompactionResult` with details:
 messages, result = compactor.compact(messages)
 
 print(f"Original tokens: {result.original_tokens}")
-print(f"Compacted tokens: {result.compacted_tokens}")  
+print(f"Compacted tokens: {result.compacted_tokens}")
 print(f"Messages removed: {result.messages_removed}")
 print(f"Messages preserved: {result.messages_preserved}")
 print(f"Strategy used: {result.strategy_used.value}")

@@ -98,7 +98,8 @@ amcp/
 │   ├── server/          # HTTP/WebSocket server
 │   └── telegram/        # Telegram integration
 ├── tests/               # Pytest suite
-├── docs/                # Feature and integration documentation
+├── docs/                # User-facing docs (api/, architecture/, design/ for internal specs)
+├── examples/            # Example agents, commands, hooks, skills, and plugins
 ├── .github/workflows/   # CI and release workflows
 └── pyproject.toml       # Package metadata and tool configuration
 ```

@@ -270,10 +270,10 @@ from amcp import (
 async def main():
     # Create main agent
     main_agent = create_agent_by_name('coder')
-    
+
     # Run main task
     result = await main_agent.run("Analyze this codebase and suggest improvements")
-    
+
     # If main agent can delegate, create a subagent for exploration
     if main_agent.agent_spec.can_delegate:
         explorer = create_subagent(

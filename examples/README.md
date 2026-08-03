@@ -81,7 +81,7 @@ Slash commands provide quick shortcuts for common tasks. These examples demonstr
    ```bash
    # User-level commands
    cp examples/commands/*.toml ~/.config/amcp/commands/
-   
+
    # Project-level commands
    mkdir -p .amcp/commands
    cp examples/commands/*.toml .amcp/commands/
@@ -128,7 +128,7 @@ Skills provide specialized knowledge and behavior patterns to agents. These exam
    ```bash
    # User-level skills
    cp -r examples/skills/* ~/.config/amcp/skills/
-   
+
    # Project-level skills
    mkdir -p .amcp/skills
    cp -r examples/skills/* .amcp/skills/
@@ -322,7 +322,7 @@ To contribute new examples:
 ## 📖 Additional Resources
 
 - [AMCP Main Documentation](../README.md)
-- [Agent Capabilities](../docs/phase2-agent-capabilities.md)
+- [Agent Capabilities](../docs/design/phase2-agent-capabilities.md)
 - [Commands and Skills Guide](../docs/skills-and-commands.md)
 - [Hooks System Guide](../docs/hooks.md)
 - [Project Structure](../docs/PROJECT_STRUCTURE.md)
