@@ -668,3 +668,53 @@ class TestConflictStrategy:
         data = response.json()
         assert data["status"] == "complete"
         assert data["response"] == "reject strategy response"
+
+
+class TestServeEnvVars:
+    """Test serve command env-var and flag handling for host/port/api-key."""
+
+    def test_env_vars_recognized_in_help(self):
+        """Typer exposes AMCP_HOST/AMCP_PORT/AMCP_API_KEY as envvar options."""
+        from typer.testing import CliRunner
+
+        from amcp.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["serve", "--help"])
+        assert result.exit_code == 0
+        assert "AMCP_HOST" in result.output
+        assert "AMCP_PORT" in result.output
+        assert "AMCP_API_KEY" in result.output
+
+    def test_api_key_flag_enables_auth(self):
+        """--api-key CLI flag builds ServerConfig with auth enabled."""
+        from amcp.cli import serve_command
+        from amcp.server.config import AuthConfig
+
+        original_run = None
+
+        captured: dict = {}
+
+        def fake_run_server(**kwargs):
+            captured.update(kwargs)
+
+        import amcp.server
+
+        original_run = amcp.server.run_server
+        amcp.server.run_server = fake_run_server
+        try:
+            serve_command(
+                host="0.0.0.0",
+                port=8080,
+                api_key="flag-secret",
+                work_dir=None,
+                reload=False,
+                telegram_enabled=False,
+            )
+        finally:
+            amcp.server.run_server = original_run
+
+        auth = captured.get("auth")
+        assert auth is not None
+        assert auth.enabled is True
+        assert auth.api_key == "flag-secret"

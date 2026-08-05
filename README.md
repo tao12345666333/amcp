@@ -261,7 +261,6 @@ For interactive CLI usage inside a container without starting the server:
 docker run -it amcp --once "explain this codebase"
 ```
 
-
 ### Durable execution timeline
 
 AMCP stores a bounded per-session timeline beside each session snapshot. It records turn, tool,

@@ -25,6 +25,7 @@
 #
 # NOTE: A non-loopback --host (e.g. 0.0.0.0) requires authentication.
 #       Use --api-key, AMCP_API_KEY env var, or [server.auth] in config.toml.
+#       Custom ports via AMCP_PORT are picked up by the HEALTHCHECK automatically.
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -60,7 +61,7 @@ WORKDIR /workspace
 
 # Health check — hits the server /api/v1/health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:%s/api/v1/health' % os.environ.get('AMCP_PORT', '8080'))" || exit 1
 
 EXPOSE 8080
 
