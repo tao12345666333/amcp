@@ -1,7 +1,7 @@
 # AMCP Client-Server Architecture Design
 
-> **Version**: 1.0.0  
-> **Created**: 2026-01-07  
+> **Version**: 1.0.0
+> **Created**: 2026-01-07
 > **Status**: Draft
 
 ## Overview
@@ -291,18 +291,18 @@ class EventType(str, Enum):
     SESSION_CREATED = "session.created"
     SESSION_DELETED = "session.deleted"
     SESSION_STATUS_CHANGED = "session.status_changed"
-    
+
     # Message events
     MESSAGE_START = "message.start"
     MESSAGE_CHUNK = "message.chunk"
     MESSAGE_COMPLETE = "message.complete"
     MESSAGE_ERROR = "message.error"
-    
+
     # Tool events
     TOOL_CALL_START = "tool.call_start"
     TOOL_CALL_COMPLETE = "tool.call_complete"
     TOOL_CALL_ERROR = "tool.call_error"
-    
+
     # Agent events
     AGENT_THINKING = "agent.thinking"
     AGENT_IDLE = "agent.idle"
@@ -405,16 +405,16 @@ class EventType(str, Enum):
 2. ✅ Implemented `AMCPClient` class
    ```python
    from amcp.client import AMCPClient
-   
+
    # For Python applications (async)
    async with AMCPClient("http://localhost:8080") as client:
        # Create session
        session = await client.create_session(cwd="/my/project")
-       
+
        # Send prompt and stream response
        async for chunk in await session.prompt_stream("Help me refactor this"):
            print(chunk.content, end="")
-       
+
        # Get full response
        response = await session.prompt_full("What did you do?")
    ```
@@ -422,7 +422,7 @@ class EventType(str, Enum):
 3. ✅ Implemented WebSocket client for real-time interaction
    ```python
    from amcp.client import WebSocketClient
-   
+
    async with WebSocketClient("http://localhost:8080", session_id="my-session") as ws:
        await ws.send_prompt("Hello")
        async for chunk in ws.prompt_stream("What can you do?"):
@@ -442,7 +442,7 @@ class EventType(str, Enum):
    ```python
    # Auto-detect mode
    client = AMCPClient.auto()  # Uses embedded if no server
-   
+
    # Or explicit
    client = AMCPClient.embedded()  # Direct agent, no server needed
    client = AMCPClient.remote("http://...")  # Via server
@@ -497,14 +497,14 @@ class EventType(str, Enum):
 4. ✅ ProtocolAdapter class with unified interface
    ```python
    from amcp.protocol import get_protocol_adapter
-   
+
    adapter = get_protocol_adapter()
 
    # Create an event and convert it to WebSocket/SSE
    server_event = adapter.create_message_event(session_id, content)
    ws_message = adapter.to_ws_message(server_event)
    sse_data = adapter.to_sse_data(server_event)
-   
+
    # Create events
    event = adapter.create_message_event(session_id, content, done=False)
    event = adapter.create_tool_start_event(session_id, tool_name, args)
@@ -545,15 +545,11 @@ class EventType(str, Enum):
 
 **Tasks**:
 1. 🔲 Add API key authentication
-   ```yaml
-   # ~/.config/amcp/server.yaml
-   server:
-     auth:
-       enabled: true
-       api_keys:
-         - name: "my-app"
-           key: "amcp_xxxxxxxxxxxx"
-           permissions: ["sessions:*", "tools:read"]
+   ```toml
+   # ~/.config/amcp/config.toml
+   [server.auth]
+   enabled = true
+   api_key = "amcp_xxxxxxxxxxxx"
    ```
 
 2. 🔲 Add JWT token support for web clients
@@ -653,27 +649,29 @@ amcp --mode remote --server http://... "help me"  # Force remote
 
 ### Server Configuration
 
-```yaml
-# ~/.config/amcp/server.yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-  cors_origins:
-    - "http://localhost:*"
-    - "tauri://localhost"
-  auth:
-    enabled: false
-    # Future: API key support
+```toml
+# ~/.config/amcp/config.toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[server.cors]
+enabled = true
+allow_origins = ["http://localhost:*", "http://127.0.0.1:*", "tauri://localhost"]
+
+[server.auth]
+enabled = false
+api_key = ""
 ```
 
 ### Client Configuration
 
-```yaml
-# ~/.config/amcp/config.yaml
-client:
-  default_server: "http://localhost:8080"
-  timeout: 30
-  retry_attempts: 3
+```toml
+# ~/.config/amcp/config.toml
+[client]
+default_server = "http://localhost:8080"
+timeout = 30
+retry_attempts = 3
 ```
 
 ## Security Considerations
@@ -688,7 +686,7 @@ client:
 ### Backward Compatibility
 
 - All existing `amcp` commands work unchanged
-- Configuration files are backward compatible
+- Runtime configuration is loaded from `~/.config/amcp/config.toml`
 
 ### Forward Compatibility
 

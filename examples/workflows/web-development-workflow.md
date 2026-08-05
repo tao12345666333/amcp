@@ -135,7 +135,7 @@ Web Developer: I'll help you create a secure authentication system. Let me start
 
 Web Developer: I've created the basic authentication system. Now I'll delegate a security review to ensure everything meets security standards.
 
-Web Developer: /delegate security-auditor "Please review the authentication system I've created and perform a comprehensive security audit..."
+Web Developer uses the `task` tool with `agent_type="explorer"` and `description="Please review the authentication system I've created and perform a comprehensive security audit..."`
 
 Security Auditor: I'll perform a thorough security audit of your authentication system...
 
@@ -143,7 +143,7 @@ Security Auditor: I'll perform a thorough security audit of your authentication 
 
 Web Developer: Thank you for the security review. I'll implement the recommended improvements and then create comprehensive documentation.
 
-Web Developer: /delegate documentation-writer "Please create comprehensive documentation for the authentication system..."
+Web Developer uses the `task` tool with `agent_type="focused_coder"` and `description="Please create comprehensive documentation for the authentication system..."`
 
 Documentation Writer: I'll create comprehensive documentation for your authentication system...
 
@@ -181,5 +181,7 @@ Web Developer: Perfect! I've now integrated the security improvements and docume
    ```
 
 3. **Submit your request and let the agents collaborate!**
+
+   Delegation happens through the built-in `task` tool when the active agent has `can_delegate: true`.
 
 This workflow demonstrates the power of AMCP's multi-agent system for complex development tasks.

@@ -258,7 +258,7 @@ exit 0
 The `matcher` field supports:
 - Exact match: `"write_file"` matches only `write_file`
 - Regex patterns: `"write_file|apply_patch"` matches both
-- Wildcards: `"mcp\..*"` matches all MCP tools
+- Regex wildcards: `"mcp__.*"` matches all MCP tools, whose exposed names use the `mcp__server__tool` format
 - All tools: `"*"` or `""` matches everything
 
 ## Programmatic Usage

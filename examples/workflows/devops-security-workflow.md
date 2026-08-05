@@ -256,7 +256,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
@@ -264,7 +264,7 @@ jobs:
         scan-ref: '.'
         format: 'sarif'
         output: 'trivy-results.sarif'
-    
+
     - name: Upload Trivy scan results
       uses: github/codeql-action/upload-sarif@v2
       with:
@@ -275,32 +275,32 @@ jobs:
     needs: security-scan
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest pytest-cov bandit safety
-    
+
     - name: Run security tests
       run: |
         bandit -r . -f json -o bandit-report.json
         safety check --json --output safety-report.json
-    
+
     - name: Run unit tests
       run: |
         pytest --cov=. --cov-report=xml tests/
-    
+
     - name: Build Docker image
       run: |
         docker build -t myapp:${{ github.sha }} .
         docker tag myapp:${{ github.sha }} myapp:latest
-    
+
     - name: Run container security scan
       run: |
         docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
@@ -312,17 +312,17 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Configure kubectl
       run: |
         echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
         export KUBECONFIG=kubeconfig
-    
+
     - name: Deploy to Kubernetes
       run: |
         kubectl set image deployment/secure-app app=myapp:${{ github.sha }}
         kubectl rollout status deployment/secure-app
-    
+
     - name: Run post-deployment security check
       run: |
         kubectl get pods -l app=secure-app
@@ -340,7 +340,7 @@ DevOps Engineer: I'll help you create a secure, production-ready CI/CD pipeline 
 
 DevOps Engineer: I've created the basic infrastructure with security considerations. Now I'll delegate a comprehensive security audit to ensure everything meets security standards.
 
-DevOps Engineer: /delegate security-auditor "Please perform a comprehensive security audit of the CI/CD pipeline and infrastructure I've designed..."
+DevOps Engineer uses the `task` tool with `agent_type="explorer"` and `description="Please perform a comprehensive security audit of the CI/CD pipeline and infrastructure I've designed..."`
 
 Security Auditor: I'll perform a thorough security audit of your infrastructure and pipeline.
 
@@ -350,7 +350,7 @@ DevOps Engineer: Thank you for the security recommendations. I'll implement all 
 
 [DevOps Engineer implements security hardening]
 
-DevOps Engineer: /delegate documentation-writer "Please create comprehensive documentation for the secure CI/CD pipeline and infrastructure..."
+DevOps Engineer uses the `task` tool with `agent_type="focused_coder"` and `description="Please create comprehensive documentation for the secure CI/CD pipeline and infrastructure..."`
 
 Documentation Writer: I'll create thorough documentation for your secure infrastructure.
 
@@ -411,5 +411,7 @@ DevOps Engineer: Perfect! Your secure CI/CD pipeline is now complete with all se
    ```
 
 3. **Provide your application requirements and security needs**
+
+   Delegation happens through the built-in `task` tool when the active agent has `can_delegate: true`.
 
 This workflow demonstrates how AMCP can handle complex DevOps projects with comprehensive security integration through specialized agent collaboration.
