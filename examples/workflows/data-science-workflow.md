@@ -140,11 +140,11 @@ plt.show()
 def preprocess_data(df):
     # Handle missing values
     df.fillna(df.mean(), inplace=True)
-    
+
     # Encode categorical variables
     categorical_cols = df.select_dtypes(include=['object']).columns
     df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
-    
+
     return df
 
 # Train model
@@ -194,15 +194,15 @@ async def predict_churn(customer_data: CustomerData):
     try:
         # Convert to DataFrame
         df = pd.DataFrame([customer_data.dict()])
-        
+
         # Preprocess
         df_processed = preprocessor.transform(df)
-        
+
         # Predict
         churn_prob = model.predict_proba(df_processed)[0][1]
         churn_pred = churn_prob > 0.5
         confidence = max(churn_prob, 1 - churn_prob)
-        
+
         return PredictionResponse(
             churn_probability=float(churn_prob),
             churn_prediction=bool(churn_pred),
@@ -233,7 +233,7 @@ Data Scientist: I'll help you build a comprehensive customer churn prediction mo
 Data Scientist: In this hypothetical scenario, the Random Forest model has an illustrative 85%
 accuracy. Now I'll delegate the optimization and deployment tasks to our AI Engineer.
 
-Data Scientist: /delegate ai-engineer "Please help me optimize this churn prediction model for production deployment..."
+Data Scientist uses the `task` tool with `agent_type="focused_coder"` and `description="Please help me optimize this churn prediction model for production deployment..."`
 
 AI Engineer: I'll optimize your model for production and create the necessary deployment infrastructure.
 
@@ -241,7 +241,7 @@ AI Engineer: I'll optimize your model for production and create the necessary de
 
 Data Scientist: Excellent! Now I'll create comprehensive documentation for the project.
 
-Data Scientist: /delegate documentation-writer "Please create comprehensive documentation for the customer churn prediction project..."
+Data Scientist uses the `task` tool with `agent_type="focused_coder"` and `description="Please create comprehensive documentation for the customer churn prediction project..."`
 
 Documentation Writer: I'll create thorough documentation for your churn prediction project.
 
@@ -281,10 +281,11 @@ Data Scientist: Perfect! Your customer churn prediction system is now complete w
 
 2. **Ensure supporting agents are available:**
    ```bash
-   cp examples/agents/ai-engineer.yaml ~/.config/amcp/agents/
    cp examples/agents/documentation-writer.yaml ~/.config/amcp/agents/
    ```
 
 3. **Provide your dataset and requirements**
+
+   Delegation happens through the built-in `task` tool when the active agent has `can_delegate: true`.
 
 This workflow showcases how AMCP can handle complex data science projects with specialized agent collaboration.

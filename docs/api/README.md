@@ -637,14 +637,12 @@ ws.send(JSON.stringify({
 
 Cross-Origin Resource Sharing is enabled by default for local development:
 
-```yaml
-cors:
-  enabled: true
-  allow_origins:
-    - "http://localhost:*"
-    - "tauri://localhost"
-  allow_methods: ["GET", "POST", "PUT", "DELETE"]
-  allow_headers: ["*"]
+```toml
+[server.cors]
+enabled = true
+allow_origins = ["http://localhost:*", "http://127.0.0.1:*", "tauri://localhost"]
+allow_methods = ["*"]
+allow_headers = ["*"]
 ```
 
-To customize, edit `~/.config/amcp/server.yaml`.
+To customize, edit `~/.config/amcp/config.toml`.
