@@ -12,8 +12,6 @@ from amcp.task import (
     TaskPriority,
     TaskState,
     TaskTool,
-    get_task_manager,
-    reset_task_manager,
 )
 
 
@@ -21,14 +19,6 @@ from amcp.task import (
 def task_manager():
     """Create a fresh task manager for each test."""
     return TaskManager(max_concurrent=2)
-
-
-@pytest.fixture(autouse=True)
-def reset_global_manager():
-    """Reset global task manager before and after each test."""
-    reset_task_manager()
-    yield
-    reset_task_manager()
 
 
 class TestTaskState:
@@ -398,9 +388,9 @@ class TestTaskTool:
     """Tests for TaskTool class."""
 
     @pytest.fixture
-    def tool(self):
+    def tool(self, task_manager):
         """Create a TaskTool instance."""
-        return TaskTool(session_id="test-session")
+        return TaskTool(manager=task_manager, session_id="test-session")
 
     @pytest.mark.asyncio
     async def test_create_action(self, tool):
@@ -478,10 +468,26 @@ class TestTaskTool:
     async def test_list_empty(self, tool):
         """Test list action with no tasks."""
         # Use a different session so it's empty
-        tool2 = TaskTool(session_id="empty-session")
+        tool2 = TaskTool(manager=tool._manager, session_id="empty-session")
         result = await tool2.execute(action="list")
         # Should not error, may show "No tasks" or empty list
         assert result is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action", ["status", "wait", "cancel"])
+    async def test_task_actions_reject_other_session(self, tool, action):
+        """Task IDs cannot be used to inspect or control another session's work."""
+        task = await tool._manager.create_task(
+            "Other session task",
+            "explorer",
+            parent_session_id="other-session",
+            auto_start=False,
+        )
+
+        result = await tool.execute(action=action, task_id=task.id)
+
+        assert result == f"Task not found: {task.id}"
+        assert task.state == TaskState.PENDING
 
     @pytest.mark.asyncio
     async def test_unknown_action(self, tool):
@@ -494,20 +500,3 @@ class TestTaskTool:
         """Test cancel action without task_id."""
         result = await tool.execute(action="cancel")
         assert "Error" in result
-
-
-class TestGlobalTaskManager:
-    """Tests for global task manager singleton."""
-
-    def test_singleton(self):
-        """Test that get_task_manager returns a singleton."""
-        manager1 = get_task_manager()
-        manager2 = get_task_manager()
-        assert manager1 is manager2
-
-    def test_reset(self):
-        """Test resetting global task manager."""
-        manager1 = get_task_manager()
-        reset_task_manager()
-        manager2 = get_task_manager()
-        assert manager1 is not manager2

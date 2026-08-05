@@ -21,9 +21,9 @@ Task States:
 - CANCELLED: Task was cancelled
 
 Example:
-    from amcp.task import TaskManager, get_task_manager
+    from amcp.task import TaskManager
 
-    manager = get_task_manager()
+    manager = TaskManager()
 
     # Create a task
     task = await manager.create_task(
@@ -687,28 +687,6 @@ class TaskManager:
         }
 
 
-# Global task manager singleton
-_task_manager: TaskManager | None = None
-
-
-def get_task_manager() -> TaskManager:
-    """Get the global task manager instance.
-
-    Returns:
-        Global TaskManager singleton
-    """
-    global _task_manager
-    if _task_manager is None:
-        _task_manager = TaskManager()
-    return _task_manager
-
-
-def reset_task_manager() -> None:
-    """Reset the global task manager (mainly for testing)."""
-    global _task_manager
-    _task_manager = None
-
-
 # TaskTool implementation for agent use
 
 
@@ -781,16 +759,22 @@ Example:
         "required": ["action"],
     }
 
-    def __init__(self, session_id: str | None = None, work_dir: Path | None = None):
+    def __init__(
+        self,
+        manager: TaskManager,
+        session_id: str | None = None,
+        work_dir: Path | None = None,
+    ):
         """Initialize TaskTool.
 
         Args:
+            manager: Task manager owned by the parent agent runtime
             session_id: Session ID for tracking parent tasks
             work_dir: Trusted working directory inherited from the parent agent
         """
         self.session_id = session_id
         self.work_dir = work_dir.expanduser().resolve() if work_dir else None
-        self._manager = get_task_manager()
+        self._manager = manager
 
     async def execute(self, **kwargs: Any) -> str:
         """Execute the task tool.
@@ -850,7 +834,7 @@ Use {{"action": "status", "task_id": "{task.id}"}} to check status."""
         if not task_id:
             return "Error: 'task_id' is required for status action"
 
-        task = self._manager.get_task(task_id)
+        task = self._get_owned_task(task_id)
         if task is None:
             return f"Task not found: {task_id}"
 
@@ -887,6 +871,9 @@ Use {{"action": "status", "task_id": "{task.id}"}} to check status."""
         if not task_id:
             return "Error: 'task_id' is required for wait action"
 
+        if self._get_owned_task(task_id) is None:
+            return f"Task not found: {task_id}"
+
         timeout = kwargs.get("timeout")
 
         try:
@@ -917,6 +904,9 @@ Result:
         if not task_id:
             return "Error: 'task_id' is required for cancel action"
 
+        if self._get_owned_task(task_id) is None:
+            return f"Task not found: {task_id}"
+
         success = await self._manager.cancel_task(task_id)
         if success:
             return f"Task {task_id} cancelled successfully"
@@ -943,10 +933,17 @@ Result:
             lines.append(f"\n{state_emoji} {task.id}: {task.description[:50]}...")
             lines.append(f"   State: {task.state.value} | Agent: {task.agent_type}")
 
-        stats = self._manager.get_stats()
-        lines.append(f"\nTotal: {stats['total_tasks']} | Running: {stats['by_state']['running']}")
+        running = sum(task.state == TaskState.RUNNING for task in tasks)
+        lines.append(f"\nTotal: {len(tasks)} | Running: {running}")
 
         return "\n".join(lines)
+
+    def _get_owned_task(self, task_id: str) -> Task | None:
+        """Return a task only when it belongs to this tool's parent session."""
+        task = self._manager.get_task(task_id)
+        if task is None or task.parent_session_id != self.session_id:
+            return None
+        return task
 
 
 def get_task_tool_schema() -> dict[str, Any]:

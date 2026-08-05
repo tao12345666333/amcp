@@ -36,7 +36,6 @@ __all__ = [
     "TaskState",
     "TaskPriority",
     "TaskTool",
-    "get_task_manager",
     # Smart compaction
     "SmartCompactor",
     "CompactionConfig",
@@ -187,5 +186,4 @@ from .task import (
     TaskPriority,
     TaskState,
     TaskTool,
-    get_task_manager,
 )

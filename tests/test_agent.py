@@ -676,9 +676,9 @@ class TestAgentHistoryManagement:
         agent._pending_memory_review_tasks.add(task)
         await review_started.wait()
         task_manager = SimpleNamespace(cancel_for_session=AsyncMock(return_value=0))
-        with patch("amcp.task.get_task_manager", return_value=task_manager):
-            await agent.close()
-            await agent.close()
+        agent._task_manager = task_manager
+        await agent.close()
+        await agent.close()
 
         assert review_cancelled.is_set()
         task_manager.cancel_for_session.assert_awaited_once_with(agent.session_id)
@@ -706,8 +706,8 @@ class TestAgentHistoryManagement:
         agent._pending_memory_review_tasks.add(task)
         await review_started.wait()
         task_manager = SimpleNamespace(cancel_for_session=AsyncMock(return_value=0))
-        with patch("amcp.task.get_task_manager", return_value=task_manager):
-            result = await agent.cancel(clear_queue=True)
+        agent._task_manager = task_manager
+        result = await agent.cancel(clear_queue=True)
 
         assert result.active_cancelled is False
         assert review_cancelled.is_set()

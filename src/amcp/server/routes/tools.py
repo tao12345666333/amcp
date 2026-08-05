@@ -54,8 +54,9 @@ async def get_tool(tool_name: str) -> ToolInfo:
 
     tool_registry = get_tool_registry()
     tool_func = tool_registry.get_tool(tool_name)
+    tool_spec = tool_registry.get_tool_spec(tool_name)
 
-    if tool_func is None:
+    if tool_spec is None:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Tool not found: {tool_name}", "code": "TOOL_NOT_FOUND"},
@@ -65,11 +66,13 @@ async def get_tool(tool_name: str) -> ToolInfo:
     description = ""
     if tool_func and hasattr(tool_func, "__doc__") and tool_func.__doc__:
         description = tool_func.__doc__.split("\n")[0]
+    elif tool_spec:
+        description = tool_spec.get("function", {}).get("description", "")
 
     return ToolInfo(
         name=tool_name,
         description=description,
-        parameters={},
+        parameters=tool_spec.get("function", {}).get("parameters", {}),
         source="builtin",
     )
 

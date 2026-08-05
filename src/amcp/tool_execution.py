@@ -14,6 +14,7 @@ from typing import Any
 from .config import AMCPConfig
 from .mcp_client import call_mcp_tool
 from .mcp_naming import is_mcp_tool_name
+from .task import TaskManager, TaskTool
 from .tools import ToolRegistry, ToolResult
 
 
@@ -169,6 +170,7 @@ class ToolExecutor:
         registry: ToolRegistry,
         mcp_registry: dict[str, tuple[str, str]],
         config: AMCPConfig,
+        task_manager: TaskManager | None = None,
     ):
         self.context = context
         self.capability = capability
@@ -176,6 +178,7 @@ class ToolExecutor:
         self.registry = registry
         self.mcp_registry = mcp_registry
         self.config = config
+        self.task_manager = task_manager
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Validate permission and execute one tool asynchronously."""
@@ -187,9 +190,10 @@ class ToolExecutor:
         if is_mcp_tool_name(name):
             return await self._execute_mcp(name, args)
         if name == "task":
-            from .task import TaskTool
-
+            if self.task_manager is None:
+                return ToolResult(success=False, content="", error="Task manager is not configured")
             content = await TaskTool(
+                manager=self.task_manager,
                 session_id=self.context.session_id,
                 work_dir=self.context.workspace_root,
             ).execute(**args)

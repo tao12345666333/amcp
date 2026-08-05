@@ -175,6 +175,8 @@ class Agent:
     """
 
     def __init__(self, agent_spec: ResolvedAgentSpec | None = None, session_id: str | None = None):
+        from .task import TaskManager
+
         self.agent_spec = agent_spec or get_default_agent_spec()
         self.console = Console()
         self.tool_registry = ToolRegistry()
@@ -184,6 +186,7 @@ class Agent:
 
         # Conversation history management
         self.session_id = session_id or self._generate_session_id()
+        self._task_manager = TaskManager()
         self.conversation_history: list[dict[str, Any]] = []
         self._session_store = SessionStore(
             Path.home() / ".config" / "amcp" / "sessions",
@@ -1305,9 +1308,7 @@ class Agent:
 
     async def _cancel_delegated_tasks(self) -> int:
         """Cancel and await delegated tasks owned by this Agent session."""
-        from .task import get_task_manager
-
-        return await get_task_manager().cancel_for_session(self.session_id)
+        return await self._task_manager.cancel_for_session(self.session_id)
 
     async def _cancel_memory_review_tasks(self) -> None:
         """Cancel and await pending background memory reviews."""
@@ -1375,9 +1376,9 @@ class Agent:
         for tool_name in tool_registry.list_tools():
             if not capability.allows(tool_name):
                 continue
-            tool = tool_registry.get_tool(tool_name)
-            if tool and hasattr(tool, "get_spec"):
-                tools.append(tool.get_spec())
+            tool_spec = tool_registry.get_tool_spec(tool_name)
+            if tool_spec:
+                tools.append(tool_spec)
 
         # Load MCP tools
         cfg = cfg or self._resolve_turn_config()
@@ -1590,6 +1591,7 @@ class Agent:
             registry=get_tool_registry(),
             mcp_registry=tool_registry,
             config=cfg,
+            task_manager=self._task_manager,
         )
         compaction_config = CompactionConfig()
         context_window = get_model_context_window(model, model_config=model_config)

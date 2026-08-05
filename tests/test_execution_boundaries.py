@@ -14,6 +14,7 @@ from amcp.agent import Agent
 from amcp.agent_spec import ResolvedAgentSpec
 from amcp.config import AMCPConfig, ContextConfig, Server
 from amcp.multi_agent import AgentMode
+from amcp.task import TaskManager
 from amcp.tool_execution import (
     ToolCallProtocolError,
     ToolCapability,
@@ -176,11 +177,13 @@ async def test_task_tool_inherits_trusted_runtime_workspace(tmp_path):
     task_tool = MagicMock()
     task_tool.execute = AsyncMock(return_value="created")
 
-    with patch("amcp.task.TaskTool", return_value=task_tool) as task_tool_class:
+    with patch("amcp.tool_execution.TaskTool", return_value=task_tool) as task_tool_class:
+        executor.task_manager = TaskManager()
         result = await executor.execute("task", {"action": "create", "description": "inspect"})
 
     assert result.success
     task_tool_class.assert_called_once_with(
+        manager=executor.task_manager,
         session_id="session",
         work_dir=tmp_path.resolve(),
     )
@@ -304,7 +307,7 @@ async def test_empty_allowlist_and_disabled_delegation_cannot_execute(tmp_path):
         ),
         (
             _spec(tools=None, can_delegate=False),
-            registry.get_tool("task").get_spec(),
+            registry.get_tool_spec("task"),
             {
                 "id": "task",
                 "name": "task",

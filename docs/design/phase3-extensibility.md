@@ -274,9 +274,9 @@ Total: 3 | Running: 1
 ### Programmatic Usage
 
 ```python
-from amcp import get_task_manager, TaskPriority
+from amcp import TaskManager, TaskPriority
 
-manager = get_task_manager()
+manager = TaskManager()
 
 # Create tasks
 task1 = await manager.create_task(
