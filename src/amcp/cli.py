@@ -238,12 +238,30 @@ def telegram_setup() -> None:
 def serve_command(
     host: Annotated[
         str,
-        typer.Option("--host", "-H", help="Host to bind the server to"),
+        typer.Option(
+            "--host",
+            "-H",
+            envvar="AMCP_HOST",
+            help="Host to bind the server to (env: AMCP_HOST)",
+        ),
     ] = "127.0.0.1",
     port: Annotated[
         int,
-        typer.Option("--port", "-p", help="Port to listen on"),
+        typer.Option(
+            "--port",
+            "-p",
+            envvar="AMCP_PORT",
+            help="Port to listen on (env: AMCP_PORT)",
+        ),
     ] = 8080,
+    api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--api-key",
+            envvar="AMCP_API_KEY",
+            help="Enable server authentication with this API key (env: AMCP_API_KEY)",
+        ),
+    ] = None,
     work_dir: Annotated[
         Path | None,
         typer.Option(
@@ -273,8 +291,9 @@ def serve_command(
     Examples:
         amcp serve                          # Start on localhost:8080
         amcp serve --port 8080             # Use custom port
-        amcp serve --host 0.0.0.0          # Listen on all interfaces
+        amcp serve --host 0.0.0.0 --api-key s3cret  # Listen on all interfaces
         amcp serve -w /path/to/project     # Set default working directory
+        AMCP_HOST=0.0.0.0 AMCP_API_KEY=... amcp serve  # Same via env vars
 
     API Documentation:
         Once running, visit http://localhost:8080/docs for API docs.
@@ -289,14 +308,15 @@ def serve_command(
 
     cfg = load_config()
     configured_auth = cfg.server.auth if cfg.server else None
-    runtime_auth = (
-        RuntimeAuthConfig(
+    if api_key:
+        runtime_auth = RuntimeAuthConfig(enabled=True, api_key=api_key)
+    elif configured_auth:
+        runtime_auth = RuntimeAuthConfig(
             enabled=configured_auth.enabled,
             api_key=configured_auth.api_key,
         )
-        if configured_auth
-        else RuntimeAuthConfig()
-    )
+    else:
+        runtime_auth = RuntimeAuthConfig()
 
     if telegram_enabled:
         _start_telegram_bot(work_dir)
