@@ -230,6 +230,31 @@ Authenticated CLI clients can pass `--api-key` or set `AMCP_SERVER_API_KEY`. HTT
 `Authorization: Bearer <api-key>`; WebSocket clients may use the same header. The health endpoint
 remains public for probes.
 
+### Docker
+
+The default Docker command starts the server on loopback — safe without authentication:
+
+```bash
+docker build -t amcp .
+docker run -it amcp serve          # loopback:8080, no auth needed
+```
+
+To expose the server on the host network, configure authentication and bind to `0.0.0.0`:
+
+```bash
+# Create a config.toml with [server.auth] enabled and an api_key set
+docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
+    amcp serve --host 0.0.0.0
+```
+
+The health check (`GET /api/v1/health`) always remains public for container orchestration probes.
+For interactive CLI usage inside a container without starting the server:
+
+```bash
+docker run -it amcp --once "explain this codebase"
+```
+
+
 ### Durable execution timeline
 
 AMCP stores a bounded per-session timeline beside each session snapshot. It records turn, tool,

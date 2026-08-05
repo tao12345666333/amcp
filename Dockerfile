@@ -3,14 +3,22 @@
 # Build:
 #   docker build -t amcp .
 #
-# Run:
-#   docker run -p 8080:8080 amcp
-#   docker run -p 8080:8080 -v /path/to/project:/workspace amcp \
-#       serve --host 0.0.0.0 --work-dir /workspace
+# Run (interactive CLI inside the container):
+#   docker run -it amcp
+#
+# Run server on loopback (safe default, no auth required):
+#   docker run -it amcp serve
+#
+# Run server exposed to the host network with authentication:
+#   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
+#       amcp serve --host 0.0.0.0
 #
 # With scheduler & reactor:
 #   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
 #       amcp serve --host 0.0.0.0 --scheduler --reactor
+#
+# NOTE: A non-loopback --host (e.g. 0.0.0.0) requires [server.auth] to be
+#       configured. Bind to loopback for unauthenticated use.
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -51,4 +59,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--", "amcp"]
-CMD ["serve", "--host", "0.0.0.0"]
+CMD ["serve"]
