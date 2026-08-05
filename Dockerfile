@@ -9,16 +9,22 @@
 # Run server on loopback (safe default, no auth required):
 #   docker run -it amcp serve
 #
-# Run server exposed to the host network with authentication:
+# Run server exposed to the host network with authentication (via env vars):
+#   docker run -p 8080:8080 \
+#       -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
+#       amcp serve
+#
+# Run server exposed to the host network with authentication (via config file):
 #   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
 #       amcp serve --host 0.0.0.0
 #
 # With scheduler & reactor:
-#   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
-#       amcp serve --host 0.0.0.0 --scheduler --reactor
+#   docker run -p 8080:8080 \
+#       -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
+#       amcp serve --scheduler --reactor
 #
-# NOTE: A non-loopback --host (e.g. 0.0.0.0) requires [server.auth] to be
-#       configured. Bind to loopback for unauthenticated use.
+# NOTE: A non-loopback --host (e.g. 0.0.0.0) requires authentication.
+#       Use --api-key, AMCP_API_KEY env var, or [server.auth] in config.toml.
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 

@@ -239,10 +239,17 @@ docker build -t amcp .
 docker run -it amcp serve          # loopback:8080, no auth needed
 ```
 
-To expose the server on the host network, configure authentication and bind to `0.0.0.0`:
+To expose the server on the host network, provide an API key via environment variables:
 
 ```bash
-# Create a config.toml with [server.auth] enabled and an api_key set
+docker run -p 8080:8080 \
+    -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
+    amcp serve
+```
+
+Alternatively, mount a `config.toml` with `[server.auth]` enabled:
+
+```bash
 docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
     amcp serve --host 0.0.0.0
 ```
