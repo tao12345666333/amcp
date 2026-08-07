@@ -29,6 +29,7 @@ from ..session_manager import (
     SessionNotFoundError,
     get_session_manager,
 )
+from ..turn_stream import turn_frames
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -317,47 +318,34 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
         import json
 
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
-        handle = None
-        if routed.action == "prompt":
-            handle = await session_manager.submit_prompt(
-                session_id=session_id,
-                content=routed.content,
-                stream=True,
-                priority=request.priority.value,
-            )
-            message_id = handle.id
-
-        # Send start event
-        yield (
-            json.dumps(
-                {
-                    "type": "start",
-                    "message_id": message_id,
-                    "session_id": session_id,
-                }
-            )
-            + "\n"
-        )
-
         try:
-            if handle is not None:
-                chunk = await handle.wait()
-                session.message_count += 1
-                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+            if routed.action == "prompt":
+                handle = await session_manager.submit_prompt(
+                    session_id=session_id,
+                    content=routed.content,
+                    stream=True,
+                    priority=request.priority.value,
+                )
+                message_id = handle.id
+                async for frame in turn_frames(handle, session_id):
+                    yield json.dumps(frame) + "\n"
+                if handle.status.value == "completed":
+                    session.message_count += 1
             else:
+                yield (
+                    json.dumps(
+                        {
+                            "type": "start",
+                            "turn_id": message_id,
+                            "session_id": session_id,
+                            "status": "running",
+                        }
+                    )
+                    + "\n"
+                )
                 async for event in apply_interaction_result(session_manager, session_id, routed):
                     yield json.dumps(event) + "\n"
-
-            # Send complete event
-            yield (
-                json.dumps(
-                    {
-                        "type": "complete",
-                        "message_id": message_id,
-                    }
-                )
-                + "\n"
-            )
+                yield json.dumps({"type": "complete", "turn_id": message_id}) + "\n"
 
         except Exception as e:
             provider = e if isinstance(e, ProviderError) else None
@@ -365,6 +353,7 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
                 json.dumps(
                     {
                         "type": "error",
+                        "turn_id": message_id,
                         "error": str(e),
                         "code": f"PROVIDER_{provider.kind.value.upper()}" if provider else "AGENT_ERROR",
                         "retryable": provider.retryable if provider else False,

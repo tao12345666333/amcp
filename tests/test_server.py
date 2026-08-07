@@ -266,6 +266,34 @@ class TestSessionEndpoints:
         assert created["session_id"] != session_id
         assert any(event["type"] == "complete" for event in events)
 
+    def test_prompt_stream_relays_incremental_turn_frames(self, client):
+        """HTTP and runtime share request-scoped incremental frames."""
+        create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
+        session_id = create_resp.json()["id"]
+        managed = asyncio.run(get_session_manager().get_session(session_id))
+
+        async def process(_request):
+            managed.agent._emit_event("message.chunk", {"content": "first"})
+            await asyncio.sleep(0)
+            managed.agent._emit_event("message.chunk", {"content": " second"})
+            return "first second"
+
+        managed.agent._runtime._processor = process
+        with client.stream(
+            "POST",
+            f"/api/v1/sessions/{session_id}/prompt/stream",
+            json={"content": "hello", "stream": True},
+        ) as response:
+            frames = [json.loads(line) for line in response.iter_lines() if line]
+
+        assert [frame["type"] for frame in frames] == ["start", "chunk", "chunk", "complete"]
+        assert [frame.get("content") for frame in frames[1:3]] == ["first", " second"]
+        assert len({frame["turn_id"] for frame in frames}) == 1
+
+        turn_id = frames[0]["turn_id"]
+        turn_response = client.get(f"/api/v1/sessions/{session_id}/turns/{turn_id}")
+        assert turn_response.json()["status"] == "completed"
+
     def test_prompt_new_session_command_non_stream(self, client):
         """Test /new through the non-stream endpoint returns new session metadata."""
         create_resp = client.post("/api/v1/sessions", json={"cwd": "/tmp"})
@@ -527,6 +555,78 @@ class TestConnectionManager:
         manager = ConnectionManager()
         count = manager.get_session_connection_count("nonexistent-session")
         assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_writes_to_one_connection_are_serialized(self):
+        from amcp.server.websocket import ConnectionManager
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.sending = False
+                self.messages = []
+                self.closed = False
+
+            async def accept(self):
+                pass
+
+            async def close(self, code=1000, reason=None):
+                self.closed = True
+
+            async def send_json(self, message):
+                assert self.sending is False
+                self.sending = True
+                await asyncio.sleep(0)
+                self.messages.append(message)
+                self.sending = False
+
+        manager = ConnectionManager()
+        websocket = FakeWebSocket()
+        await manager.connect(websocket)
+
+        await asyncio.gather(
+            manager.send(websocket, {"type": "response", "id": "one"}),
+            manager.send(websocket, {"type": "response", "id": "two"}),
+        )
+
+        assert [message.get("id") for message in websocket.messages] == [None, "one", "two"]
+        await manager.disconnect(websocket)
+        assert websocket.closed is True
+
+    @pytest.mark.asyncio
+    async def test_slow_connection_closes_when_outbound_queue_is_full(self):
+        from amcp.server.websocket import ConnectionManager
+
+        class SlowWebSocket:
+            def __init__(self):
+                self.block = asyncio.Event()
+                self.closed_code = None
+
+            async def accept(self):
+                pass
+
+            async def close(self, code=1000, reason=None):
+                self.closed_code = code
+                self.block.set()
+
+            async def send_json(self, _message):
+                await self.block.wait()
+
+        manager = ConnectionManager()
+        websocket = SlowWebSocket()
+        websocket.block.set()
+        await manager.connect(websocket)
+        websocket.block.clear()
+
+        sends = [
+            asyncio.create_task(manager.send(websocket, {"type": "event", "id": str(index)})) for index in range(66)
+        ]
+        await asyncio.gather(*sends, return_exceptions=True)
+
+        state = manager._states[websocket]
+        assert state.queue.qsize() <= state.queue.maxsize
+        assert state.closed is True
+        assert websocket.closed_code == 1013
+        await manager.disconnect(websocket)
 
 
 class TestCollaborationEvents:

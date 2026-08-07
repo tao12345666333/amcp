@@ -85,6 +85,16 @@ class TurnEvent:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
+@dataclass(frozen=True)
+class TurnStreamEvent:
+    """One output or lifecycle event produced by a turn."""
+
+    turn_id: str
+    type: str
+    data: dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
 class TurnHandle:
     """Track and await one turn independently from other queued turns."""
 
@@ -97,6 +107,7 @@ class TurnHandle:
         self._completion: asyncio.Future[TurnResult] = asyncio.get_running_loop().create_future()
         self.events: asyncio.Queue[TurnEvent] = asyncio.Queue()
         self.events.put_nowait(TurnEvent(self.id, TurnStatus.QUEUED))
+        self._stream_subscribers: set[asyncio.Queue[TurnStreamEvent]] = set()
 
     @property
     def id(self) -> str:
@@ -126,6 +137,35 @@ class TurnHandle:
     async def cancel(self) -> bool:
         """Cancel this queued or active turn."""
         return await self._runtime.cancel_turn(self.id)
+
+    def subscribe(self, *, max_queue_size: int = 256) -> asyncio.Queue[TurnStreamEvent]:
+        """Subscribe to output produced after this call."""
+        if max_queue_size < 1:
+            raise ValueError("max_queue_size must be positive")
+        queue: asyncio.Queue[TurnStreamEvent] = asyncio.Queue(maxsize=max_queue_size)
+        self._stream_subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[TurnStreamEvent]) -> None:
+        """Stop an output subscription without affecting turn execution."""
+        self._stream_subscribers.discard(queue)
+
+    def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
+        event = TurnStreamEvent(self.id, event_type, data or {})
+        for queue in tuple(self._stream_subscribers):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                self._stream_subscribers.discard(queue)
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(
+                    TurnStreamEvent(
+                        self.id,
+                        "stream.overflow",
+                        {"error": "Turn stream consumer is too slow"},
+                    )
+                )
 
     def _finish(self, result: TurnResult) -> None:
         if self.done:
@@ -377,5 +417,18 @@ class SessionRuntime:
             self._turns.pop(self._terminal_turn_ids.popleft(), None)
 
     def _emit(self, event: str, handle: TurnHandle) -> None:
+        data: dict[str, Any] = {"turn_status": handle.status.value}
+        outcome = handle.outcome
+        if outcome is not None:
+            data["response"] = outcome.value
+            if outcome.error is not None:
+                data["error"] = str(outcome.error)
+        handle._publish(event, data)
         if self._event_callback is not None:
             self._event_callback(event, handle)
+
+    def publish_turn_event(self, turn_id: str, event_type: str, data: dict[str, Any]) -> None:
+        """Publish agent output to subscribers of the active turn."""
+        handle = self._turns.get(turn_id)
+        if handle is not None and not handle.done:
+            handle._publish(event_type, data)

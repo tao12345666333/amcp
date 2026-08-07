@@ -60,9 +60,11 @@ class WebSocketClient:
         if api_key is not None and not any(key.lower() == "authorization" for key in self._headers):
             self._headers["Authorization"] = f"Bearer {api_key}"
         self._ws: Any = None  # websockets.WebSocketClientProtocol
-        self._message_queue: asyncio.Queue[dict] = asyncio.Queue()
+        self._message_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=256)
         self._receive_task: asyncio.Task | None = None
         self._pending_requests: dict[str, asyncio.Future] = {}
+        self._stream_queues: dict[str, asyncio.Queue[dict]] = {}
+        self._overflowed_streams: set[str] = set()
 
     @property
     def ws_url(self) -> str:
@@ -132,6 +134,7 @@ class WebSocketClient:
             if not future.done():
                 future.cancel()
         self._pending_requests.clear()
+        self._fail_streams("WebSocket connection closed")
 
     async def __aenter__(self) -> WebSocketClient:
         """Async context manager entry."""
@@ -151,16 +154,7 @@ class WebSocketClient:
             async for message in self._ws:
                 try:
                     data = json.loads(message)
-                    msg_id = data.get("id")
-
-                    # If there's a pending request for this ID, resolve it
-                    if msg_id and msg_id in self._pending_requests:
-                        future = self._pending_requests[msg_id]
-                        if not future.done():
-                            future.set_result(data)
-                    else:
-                        # Queue for iteration
-                        await self._message_queue.put(data)
+                    await self._dispatch_message(data)
 
                 except json.JSONDecodeError:
                     continue
@@ -169,6 +163,51 @@ class WebSocketClient:
             pass
         except Exception:
             pass
+        finally:
+            self._fail_streams("WebSocket connection closed")
+
+    async def _dispatch_message(self, data: dict[str, Any]) -> None:
+        """Route one frame to its request-scoped consumer."""
+        msg_id = data.get("id")
+        if msg_id and msg_id in self._pending_requests:
+            future = self._pending_requests[msg_id]
+            if not future.done():
+                future.set_result(data)
+        elif msg_id and msg_id in self._stream_queues:
+            if msg_id in self._overflowed_streams:
+                return
+            queue = self._stream_queues[msg_id]
+            try:
+                queue.put_nowait(data)
+            except asyncio.QueueFull:
+                self._overflowed_streams.add(msg_id)
+                self._replace_queue_with_error(queue, msg_id, "WebSocket stream consumer is too slow")
+        else:
+            if self._message_queue.full():
+                self._message_queue.get_nowait()
+            self._message_queue.put_nowait(data)
+
+    def _fail_streams(self, error: str) -> None:
+        for msg_id, queue in tuple(self._stream_queues.items()):
+            self._replace_queue_with_error(queue, msg_id, error, code="CONNECTION_CLOSED")
+
+    @staticmethod
+    def _replace_queue_with_error(
+        queue: asyncio.Queue[dict],
+        msg_id: str,
+        error: str,
+        *,
+        code: str = "SLOW_CONSUMER",
+    ) -> None:
+        while not queue.empty():
+            queue.get_nowait()
+        queue.put_nowait(
+            {
+                "type": "error",
+                "id": msg_id,
+                "payload": {"error": error, "code": code},
+            }
+        )
 
     async def _send(self, message: dict) -> None:
         """Send a message.
@@ -333,19 +372,30 @@ class WebSocketClient:
         if not sid:
             raise ValueError("session_id is required")
 
-        msg_id = await self.send_prompt(content, sid, priority=priority)
+        msg_id = str(uuid.uuid4())
+        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=256)
+        self._stream_queues[msg_id] = queue
+        try:
+            await self._send(
+                {
+                    "type": "request",
+                    "id": msg_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "payload": {
+                        "action": "prompt",
+                        "session_id": sid,
+                        "content": content,
+                        "priority": priority,
+                    },
+                }
+            )
 
-        # Receive responses with this message ID
-        while True:
-            try:
+            # Receive responses with this message ID
+            while True:
                 data = await asyncio.wait_for(
-                    self._message_queue.get(),
+                    queue.get(),
                     timeout=300.0,
                 )
-
-                # Skip messages for other requests
-                if data.get("id") != msg_id:
-                    continue
 
                 msg_type = data.get("type")
                 payload = data.get("payload", {})
@@ -358,7 +408,7 @@ class WebSocketClient:
                     raise PromptError(error, session_id=sid)
 
                 if msg_type == "response":
-                    kind = payload.get("kind", "")
+                    kind = payload.get("type", payload.get("kind", ""))
                     content_chunk = payload.get("content", "")
 
                     if kind == "chunk":
@@ -367,6 +417,17 @@ class WebSocketClient:
                             chunk_type="text",
                             done=False,
                         )
+                    elif kind == "tool":
+                        tool_event = payload.get("event", "")
+                        is_start = tool_event == "call_start"
+                        yield ResponseChunk(
+                            content=payload.get("tool_name", ""),
+                            chunk_type="tool_call" if is_start else "tool_result",
+                            done=False,
+                            metadata=payload,
+                        )
+                    elif kind == "error":
+                        raise PromptError(payload.get("error", "Unknown error"), session_id=sid)
                     elif kind == "complete":
                         yield ResponseChunk(
                             content="",
@@ -392,8 +453,11 @@ class WebSocketClient:
                             metadata=payload,
                         )
 
-            except TimeoutError:
-                raise PromptError("Stream timeout", session_id=sid) from None
+        except TimeoutError:
+            raise PromptError("Stream timeout", session_id=sid) from None
+        finally:
+            self._stream_queues.pop(msg_id, None)
+            self._overflowed_streams.discard(msg_id)
 
     def __aiter__(self) -> AsyncIterator[dict]:
         """Iterate over received messages."""

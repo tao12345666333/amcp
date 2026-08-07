@@ -180,7 +180,7 @@ Delete a session.
 
 #### POST `/sessions/{id}/prompt`
 
-Send a prompt to a session. This endpoint supports streaming responses.
+Send a prompt to a session and return its status or complete response as JSON.
 
 **Request Body**:
 ```json
@@ -199,21 +199,13 @@ Send a prompt to a session. This endpoint supports streaming responses.
 | `stream` | boolean | No | Whether to stream the response (default: `true`) |
 | `conflict_strategy` | string | No | Strategy when session is busy: `queue` (wait for queue, default) or `reject` (fail immediately with 409 Conflict) |
 
-**Response** `200 OK` (streaming - `text/plain`):
-
-When `stream: true`, the response is returned as a stream of text chunks:
-```
-I'll help you refactor...
-[Tool: read_file] Reading src/main.py...
-Here are my suggestions...
-```
-
-**Response** `200 OK` (non-streaming - `application/json`):
+**Response** `200 OK` (`application/json`):
 ```json
 {
   "session_id": "a1b2c3d4",
-  "message_id": "msg-123",
-  "status": "complete"
+  "message_id": "turn-123",
+  "status": "complete",
+  "response": "I'll help you refactor..."
 }
 ```
 
@@ -225,6 +217,27 @@ Here are my suggestions...
   "details": {"session_id": "a1b2c3d4"}
 }
 ```
+
+#### POST `/sessions/{id}/prompt/stream`
+
+Submit a runtime-owned turn and receive newline-delimited JSON frames as output is produced. HTTP
+disconnect only stops the relay; it does not cancel the turn. Use the returned `turn_id` with the
+turn status endpoint after disconnecting.
+
+```jsonl
+{"type":"start","turn_id":"turn-123","session_id":"a1b2c3d4","status":"running"}
+{"type":"chunk","turn_id":"turn-123","content":"I'll help "}
+{"type":"tool","turn_id":"turn-123","event":"call_start","tool_name":"read_file"}
+{"type":"chunk","turn_id":"turn-123","content":"you refactor..."}
+{"type":"complete","turn_id":"turn-123","status":"completed"}
+```
+
+The shared HTTP/WebSocket frame types are `start`, `chunk`, `tool`, `error`, and `complete`.
+Slow consumers receive an `error` frame with code `SLOW_CONSUMER`; the turn continues running.
+
+#### GET `/sessions/{id}/turns/{turn_id}`
+
+Return the state and terminal result, when available, of a runtime-retained turn.
 
 #### POST `/sessions/{id}/cancel`
 
@@ -424,10 +437,9 @@ interface WSMessage {
   "id": "msg-123",
   "timestamp": "2026-01-08T12:00:02Z",
   "payload": {
-    "kind": "text",
-    "content": "I'll help you refactor...",
-    "done": false,
-    "session_id": "a1b2c3d4"
+    "type": "chunk",
+    "turn_id": "turn-123",
+    "content": "I'll help you refactor..."
   }
 }
 ```
@@ -436,14 +448,16 @@ interface WSMessage {
 
 ```json
 {
-  "type": "event",
+  "type": "response",
+  "id": "msg-123",
   "timestamp": "2026-01-08T12:00:03Z",
   "payload": {
-    "kind": "tool_call",
+    "type": "tool",
+    "turn_id": "turn-123",
+    "event": "call_start",
     "tool_name": "read_file",
-    "tool_call_id": "call_abc123",
-    "arguments": {"path": "/src/main.py"},
-    "session_id": "a1b2c3d4"
+    "tool_id": "call_abc123",
+    "arguments": {"path": "/src/main.py"}
   }
 }
 ```
@@ -452,15 +466,16 @@ interface WSMessage {
 
 ```json
 {
-  "type": "event",
+  "type": "response",
+  "id": "msg-123",
   "timestamp": "2026-01-08T12:00:04Z",
   "payload": {
-    "kind": "tool_result",
+    "type": "tool",
+    "turn_id": "turn-123",
+    "event": "call_complete",
     "tool_name": "read_file",
-    "tool_call_id": "call_abc123",
-    "result": "file contents...",
-    "success": true,
-    "session_id": "a1b2c3d4"
+    "tool_id": "call_abc123",
+    "success": true
   }
 }
 ```
@@ -473,13 +488,9 @@ interface WSMessage {
   "id": "msg-123",
   "timestamp": "2026-01-08T12:00:10Z",
   "payload": {
-    "kind": "complete",
-    "done": true,
-    "session_id": "a1b2c3d4",
-    "usage": {
-      "prompt_tokens": 1234,
-      "completion_tokens": 567
-    }
+    "type": "complete",
+    "turn_id": "turn-123",
+    "status": "completed"
   }
 }
 ```

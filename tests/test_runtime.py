@@ -12,6 +12,7 @@ from amcp.runtime import (
     TurnCancelledError,
     TurnStatus,
 )
+from amcp.server.turn_stream import turn_frames
 
 
 @pytest.mark.asyncio
@@ -203,3 +204,74 @@ async def test_terminal_handle_retention_is_bounded():
     assert runtime.get_turn(handles[2].id) is None
     assert runtime.get_turn(handles[3].id) is handles[3]
     assert runtime.get_turn(handles[4].id) is handles[4]
+
+
+@pytest.mark.asyncio
+async def test_turn_output_subscriptions_are_request_scoped():
+    release = asyncio.Event()
+
+    async def process(request):
+        await release.wait()
+        return request.prompt
+
+    runtime = SessionRuntime("streams", process)
+    first = await runtime.submit("first")
+    second = await runtime.submit("second")
+    first_events = first.subscribe()
+    second_events = second.subscribe()
+
+    runtime.publish_turn_event(first.id, "message.chunk", {"content": "one"})
+    runtime.publish_turn_event(second.id, "message.chunk", {"content": "two"})
+
+    assert (await first_events.get()).data["content"] == "one"
+    assert (await second_events.get()).data["content"] == "two"
+    assert first_events.empty()
+    assert second_events.empty()
+
+    first.unsubscribe(first_events)
+    second.unsubscribe(second_events)
+    release.set()
+    await asyncio.gather(first.wait(), second.wait())
+
+
+@pytest.mark.asyncio
+async def test_slow_turn_subscriber_is_failed_without_cancelling_turn():
+    release = asyncio.Event()
+
+    async def process(request):
+        await release.wait()
+        return request.prompt
+
+    runtime = SessionRuntime("slow-stream", process)
+    handle = await runtime.submit("result")
+    events = handle.subscribe(max_queue_size=1)
+
+    runtime.publish_turn_event(handle.id, "message.chunk", {"content": "first"})
+    runtime.publish_turn_event(handle.id, "message.chunk", {"content": "second"})
+
+    overflow = await events.get()
+    assert overflow.type == "stream.overflow"
+    assert events not in handle._stream_subscribers
+    release.set()
+    assert await handle.wait() == "result"
+
+
+@pytest.mark.asyncio
+async def test_closing_turn_relay_unsubscribes_without_cancelling_turn():
+    release = asyncio.Event()
+
+    async def process(request):
+        await release.wait()
+        return request.prompt
+
+    runtime = SessionRuntime("disconnect", process)
+    handle = await runtime.submit("result")
+    frames = turn_frames(handle, "disconnect")
+
+    assert (await anext(frames))["type"] == "start"
+    assert len(handle._stream_subscribers) == 1
+    await frames.aclose()
+    assert not handle._stream_subscribers
+
+    release.set()
+    assert await handle.wait() == "result"

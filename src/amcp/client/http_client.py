@@ -392,6 +392,14 @@ class HTTPClient(BaseClient):
                                 done=False,
                                 metadata=data,
                             )
+                        elif chunk_type == "tool":
+                            tool_event = data.get("event", "")
+                            yield ResponseChunk(
+                                content=data.get("tool_name", ""),
+                                chunk_type="tool_call" if tool_event == "call_start" else "tool_result",
+                                done=False,
+                                metadata=data,
+                            )
                         elif chunk_type == "tool_call":
                             yield ResponseChunk(
                                 content=data.get("tool_name", ""),

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
 
 from amcp.client import (
@@ -200,6 +203,70 @@ class TestWebSocketClient:
             "X-Custom": "value",
             "Authorization": "Bearer secret",
         }
+
+    @pytest.mark.asyncio
+    async def test_concurrent_prompt_streams_use_independent_queues(self):
+        client = WebSocketClient("https://example.test", session_id="session")
+        sent = []
+
+        async def capture_send(message):
+            sent.append(message)
+
+        client._send = AsyncMock(side_effect=capture_send)
+        first_stream = client.prompt_stream("first")
+        second_stream = client.prompt_stream("second")
+        first_chunk_task = asyncio.create_task(anext(first_stream))
+        second_chunk_task = asyncio.create_task(anext(second_stream))
+        await asyncio.sleep(0)
+
+        first_id, second_id = (message["id"] for message in sent)
+        await client._dispatch_message(
+            {
+                "type": "response",
+                "id": second_id,
+                "payload": {"type": "chunk", "content": "second response"},
+            }
+        )
+        await client._dispatch_message(
+            {
+                "type": "response",
+                "id": first_id,
+                "payload": {"type": "chunk", "content": "first response"},
+            }
+        )
+
+        assert (await first_chunk_task).content == "first response"
+        assert (await second_chunk_task).content == "second response"
+
+        first_done_task = asyncio.create_task(anext(first_stream))
+        second_done_task = asyncio.create_task(anext(second_stream))
+        await client._dispatch_message({"type": "response", "id": first_id, "payload": {"type": "complete"}})
+        await client._dispatch_message({"type": "response", "id": second_id, "payload": {"type": "complete"}})
+        assert (await first_done_task).done is True
+        assert (await second_done_task).done is True
+
+    @pytest.mark.asyncio
+    async def test_failed_prompt_send_cleans_up_stream_queue(self):
+        client = WebSocketClient("https://example.test", session_id="session")
+        client._send = AsyncMock(side_effect=ConnectionError("send failed"))
+
+        with pytest.raises(ConnectionError, match="send failed"):
+            await anext(client.prompt_stream("hello"))
+
+        assert client._stream_queues == {}
+
+    @pytest.mark.asyncio
+    async def test_slow_prompt_stream_gets_error_without_blocking_dispatch(self):
+        client = WebSocketClient("https://example.test", session_id="session")
+        queue = asyncio.Queue(maxsize=1)
+        client._stream_queues["request"] = queue
+
+        await client._dispatch_message({"type": "response", "id": "request", "payload": {"type": "chunk"}})
+        await client._dispatch_message({"type": "response", "id": "request", "payload": {"type": "chunk"}})
+
+        error = await queue.get()
+        assert error["payload"]["code"] == "SLOW_CONSUMER"
+        assert "request" in client._overflowed_streams
 
     @pytest.mark.asyncio
     async def test_amcp_client_passes_auth_to_http_client(self, monkeypatch):

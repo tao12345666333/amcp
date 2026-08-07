@@ -466,6 +466,11 @@ class Agent:
             "timestamp": datetime.now().isoformat(),
             **data,
         }
+        if event_type == "message.chunk" or event_type.startswith("tool.call_"):
+            active_turn = self._runtime.active_turn
+            if active_turn is not None:
+                event_data["turn_id"] = active_turn.id
+                self._runtime.publish_turn_event(active_turn.id, event_type, event_data)
         if event_type.startswith(("turn.", "tool.", "provider.", "llm.", "context.", "memory.")):
             try:
                 self._timeline_store.append(

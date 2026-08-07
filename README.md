@@ -211,6 +211,7 @@ amcp attach http://localhost:8080  # connect from another terminal
 - `POST /api/v1/sessions` - create sessions
 - `POST /api/v1/sessions/{id}/prompt` - submit a prompt and return request status
 - `POST /api/v1/sessions/{id}/prompt/stream` - submit a prompt and stream JSON-line events
+- `GET /api/v1/sessions/{id}/turns/{turn_id}` - query queued, running, or retained terminal turn state
 - `POST /api/v1/sessions/{id}/cancel` - cancel current session work
 - `GET /api/v1/sessions/{id}/timeline` - read durable metadata-only execution events
 - `DELETE /api/v1/sessions/{id}` - delete a session

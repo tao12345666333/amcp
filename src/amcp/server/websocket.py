@@ -9,8 +9,10 @@ Provides real-time bidirectional communication for:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -19,9 +21,20 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from .interaction import apply_interaction_result, route_server_interaction
 from .models import EventType
 from .session_manager import SessionNotFoundError, get_session_manager
+from .turn_stream import turn_frames
 
 router = APIRouter()
-_prompt_tasks: set[asyncio.Task[None]] = set()
+
+
+@dataclass
+class _ConnectionState:
+    """Bounded outbound state owned by one WebSocket connection."""
+
+    queue: asyncio.Queue[tuple[dict[str, Any], asyncio.Future[None]]] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=64)
+    )
+    writer: asyncio.Task[None] | None = None
+    closed: bool = False
 
 
 class ConnectionManager:
@@ -33,6 +46,7 @@ class ConnectionManager:
         # Global connections (not tied to a session)
         self._global_connections: list[WebSocket] = []
         self._lock = asyncio.Lock()
+        self._states: dict[WebSocket, _ConnectionState] = {}
 
     async def connect(self, websocket: WebSocket, session_id: str | None = None) -> None:
         """Accept a new WebSocket connection.
@@ -44,6 +58,12 @@ class ConnectionManager:
         await websocket.accept()
 
         async with self._lock:
+            state = _ConnectionState()
+            self._states[websocket] = state
+            state.writer = asyncio.create_task(
+                self._write_messages(websocket, state),
+                name=f"amcp-ws-writer-{id(websocket)}",
+            )
             if session_id:
                 if session_id not in self._connections:
                     self._connections[session_id] = []
@@ -70,14 +90,84 @@ class ConnectionManager:
             websocket: The WebSocket connection.
             session_id: Optional session ID.
         """
+        state = None
         async with self._lock:
-            if session_id and session_id in self._connections:
-                if websocket in self._connections[session_id]:
-                    self._connections[session_id].remove(websocket)
-                if not self._connections[session_id]:
-                    del self._connections[session_id]
-            elif websocket in self._global_connections:
+            empty_sessions = []
+            for subscribed_session, connections in self._connections.items():
+                if websocket in connections:
+                    connections.remove(websocket)
+                if not connections:
+                    empty_sessions.append(subscribed_session)
+            for subscribed_session in empty_sessions:
+                del self._connections[subscribed_session]
+            if websocket in self._global_connections:
                 self._global_connections.remove(websocket)
+            state = self._states.pop(websocket, None)
+        if state is not None:
+            await self._shutdown_connection(websocket, state)
+
+    async def send(self, websocket: WebSocket, message: dict[str, Any]) -> None:
+        """Queue one bounded write and wait until the writer sends it."""
+        state = self._states.get(websocket)
+        if state is None or state.closed:
+            raise WebSocketDisconnect()
+        if "timestamp" not in message:
+            message["timestamp"] = datetime.now().isoformat()
+        sent = asyncio.get_running_loop().create_future()
+        try:
+            state.queue.put_nowait((message, sent))
+        except asyncio.QueueFull:
+            await self._shutdown_connection(websocket, state, code=1013, reason="Slow consumer")
+            raise WebSocketDisconnect(code=1013, reason="Slow consumer") from None
+        await sent
+
+    async def _write_messages(self, websocket: WebSocket, state: _ConnectionState) -> None:
+        """Run the sole socket writer for a connection."""
+        current: asyncio.Future[None] | None = None
+        try:
+            while True:
+                message, current = await state.queue.get()
+                await websocket.send_json(message)
+                if not current.done():
+                    current.set_result(None)
+                current = None
+        except asyncio.CancelledError:
+            if current is not None and not current.done():
+                current.cancel()
+            raise
+        except Exception as exc:
+            if current is not None and not current.done():
+                current.set_exception(exc)
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1011, reason="WebSocket write failed")
+        finally:
+            state.closed = True
+            while not state.queue.empty():
+                _, pending = state.queue.get_nowait()
+                if not pending.done():
+                    pending.set_exception(WebSocketDisconnect())
+
+    async def _shutdown_connection(
+        self,
+        websocket: WebSocket,
+        state: _ConnectionState,
+        *,
+        code: int = 1000,
+        reason: str | None = None,
+    ) -> None:
+        """Stop one writer and close its transport without affecting turns."""
+        state.closed = True
+        writer = state.writer
+        if writer is not None and writer is not asyncio.current_task() and not writer.done():
+            writer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await writer
+        while not state.queue.empty():
+            _, pending = state.queue.get_nowait()
+            if not pending.done():
+                pending.set_exception(WebSocketDisconnect(code=code, reason=reason))
+        with contextlib.suppress(Exception):
+            await websocket.close(code=code, reason=reason)
 
     async def send_to_session(self, session_id: str, message: dict[str, Any]) -> None:
         """Send a message to all connections for a session.
@@ -112,13 +202,8 @@ class ConnectionManager:
             websocket: The WebSocket connection.
             message: The message to send.
         """
-        try:
-            # Add timestamp if not present
-            if "timestamp" not in message:
-                message["timestamp"] = datetime.now().isoformat()
-            await websocket.send_json(message)
-        except Exception:
-            pass  # Connection might be closed
+        with contextlib.suppress(Exception):
+            await self.send(websocket, message)
 
     def get_connection_stats(self) -> dict[str, Any]:
         """Get connection statistics.
@@ -186,6 +271,13 @@ async def websocket_endpoint(
             return
 
     await connection_manager.connect(websocket, session_id)
+    prompt_tasks: set[asyncio.Task[None]] = set()
+
+    def prompt_finished(task: asyncio.Task[None]) -> None:
+        prompt_tasks.discard(task)
+        if not task.cancelled():
+            with contextlib.suppress(Exception):
+                task.exception()
 
     try:
         while True:
@@ -201,18 +293,19 @@ async def websocket_endpoint(
 
             if action == "ping":
                 # Respond with pong
-                await websocket.send_json(
+                await connection_manager.send(
+                    websocket,
                     {
                         "type": "response",
                         "id": msg_id,
                         "payload": {"action": "pong"},
-                    }
+                    },
                 )
 
             elif action == "prompt":
                 task = asyncio.create_task(handle_prompt(websocket, msg_id, payload))
-                _prompt_tasks.add(task)
-                task.add_done_callback(_prompt_tasks.discard)
+                prompt_tasks.add(task)
+                task.add_done_callback(prompt_finished)
 
             elif action == "cancel":
                 # Handle cancel
@@ -228,7 +321,8 @@ async def websocket_endpoint(
                         if websocket not in connection_manager._connections[target_session]:
                             connection_manager._connections[target_session].append(websocket)
 
-                    await websocket.send_json(
+                    await connection_manager.send(
+                        websocket,
                         {
                             "type": "response",
                             "id": msg_id,
@@ -236,12 +330,13 @@ async def websocket_endpoint(
                                 "action": "subscribed",
                                 "session_id": target_session,
                             },
-                        }
+                        },
                     )
 
             else:
                 # Unknown action
-                await websocket.send_json(
+                await connection_manager.send(
+                    websocket,
                     {
                         "type": "error",
                         "id": msg_id,
@@ -249,14 +344,19 @@ async def websocket_endpoint(
                             "error": f"Unknown action: {action}",
                             "code": "UNKNOWN_ACTION",
                         },
-                    }
+                    },
                 )
 
     except WebSocketDisconnect:
-        await connection_manager.disconnect(websocket, session_id)
+        pass
     except Exception:
-        await connection_manager.disconnect(websocket, session_id)
         raise
+    finally:
+        for task in tuple(prompt_tasks):
+            task.cancel()
+        if prompt_tasks:
+            await asyncio.gather(*prompt_tasks, return_exceptions=True)
+        await connection_manager.disconnect(websocket, session_id)
 
 
 async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, Any]) -> None:
@@ -271,12 +371,13 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
     content = payload.get("content", "")
 
     if not session_id:
-        await websocket.send_json(
+        await connection_manager.send(
+            websocket,
             {
                 "type": "error",
                 "id": msg_id,
                 "payload": {"error": "session_id is required", "code": "MISSING_SESSION_ID"},
-            }
+            },
         )
         return
 
@@ -285,73 +386,54 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
     try:
         routed, _ = await route_server_interaction(session_manager, session_id, content)
 
-        # Send start event
-        await websocket.send_json(
-            {
-                "type": "event",
-                "id": msg_id,
-                "payload": {
-                    "kind": EventType.MESSAGE_START.value,
-                    "session_id": session_id,
-                },
-            }
-        )
-
         # Stream response or command side effects
         if routed.action == "prompt":
-            async for chunk in session_manager.prompt_session(
+            handle = await session_manager.submit_prompt(
                 session_id=session_id,
                 content=routed.content,
                 stream=True,
-            ):
-                if isinstance(chunk, str):
-                    await websocket.send_json(
-                        {
-                            "type": "response",
-                            "id": msg_id,
-                            "payload": {
-                                "kind": "chunk",
-                                "content": chunk,
-                                "done": False,
-                            },
-                        }
-                    )
-                elif hasattr(chunk, "content"):
-                    await websocket.send_json(
-                        {
-                            "type": "response",
-                            "id": msg_id,
-                            "payload": {
-                                "kind": "chunk",
-                                "content": chunk.content,
-                                "done": False,
-                            },
-                        }
-                    )
+                priority=payload.get("priority", "normal"),
+            )
+            async for frame in turn_frames(handle, session_id):
+                await connection_manager.send(
+                    websocket,
+                    {"type": "response", "id": msg_id, "payload": frame},
+                )
         else:
+            await connection_manager.send(
+                websocket,
+                {
+                    "type": "response",
+                    "id": msg_id,
+                    "payload": {
+                        "type": "start",
+                        "turn_id": msg_id,
+                        "session_id": session_id,
+                        "status": "running",
+                    },
+                },
+            )
             async for event in apply_interaction_result(session_manager, session_id, routed):
-                await websocket.send_json(
+                await connection_manager.send(
+                    websocket,
                     {
                         "type": "response",
                         "id": msg_id,
                         "payload": event,
-                    }
+                    },
                 )
-
-        # Send complete event
-        await websocket.send_json(
-            {
-                "type": "response",
-                "id": msg_id,
-                "payload": {
-                    "kind": "complete",
-                    "session_id": session_id,
+            await connection_manager.send(
+                websocket,
+                {
+                    "type": "response",
+                    "id": msg_id,
+                    "payload": {"type": "complete", "turn_id": msg_id},
                 },
-            }
-        )
+            )
 
     except SessionNotFoundError:
-        await websocket.send_json(
+        await connection_manager.send(
+            websocket,
             {
                 "type": "error",
                 "id": msg_id,
@@ -359,19 +441,23 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
                     "error": f"Session not found: {session_id}",
                     "code": "SESSION_NOT_FOUND",
                 },
-            }
+            },
         )
+    except (WebSocketDisconnect, RuntimeError):
+        return
     except Exception as e:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "id": msg_id,
-                "payload": {
-                    "error": str(e),
-                    "code": "PROMPT_ERROR",
+        with contextlib.suppress(Exception):
+            await connection_manager.send(
+                websocket,
+                {
+                    "type": "error",
+                    "id": msg_id,
+                    "payload": {
+                        "error": str(e),
+                        "code": "PROMPT_ERROR",
+                    },
                 },
-            }
-        )
+            )
 
 
 async def handle_cancel(websocket: WebSocket, msg_id: str, payload: dict[str, Any]) -> None:
@@ -386,12 +472,13 @@ async def handle_cancel(websocket: WebSocket, msg_id: str, payload: dict[str, An
     force = payload.get("force", False)
 
     if not session_id:
-        await websocket.send_json(
+        await connection_manager.send(
+            websocket,
             {
                 "type": "error",
                 "id": msg_id,
                 "payload": {"error": "session_id is required", "code": "MISSING_SESSION_ID"},
-            }
+            },
         )
         return
 
@@ -400,7 +487,8 @@ async def handle_cancel(websocket: WebSocket, msg_id: str, payload: dict[str, An
     try:
         await session_manager.cancel_session(session_id, force=force)
 
-        await websocket.send_json(
+        await connection_manager.send(
+            websocket,
             {
                 "type": "response",
                 "id": msg_id,
@@ -408,11 +496,12 @@ async def handle_cancel(websocket: WebSocket, msg_id: str, payload: dict[str, An
                     "action": "cancelled",
                     "session_id": session_id,
                 },
-            }
+            },
         )
 
     except SessionNotFoundError:
-        await websocket.send_json(
+        await connection_manager.send(
+            websocket,
             {
                 "type": "error",
                 "id": msg_id,
@@ -420,7 +509,7 @@ async def handle_cancel(websocket: WebSocket, msg_id: str, payload: dict[str, An
                     "error": f"Session not found: {session_id}",
                     "code": "SESSION_NOT_FOUND",
                 },
-            }
+            },
         )
 
 
