@@ -561,9 +561,10 @@ class Agent:
         work_dir: Path | None = None,
         user_input: str = "",
         *,
+        conversation_tokens: int,
         cfg: AMCPConfig | None = None,
     ) -> str:
-        """Get resolved system prompt with template variables and project rules."""
+        """Get the system prompt budgeted against the actual model conversation."""
         current_time = datetime.now().isoformat()
         resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
         work_dir_str = str(resolved_work_dir)
@@ -571,7 +572,6 @@ class Agent:
         context_cfg = cfg.context or ContextConfig()
         model_name = self._resolve_model_name(cfg)
 
-        conversation_tokens = estimate_tokens(self.conversation_history)
         budget = self._calculate_context_budget(
             conversation_tokens,
             model_name=model_name,
@@ -928,16 +928,18 @@ class Agent:
                 # `/model use` or config-file edit affects the next turn, but
                 # cannot mix providers between chat, compaction, and memory.
                 turn_config = self._resolve_turn_config()
+                history_to_add = draft.model_context(turn_messages)
+                conversation_tokens = estimate_tokens(history_to_add)
                 system_prompt = self._get_system_prompt(
                     work_dir,
                     user_input=user_input,
+                    conversation_tokens=conversation_tokens,
                     cfg=turn_config,
                 )
                 messages = [{"role": "system", "content": system_prompt}]
 
                 # Build tools before compaction so their schemas are included in
                 # the request-size decision.
-                history_to_add = draft.model_context(turn_messages)
                 tools, tool_registry = await self._build_tools_and_registry(
                     user_input=user_input,
                     conversation_history=history_to_add,
@@ -1007,9 +1009,11 @@ class Agent:
                             },
                         )
                         history_to_add = draft.model_context(turn_messages)
+                        conversation_tokens = estimate_tokens(history_to_add)
                         system_prompt = self._get_system_prompt(
                             work_dir,
                             user_input=user_input,
+                            conversation_tokens=conversation_tokens,
                             cfg=turn_config,
                         )
                         messages[0]["content"] = system_prompt
@@ -1163,7 +1167,11 @@ class Agent:
         if not snapshot:
             return False
         cfg = self._resolve_turn_config()
-        system_prompt = self._get_system_prompt(work_dir, cfg=cfg)
+        system_prompt = self._get_system_prompt(
+            work_dir,
+            conversation_tokens=estimate_tokens(snapshot),
+            cfg=cfg,
+        )
         saved = await self._run_memory_review(
             conversation_snapshot=snapshot,
             system_prompt=system_prompt,

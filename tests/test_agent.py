@@ -11,6 +11,7 @@ import pytest
 
 from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached, _is_tool_call_pairing_error
 from amcp.agent_spec import ResolvedAgentSpec
+from amcp.compaction import estimate_tokens
 from amcp.config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig
 from amcp.hooks import HookDecision, HookOutput
 from amcp.llm import ContextOverflowError, LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
@@ -18,7 +19,7 @@ from amcp.memory import MemoryManager, MemoryStore
 from amcp.multi_agent import AgentMode
 from amcp.progressive.context_budget import ContextBudget, estimate_text_tokens
 from amcp.runtime import RuntimeClosedError, TurnStatus
-from amcp.session_state import SessionState
+from amcp.session_state import CompactionCheckpoint, SessionState
 from amcp.session_store import SessionConflictError, SessionLoadError, SessionSaveError
 from amcp.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
 from amcp.tools import create_default_tool_registry
@@ -1278,9 +1279,84 @@ class TestAgentContextBudget:
         ):
             mock_home.return_value = tmp_path
             agent = Agent()
-            prompt = agent._get_system_prompt(tmp_path)
+            prompt = agent._get_system_prompt(tmp_path, conversation_tokens=0)
 
         assert prompt.count("S") + prompt.count("C") <= budget.skills * 4 + 3
+
+    def test_system_prompt_budget_uses_checkpoint_model_context(self, tmp_path):
+        cfg = AMCPConfig(
+            servers={},
+            chat=ChatConfig(
+                model="small-test-model",
+                model_config=ModelConfig(
+                    model_id="small-test-model",
+                    context_window=1_000,
+                    output_limit=100,
+                ),
+            ),
+            context=ContextConfig(base_prompt_max_tokens=300),
+        )
+        skill_manager = MagicMock()
+        skill_manager.get_all_skills.return_value = [object()]
+        skill_manager.get_skills.return_value = []
+        skill_manager.get_active_skills.return_value = []
+
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", return_value=cfg),
+            patch("amcp.agent.get_skill_manager", return_value=skill_manager),
+            patch.object(Agent, "_load_project_rules", return_value="CHECKPOINT_RULE_MARKER"),
+            patch.object(Agent, "_get_memory_prompt_context", return_value=("", "")),
+        ):
+            agent = Agent(session_id="checkpoint-prompt-budget")
+            for index in range(2):
+                agent._session_state.commit_turn(
+                    f"large-{index}",
+                    [
+                        {"role": "user", "content": "u" * 4_000},
+                        {"role": "assistant", "content": "a" * 4_000},
+                    ],
+                )
+            agent._session_state.commit_turn(
+                "small-suffix",
+                [
+                    {"role": "user", "content": "recent question"},
+                    {"role": "assistant", "content": "recent answer"},
+                ],
+            )
+            agent._session_state.checkpoint = CompactionCheckpoint(
+                context=[{"role": "assistant", "content": "Compact summary"}],
+                covered_message_count=4,
+                covered_turn_count=2,
+                generation=1,
+                strategy="summary",
+                strategy_version=1,
+                original_tokens=4_000,
+                compacted_tokens=4,
+            )
+            agent._apply_session_state(agent._session_state)
+
+            model_context = agent._session_state.model_context([{"role": "user", "content": "current question"}])
+            checkpoint_prompt = agent._get_system_prompt(
+                tmp_path,
+                conversation_tokens=estimate_tokens(model_context),
+                cfg=cfg,
+            )
+
+            # Without a checkpoint, the actual model view is the large canonical
+            # history and retains the existing zero-budget behavior.
+            agent._session_state.checkpoint = None
+            canonical_context = agent._session_state.model_context([{"role": "user", "content": "current question"}])
+            canonical_prompt = agent._get_system_prompt(
+                tmp_path,
+                conversation_tokens=estimate_tokens(canonical_context),
+                cfg=cfg,
+            )
+
+        assert checkpoint_prompt
+        assert "memory_guidance" in checkpoint_prompt
+        assert "CHECKPOINT_RULE_MARKER" in checkpoint_prompt
+        assert canonical_prompt == ""
 
     def test_system_prompt_includes_persona_and_memory(self, tmp_path):
         """System prompt includes durable soul, identity, and memory."""
@@ -1298,7 +1374,7 @@ class TestAgentContextBudget:
         ):
             mock_home.return_value = tmp_path
             agent = Agent()
-            prompt = agent._get_system_prompt(tmp_path / "project")
+            prompt = agent._get_system_prompt(tmp_path / "project", conversation_tokens=0)
 
         assert "Soul marker: careful continuity" in prompt
         assert "Identity marker: AMCP Atlas" in prompt
@@ -1364,7 +1440,7 @@ class TestAgentMemoryReview:
         ):
             mock_home.return_value = tmp_path
             agent = Agent()
-            prompt = agent._get_system_prompt(tmp_path / "project")
+            prompt = agent._get_system_prompt(tmp_path / "project", conversation_tokens=0)
 
         assert "memory_guidance" in prompt
         assert "write_soul" in prompt
