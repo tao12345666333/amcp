@@ -34,7 +34,6 @@ system_prompt: |
   Be thorough but concise. Focus on actionable insights that help understand how to build new features that fit the existing architecture.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

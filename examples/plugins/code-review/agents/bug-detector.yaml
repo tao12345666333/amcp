@@ -51,7 +51,6 @@ system_prompt: |
   Focus on high-confidence issues that are clearly bugs, not style preferences.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

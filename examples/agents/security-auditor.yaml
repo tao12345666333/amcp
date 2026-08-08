@@ -33,7 +33,6 @@ system_prompt: |
   Report your findings and recommendations to the main agent.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

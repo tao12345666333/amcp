@@ -26,7 +26,6 @@ system_prompt: |
   6. Consider SEO implications when relevant
 
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

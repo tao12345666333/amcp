@@ -70,7 +70,6 @@ system_prompt: |
   Focus on actionable, high-confidence issues.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

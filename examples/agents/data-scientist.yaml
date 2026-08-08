@@ -28,7 +28,6 @@ system_prompt: |
   7. Ensure reproducibility with proper version control
 
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

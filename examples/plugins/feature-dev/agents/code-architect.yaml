@@ -51,7 +51,6 @@ system_prompt: |
   Always provide a clear recommendation with reasoning.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

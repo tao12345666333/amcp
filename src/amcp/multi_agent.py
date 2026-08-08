@@ -92,7 +92,6 @@ You can use all available tools to help users with software engineering tasks.
 When tasks are complex, you may delegate to specialized subagents.
 
 Current working directory: {work_dir}
-Current time: {current_time}
 
 Guidelines:
 - Use appropriate tools for each task
@@ -107,7 +106,6 @@ Your task is to quickly analyze and understand codebases WITHOUT making changes.
 You have READ-ONLY access to files and search tools.
 
 Current working directory: {work_dir}
-Current time: {current_time}
 
 Guidelines:
 - Focus on quick exploration and understanding
@@ -121,7 +119,6 @@ Your task is to analyze problems and create execution plans WITHOUT implementing
 You have READ-ONLY access to the codebase.
 
 Current working directory: {work_dir}
-Current time: {current_time}
 
 Guidelines:
 - Create detailed, step-by-step plans
@@ -135,7 +132,6 @@ Your task is to implement specific code changes as directed.
 You have full write access to the codebase.
 
 Current working directory: {work_dir}
-Current time: {current_time}
 
 Guidelines:
 - Implement exactly what is requested
@@ -364,7 +360,6 @@ Complete this specific task and report back when done.
 Be focused and efficient in completing the assigned task.
 
 Current working directory: {{work_dir}}
-Current time: {{current_time}}
 
 Task: {task_description}
 """

@@ -29,7 +29,6 @@ system_prompt: |
   7. Test automation thoroughly before production deployment
 
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

@@ -285,4 +285,12 @@ class TestSystemPromptTemplates:
         """Test that PRIMARY prompt has expected placeholders."""
         assert "{agent_name}" in PRIMARY_SYSTEM_PROMPT
         assert "{work_dir}" in PRIMARY_SYSTEM_PROMPT
-        assert "{current_time}" in PRIMARY_SYSTEM_PROMPT
+        assert "{current_time}" not in PRIMARY_SYSTEM_PROMPT
+
+    def test_builtin_prompts_do_not_include_current_time(self):
+        """Built-in primary and specialist prompts have stable prefixes."""
+        for config in BUILTIN_AGENTS.values():
+            assert "{current_time}" not in config.system_prompt
+
+        dynamic = create_subagent_config("coder", "Inspect the parser")
+        assert "{current_time}" not in dynamic.system_prompt

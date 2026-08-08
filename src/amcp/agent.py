@@ -565,7 +565,6 @@ class Agent:
         cfg: AMCPConfig | None = None,
     ) -> str:
         """Get the system prompt budgeted against the actual model conversation."""
-        current_time = datetime.now().isoformat()
         resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
         work_dir_str = str(resolved_work_dir)
         cfg = cfg or self._resolve_turn_config()
@@ -584,7 +583,6 @@ class Agent:
 
         prompt_vars = {
             "work_dir": work_dir_str,
-            "current_time": current_time,
             "agent_name": self.agent_spec.name,
             "mcp_tools": json.dumps(mcp_tools_info, indent=2),
         }

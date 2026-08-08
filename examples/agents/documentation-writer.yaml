@@ -32,7 +32,6 @@ system_prompt: |
   the main agent will delegate specific writing tasks to you.
   
   Current working directory: {work_dir}
-  Current time: {current_time}
 
 tools:
   - read_file

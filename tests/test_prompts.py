@@ -1,6 +1,6 @@
 """Tests for the prompts module."""
 
-import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -64,7 +64,7 @@ class TestPromptContext:
         assert ctx.model_family == ModelFamily.OPENAI
         assert "read_file" in ctx.available_tools
         assert len(ctx.date) > 0
-        assert len(ctx.time) > 0
+        assert not hasattr(ctx, "time")
 
     def test_git_info_detection(self):
         """Test git info detection in git repo."""
@@ -199,15 +199,55 @@ class TestPromptManager:
 class TestPromptContent:
     """Tests for actual prompt content quality."""
 
-    def test_critical_rules_present(self):
-        """Test that critical rules are in the prompt."""
+    @pytest.mark.parametrize(
+        "model_name",
+        ["unknown-model", "claude-sonnet-4"],
+    )
+    def test_coder_templates_share_stable_core_rules(self, model_name):
+        """Generic and Anthropic prompts retain the same core behavior."""
         pm = get_prompt_manager()
-        ctx = PromptContext.from_environment()
+        ctx = PromptContext(
+            working_dir="/workspace/project",
+            platform="linux",
+            date="2026-08-08",
+            model_family=PromptContext._detect_model_family(model_name),
+        )
+        prompt = pm.get_system_prompt(ctx, template_name="coder")
+        normalized_prompt = " ".join(prompt.split())
+
+        assert "Read the relevant code and instructions before editing" in normalized_prompt
+        assert "smallest correct change" in normalized_prompt
+        assert "material ambiguity" in normalized_prompt
+        assert "destructive or shared" in normalized_prompt
+        assert "Never commit, push, publish" in normalized_prompt
+        assert "narrowest test, type check, lint, or direct check" in normalized_prompt
+        assert "workspace-relative paths rather than absolute paths" in normalized_prompt
+
+    @pytest.mark.parametrize(
+        "model_name",
+        ["unknown-model", "claude-sonnet-4"],
+    )
+    def test_coder_templates_omit_time_and_known_conflicts(self, model_name):
+        """Rendered prompts contain neither volatile time nor superseded rules."""
+        pm = get_prompt_manager()
+        ctx = PromptContext(
+            working_dir="/workspace/project",
+            platform="linux",
+            date="2026-08-08",
+            model_family=PromptContext._detect_model_family(model_name),
+        )
         prompt = pm.get_system_prompt(ctx, template_name="coder")
 
-        # Key rules should be present
-        assert "READ BEFORE EDITING" in prompt or "read" in prompt.lower()
-        assert "AUTONOMOUS" in prompt or "autonomous" in prompt.lower()
+        assert "Date: 2026-08-08" in prompt
+        assert "Time:" not in prompt
+        assert not re.search(r"\b\d{2}:\d{2}:\d{2}\b", prompt)
+        assert "current_time" not in prompt
+        assert "Always use absolute paths" not in prompt
+        assert "no such limits exist" not in prompt
+        assert "Run tests immediately after each modification" not in prompt
+        assert "Use `&` for background processes" not in prompt
+        assert "${" not in prompt
+        assert "{{if" not in prompt
 
     def test_workflow_section_present(self):
         """Test that workflow section is in the prompt."""

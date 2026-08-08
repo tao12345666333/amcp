@@ -37,7 +37,6 @@ class PromptContext:
         working_dir: Current working directory
         platform: Operating system platform
         date: Current date string
-        time: Current time string
         is_git_repo: Whether working directory is a git repository
         git_branch: Current git branch name
         git_status: Git status summary
@@ -52,7 +51,6 @@ class PromptContext:
     working_dir: str = ""
     platform: str = ""
     date: str = ""
-    time: str = ""
     is_git_repo: bool = False
     git_branch: str = ""
     git_status: str = ""
@@ -93,7 +91,6 @@ class PromptContext:
             working_dir=work_dir,
             platform=platform.system().lower(),
             date=now.strftime("%Y-%m-%d"),
-            time=now.strftime("%H:%M:%S"),
             available_tools=available_tools or [],
             skills_xml=skills_xml,
             memory_files=memory_files or [],
@@ -261,7 +258,6 @@ class PromptManager:
             "working_dir": context.working_dir,
             "platform": context.platform,
             "date": context.date,
-            "time": context.time,
             "is_git_repo": "yes" if context.is_git_repo else "no",
             "git_branch": context.git_branch,
             "git_status": context.git_status,
@@ -365,7 +361,8 @@ class PromptManager:
 
     def _get_default_template(self) -> str:
         """Get the default built-in template."""
-        return DEFAULT_CODER_TEMPLATE
+        default_path = Path(__file__).parent / "templates" / "coder.md"
+        return default_path.read_text(encoding="utf-8")
 
 
 # Global prompt manager instance
@@ -388,7 +385,7 @@ These rules override everything else. Follow them strictly:
 
 1. **READ BEFORE EDITING**: Never edit a file you haven't already read in this conversation. Pay close attention to exact formatting, indentation, and whitespace - these must match exactly in your edits.
 2. **BE AUTONOMOUS**: Don't ask questions when you can search, read, think, decide, and act. Break complex tasks into steps and complete them all. Only stop for actual blocking errors.
-3. **TEST AFTER CHANGES**: Run tests immediately after each modification when applicable.
+3. **VERIFY CHANGES**: Run the narrowest useful verification after a coherent change.
 4. **BE CONCISE**: Keep output concise (default <4 lines), unless explaining complex changes or asked for detail.
 5. **USE EXACT MATCHES**: When editing, match text exactly including whitespace, indentation, and line breaks.
 6. **NEVER COMMIT**: Unless user explicitly says "commit".
@@ -430,7 +427,7 @@ For every task, follow this sequence internally (don't narrate it):
 - Before editing: verify exact whitespace and indentation
 - Use exact text for find/replace (include whitespace)
 - Make one logical change at a time
-- After each change: run tests if applicable
+- After a coherent change: run the narrowest useful verification
 - If tests fail: fix immediately
 - If edit fails: read more context, don't guess
 
@@ -497,14 +494,14 @@ Common errors:
 <tool_usage>
 - Search before assuming
 - Read files before editing
-- Always use absolute paths for file operations
+- Follow each tool schema; workspace file tools use workspace-relative paths
 - Use the task tool for complex searches or multi-step operations
 - Run tools in parallel when safe (no dependencies)
 - Summarize tool output for user (they don't see raw output)
 
 For bash commands:
 - Briefly explain commands that modify the system
-- Use `&` for background processes that won't stop on their own
+- Use runtime-supported process controls for long-running commands
 - Avoid interactive commands - use non-interactive versions
 - Combine related commands to save time
 </tool_usage>
@@ -513,7 +510,6 @@ For bash commands:
 Working directory: ${working_dir}
 Platform: ${platform}
 Date: ${date}
-Time: ${time}
 Is git repo: ${is_git_repo}
 {{if is_git_repo}}
 Git branch: ${git_branch}
