@@ -174,10 +174,18 @@ class Agent:
     - Event callbacks for real-time monitoring
     """
 
-    def __init__(self, agent_spec: ResolvedAgentSpec | None = None, session_id: str | None = None):
+    def __init__(
+        self,
+        agent_spec: ResolvedAgentSpec | None = None,
+        session_id: str | None = None,
+        *,
+        ephemeral: bool = False,
+    ):
+        """Initialize an agent, optionally without automatic durable projections."""
         from .task import TaskManager
 
         self.agent_spec = agent_spec or get_default_agent_spec()
+        self.ephemeral = ephemeral
         self.console = Console()
         self.tool_registry = ToolRegistry()
         self.execution_context: dict[str, Any] = {}
@@ -246,8 +254,9 @@ class Agent:
             self._on_runtime_event,
         )
 
-        # Load existing conversation history if available
-        self._load_conversation_history()
+        # Ephemeral agents keep turn state in memory but never load a user session.
+        if not self.ephemeral:
+            self._load_conversation_history()
 
         # If this is a new session (no existing history), reset the current conversation counter
         if not self.conversation_history:
@@ -277,10 +286,11 @@ class Agent:
         """Save the current canonical state, propagating commit failures."""
         candidate = self._session_state.clone()
         candidate = self._capture_session_state(candidate)
-        candidate.revision = self._session_store.save(
-            candidate.to_snapshot(),
-            expected_revision=candidate.revision,
-        )
+        if not self.ephemeral:
+            candidate.revision = self._session_store.save(
+                candidate.to_snapshot(),
+                expected_revision=candidate.revision,
+            )
         self._session_state = candidate
         self._apply_session_state(candidate)
 
@@ -322,10 +332,11 @@ class Agent:
 
     def _commit_session_state(self, candidate: SessionState) -> None:
         """Persist a complete candidate before publishing it in memory."""
-        candidate.revision = self._session_store.save(
-            candidate.to_snapshot(),
-            expected_revision=candidate.revision,
-        )
+        if not self.ephemeral:
+            candidate.revision = self._session_store.save(
+                candidate.to_snapshot(),
+                expected_revision=candidate.revision,
+            )
         self._session_state = candidate
         self._apply_session_state(candidate)
 
@@ -471,7 +482,7 @@ class Agent:
             if active_turn is not None:
                 event_data["turn_id"] = active_turn.id
                 self._runtime.publish_turn_event(active_turn.id, event_type, event_data)
-        if event_type.startswith(("turn.", "tool.", "provider.", "llm.", "context.", "memory.")):
+        if not self.ephemeral and event_type.startswith(("turn.", "tool.", "provider.", "llm.", "context.", "memory.")):
             try:
                 self._timeline_store.append(
                     event_type,
@@ -969,15 +980,16 @@ class Agent:
                     covered_turn_count = max(len(draft.turns) - preserve_turns, 0)
                     previous_covered_turns = draft.checkpoint.covered_turn_count if draft.checkpoint is not None else 0
                     if covered_turn_count > previous_covered_turns:
-                        status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
-                        await self._run_memory_review(
-                            conversation_snapshot=history_to_add,
-                            system_prompt=system_prompt,
-                            work_dir=work_dir,
-                            status=status,
-                            cfg=turn_config,
-                        )
-                        self._last_memory_review_turn_count = len(draft.turns) + 1
+                        if not self.ephemeral:
+                            status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
+                            await self._run_memory_review(
+                                conversation_snapshot=history_to_add,
+                                system_prompt=system_prompt,
+                                work_dir=work_dir,
+                                status=status,
+                                cfg=turn_config,
+                            )
+                            self._last_memory_review_turn_count = len(draft.turns) + 1
                         status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
                         covered_message_count = draft.turns[covered_turn_count - 1].end_message
                         previous_message_count = (
@@ -1039,7 +1051,10 @@ class Agent:
                     turn_messages,
                 )
                 turn_count = self._conversation_turn_count(draft.messages)
-                periodic_review_due = turn_count - self._last_memory_review_turn_count >= MEMORY_REVIEW_TURN_INTERVAL
+                periodic_review_due = (
+                    not self.ephemeral
+                    and turn_count - self._last_memory_review_turn_count >= MEMORY_REVIEW_TURN_INTERVAL
+                )
                 if periodic_review_due:
                     draft.last_memory_review_turn_count = turn_count
                 self._commit_session_state(draft)
@@ -1051,29 +1066,30 @@ class Agent:
                         cfg=turn_config,
                     )
 
-                # Log to memory history
-                try:
-                    memory_mgr = get_memory_manager(self._resolve_memory_project_root(work_dir))
-                    summary = self._format_conversation_history_entry(user_input, result)
-                    memory_mgr.append_history(
-                        content=summary,
-                        session_id=self.session_id,
-                        tags=["conversation"],
-                        scope=self._memory_history_scope(work_dir),
-                    )
-                except Exception as e:
-                    logger.debug(f"Memory history logging failed (non-critical): {e}")
+                if not self.ephemeral:
+                    # Best-effort projections for normal persistent conversations.
+                    try:
+                        memory_mgr = get_memory_manager(self._resolve_memory_project_root(work_dir))
+                        summary = self._format_conversation_history_entry(user_input, result)
+                        memory_mgr.append_history(
+                            content=summary,
+                            session_id=self.session_id,
+                            tags=["conversation"],
+                            scope=self._memory_history_scope(work_dir),
+                        )
+                    except Exception as e:
+                        logger.debug(f"Memory history logging failed (non-critical): {e}")
 
-                try:
-                    get_transcript_store().append_turn(
-                        session_id=self.session_id,
-                        user=user_input,
-                        assistant=result,
-                        source=str(self.execution_context.get("source", "agent")),
-                        chat_id=self.execution_context.get("telegram_chat_id"),
-                    )
-                except Exception as e:
-                    logger.debug(f"Transcript indexing failed (non-critical): {e}")
+                    try:
+                        get_transcript_store().append_turn(
+                            session_id=self.session_id,
+                            user=user_input,
+                            assistant=result,
+                            source=str(self.execution_context.get("source", "agent")),
+                            chat_id=self.execution_context.get("telegram_chat_id"),
+                        )
+                    except Exception as e:
+                        logger.debug(f"Transcript indexing failed (non-critical): {e}")
 
                 return result
 
@@ -1191,6 +1207,8 @@ class Agent:
         persist: bool = True,
     ) -> None:
         """Schedule an isolated memory review every N user turns."""
+        if self.ephemeral:
+            return
         turn_count = self._conversation_turn_count(conversation_snapshot)
         if turn_count - self._last_memory_review_turn_count < MEMORY_REVIEW_TURN_INTERVAL:
             return
@@ -1211,6 +1229,8 @@ class Agent:
         cfg: AMCPConfig | None = None,
     ) -> None:
         """Schedule a best-effort review after its checkpoint is committed."""
+        if self.ephemeral:
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as exc:
@@ -1307,10 +1327,11 @@ class Agent:
                 agent_name=self.name,
                 revision=self._session_state.revision,
             )
-            candidate.revision = self._session_store.save(
-                candidate.to_snapshot(),
-                expected_revision=candidate.revision,
-            )
+            if not self.ephemeral:
+                candidate.revision = self._session_store.save(
+                    candidate.to_snapshot(),
+                    expected_revision=candidate.revision,
+                )
             self._session_state = candidate
             self._apply_session_state(candidate)
             self.current_request_llm_calls = 0
@@ -2234,6 +2255,8 @@ class Agent:
 def create_agent_from_config(
     config: AgentConfig,
     session_id: str | None = None,
+    *,
+    ephemeral: bool = False,
 ) -> Agent:
     """
     Create an Agent from an AgentConfig.
@@ -2243,6 +2266,7 @@ def create_agent_from_config(
     Args:
         config: AgentConfig from the multi_agent module
         session_id: Optional session ID for conversation persistence
+        ephemeral: Disable automatic session, timeline, history, and transcript persistence
 
     Returns:
         Configured Agent instance
@@ -2264,7 +2288,7 @@ def create_agent_from_config(
         can_delegate=config.can_delegate,
     )
 
-    return Agent(agent_spec=spec, session_id=session_id)
+    return Agent(agent_spec=spec, session_id=session_id, ephemeral=ephemeral)
 
 
 def create_agent_by_name(

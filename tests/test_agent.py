@@ -838,6 +838,63 @@ class TestAgentHistoryManagement:
                     {"role": "assistant", "content": "hello"},
                 ]
 
+    @pytest.mark.asyncio
+    async def test_ephemeral_agent_keeps_turn_in_memory_without_durable_projections(self, tmp_path):
+        """Ephemeral turns run normally without session, timeline, history, or transcript writes."""
+        config = AMCPConfig(
+            servers={},
+            chat=ChatConfig(model="test-model"),
+            context=ContextConfig(),
+        )
+        memory_manager = MagicMock()
+        transcript_store = MagicMock()
+        with (
+            patch("amcp.agent.Path.home", return_value=tmp_path),
+            patch("amcp.agent.load_config", return_value=config),
+            patch(
+                "amcp.agent.run_user_prompt_hooks",
+                new=AsyncMock(return_value=HookOutput()),
+            ),
+            patch("amcp.llm.create_llm_client"),
+            patch("amcp.agent.get_memory_manager", return_value=memory_manager),
+            patch("amcp.agent.get_transcript_store", return_value=transcript_store) as transcript_getter,
+        ):
+            agent = Agent(session_id="task-child", ephemeral=True)
+            with (
+                patch.object(agent, "_get_system_prompt", return_value="system"),
+                patch.object(
+                    agent,
+                    "_build_tools_and_registry",
+                    new=AsyncMock(return_value=([], {})),
+                ),
+                patch.object(
+                    agent,
+                    "_run_with_tools",
+                    new=AsyncMock(return_value=("done", [])),
+                ),
+                patch.object(agent._session_store, "save") as save,
+                patch.object(agent._timeline_store, "append") as append_timeline,
+                patch.object(agent, "_schedule_periodic_memory_review") as schedule_review,
+            ):
+                agent._emit_event("turn.started", {"turn_id": "turn-1"})
+                result = await agent._process_message(
+                    "delegated work",
+                    tmp_path,
+                    stream=False,
+                    show_progress=False,
+                )
+
+        assert result == "done"
+        assert [message["role"] for message in agent.conversation_history] == ["user", "assistant"]
+        save.assert_not_called()
+        append_timeline.assert_not_called()
+        schedule_review.assert_not_called()
+        memory_manager.append_history.assert_not_called()
+        transcript_getter.assert_not_called()
+        transcript_store.append_turn.assert_not_called()
+        assert not agent.session_file.exists()
+        assert not agent._timeline_store.path.exists()
+
 
 class TestAgentContextFit:
     def test_fit_tool_context_synthesizes_missing_tool_results(self):

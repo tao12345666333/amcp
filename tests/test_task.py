@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from amcp.task import (
+    DelegationEnvelope,
     Task,
     TaskManager,
     TaskPriority,
@@ -196,8 +197,9 @@ class TestTaskManager:
         agents = []
 
         class FakeAgent:
-            def __init__(self, config=None):
+            def __init__(self, config=None, *, ephemeral=False):
                 self.closed = False
+                assert ephemeral
                 agents.append(self)
 
             async def run(self, **kwargs):
@@ -345,7 +347,10 @@ class TestTaskManager:
             async def close(self):
                 pass
 
-        with patch("amcp.agent.create_agent_from_config", side_effect=lambda config: FakeAgent()):
+        with patch(
+            "amcp.agent.create_agent_from_config",
+            side_effect=lambda config, *, ephemeral: FakeAgent(),
+        ):
             tasks = []
             for description in ("one", "two", "three"):
                 task = await manager.create_task(description, "explorer")
@@ -402,6 +407,96 @@ class TestTaskTool:
         )
         assert "Task created successfully" in result
         assert "Task ID:" in result
+
+    @pytest.mark.asyncio
+    async def test_structured_envelope_is_rendered_and_runtime_workspace_is_trusted(self, tmp_path):
+        """Only envelope fields reach the prompt; workspace remains runtime-owned."""
+        manager = TaskManager(max_concurrent=1)
+        tool = TaskTool(manager=manager, session_id="parent", work_dir=tmp_path)
+        observed = {}
+
+        class FakeAgent:
+            async def run(self, **kwargs):
+                observed.update(kwargs)
+                return "done"
+
+            async def close(self):
+                observed["closed"] = True
+
+        def create_agent(_config, *, ephemeral):
+            observed["ephemeral"] = ephemeral
+            return FakeAgent()
+
+        envelope = {
+            "goal": "Implement the parser",
+            "known_context": "Failure occurs for empty input.",
+            "relevant_files": ["src/parser.py"],
+            "constraints": ["Do not change the public API"],
+            "validation_required": ["pytest tests/test_parser.py"],
+            "expected_return_shape": "Summary and test result",
+        }
+        with patch("amcp.agent.create_agent_from_config", side_effect=create_agent):
+            result = await tool.execute(
+                action="create",
+                envelope=envelope,
+                agent_type="focused_coder",
+                work_dir="/untrusted/model/path",
+            )
+            task_id = next(line.split(":", 1)[1].strip() for line in result.splitlines() if "Task ID:" in line)
+            task = await manager.wait_for_task(task_id, timeout=1)
+
+        assert observed["ephemeral"] is True
+        assert observed["work_dir"] == tmp_path.resolve()
+        assert observed["closed"] is True
+        assert (
+            observed["user_input"]
+            == """# Delegated task
+
+## Goal
+Implement the parser
+
+## Known context / evidence
+Failure occurs for empty input.
+
+## Relevant files
+- src/parser.py
+
+## Constraints / non-goals
+- Do not change the public API
+
+## Validation required
+- pytest tests/test_parser.py
+
+## Expected return shape
+Summary and test result"""
+        )
+        assert "/untrusted/model/path" not in observed["user_input"]
+        assert task.work_dir == tmp_path.resolve()
+
+    def test_legacy_description_maps_to_envelope_goal(self):
+        """Existing description-only callers retain their task meaning."""
+        task = Task.create("Inspect the code", agent_type="explorer")
+
+        assert task.envelope == DelegationEnvelope(goal="Inspect the code")
+        assert task.envelope.render() == "# Delegated task\n\n## Goal\nInspect the code"
+
+        direct = Task("task-id", "Inspect the code", "explorer")
+        assert direct.envelope == DelegationEnvelope(goal="Inspect the code")
+
+    @pytest.mark.asyncio
+    async def test_invalid_structured_envelope_is_rejected(self, tool):
+        """Runtime validation matches the schema rather than dropping malformed context."""
+        malformed = await tool.execute(
+            action="create",
+            envelope={"goal": "Inspect", "relevant_files": "src/parser.py"},
+        )
+        unknown = await tool.execute(
+            action="create",
+            envelope={"goal": "Inspect", "work_dir": "/untrusted"},
+        )
+
+        assert malformed == "Error: 'envelope.relevant_files' must be an array of strings"
+        assert unknown == "Error: unknown envelope fields: work_dir"
 
     @pytest.mark.asyncio
     async def test_create_missing_description(self, tool):

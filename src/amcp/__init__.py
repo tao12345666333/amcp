@@ -31,6 +31,7 @@ __all__ = [
     "EventPriority",
     "get_event_bus",
     # Task system
+    "DelegationEnvelope",
     "Task",
     "TaskManager",
     "TaskState",
@@ -181,6 +182,7 @@ from .skills import (
     get_skill_manager,
 )
 from .task import (
+    DelegationEnvelope,
     Task,
     TaskManager,
     TaskPriority,

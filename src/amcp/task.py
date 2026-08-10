@@ -78,6 +78,90 @@ class TaskPriority(Enum):
     URGENT = 3
 
 
+@dataclass(frozen=True)
+class DelegationEnvelope:
+    """Explicit, minimal context passed from a parent agent to a task child."""
+
+    goal: str
+    known_context: str | None = None
+    relevant_files: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    validation_required: list[str] = field(default_factory=list)
+    expected_return_shape: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> DelegationEnvelope:
+        """Build an envelope from model-supplied structured fields."""
+        allowed_fields = {
+            "goal",
+            "known_context",
+            "relevant_files",
+            "constraints",
+            "validation_required",
+            "expected_return_shape",
+        }
+        unknown_fields = sorted(set(value) - allowed_fields)
+        if unknown_fields:
+            raise ValueError(f"unknown envelope fields: {', '.join(unknown_fields)}")
+        goal = value.get("goal")
+        if not isinstance(goal, str) or not goal.strip():
+            raise ValueError("'envelope.goal' must be a non-empty string")
+        return cls(
+            goal=goal.strip(),
+            known_context=_structured_optional_text(value, "known_context"),
+            relevant_files=_structured_string_list(value, "relevant_files"),
+            constraints=_structured_string_list(value, "constraints"),
+            validation_required=_structured_string_list(value, "validation_required"),
+            expected_return_shape=_structured_optional_text(value, "expected_return_shape"),
+        )
+
+    def render(self) -> str:
+        """Render a stable user prompt without adding trusted runtime metadata."""
+        sections = ["# Delegated task", "", "## Goal", self.goal]
+        if self.known_context:
+            sections.extend(["", "## Known context / evidence", self.known_context])
+        _append_list_section(sections, "Relevant files", self.relevant_files)
+        _append_list_section(sections, "Constraints / non-goals", self.constraints)
+        _append_list_section(sections, "Validation required", self.validation_required)
+        if self.expected_return_shape:
+            sections.extend(["", "## Expected return shape", self.expected_return_shape])
+        return "\n".join(sections)
+
+
+def _optional_text(value: Any) -> str | None:
+    """Normalize an optional envelope text field."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _structured_optional_text(value: dict[str, Any], field_name: str) -> str | None:
+    """Validate and normalize one optional structured text field."""
+    if field_name not in value or value[field_name] is None:
+        return None
+    field_value = value[field_name]
+    if not isinstance(field_value, str):
+        raise ValueError(f"'envelope.{field_name}' must be a string")
+    return field_value.strip() or None
+
+
+def _structured_string_list(value: dict[str, Any], field_name: str) -> list[str]:
+    """Validate and normalize one optional structured string-list field."""
+    if field_name not in value or value[field_name] is None:
+        return []
+    field_value = value[field_name]
+    if not isinstance(field_value, list) or any(not isinstance(item, str) for item in field_value):
+        raise ValueError(f"'envelope.{field_name}' must be an array of strings")
+    return [item.strip() for item in field_value if item.strip()]
+
+
+def _append_list_section(sections: list[str], title: str, items: list[str]) -> None:
+    """Append a non-empty Markdown list section to an envelope prompt."""
+    if items:
+        sections.extend(["", f"## {title}", *(f"- {item}" for item in items)])
+
+
 @dataclass
 class Task:
     """A task that can be executed by a sub-agent.
@@ -85,6 +169,7 @@ class Task:
     Attributes:
         id: Unique task identifier
         description: Human-readable task description
+        envelope: Structured context rendered as the child user prompt
         agent_type: Type of agent to use (e.g., "explorer", "focused_coder")
         state: Current task state
         priority: Task priority
@@ -101,6 +186,7 @@ class Task:
     id: str
     description: str
     agent_type: str
+    envelope: DelegationEnvelope | None = field(default=None, kw_only=True)
     state: TaskState = TaskState.PENDING
     priority: TaskPriority = TaskPriority.NORMAL
     parent_session_id: str | None = None
@@ -114,14 +200,20 @@ class Task:
     _future: asyncio.Future | None = field(default=None, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
 
+    def __post_init__(self) -> None:
+        """Map legacy direct construction to a goal-only delegation envelope."""
+        self.envelope = self.envelope or DelegationEnvelope(goal=self.description)
+        self.description = self.envelope.goal
+
     @classmethod
     def create(
         cls,
-        description: str,
+        description: str | None = None,
         agent_type: str = "focused_coder",
         priority: TaskPriority = TaskPriority.NORMAL,
         parent_session_id: str | None = None,
         work_dir: Path | None = None,
+        envelope: DelegationEnvelope | None = None,
         **metadata: Any,
     ) -> Task:
         """Create a new task.
@@ -132,14 +224,20 @@ class Task:
             priority: Task priority
             parent_session_id: Parent session ID
             work_dir: Trusted working directory inherited from the parent agent
+            envelope: Structured delegation context; description maps to its goal by default
             **metadata: Additional metadata
 
         Returns:
             New Task instance
         """
+        resolved_description = _optional_text(description)
+        if envelope is None and not resolved_description:
+            raise ValueError("description or envelope goal is required")
+        resolved_envelope = envelope or DelegationEnvelope(goal=resolved_description or "")
         return cls(
             id=str(uuid.uuid4())[:8],
-            description=description,
+            description=resolved_envelope.goal,
+            envelope=resolved_envelope,
             agent_type=agent_type,
             priority=priority,
             parent_session_id=parent_session_id,
@@ -162,9 +260,19 @@ class Task:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary representation."""
+        envelope = self.envelope
+        assert envelope is not None
         return {
             "id": self.id,
             "description": self.description,
+            "envelope": {
+                "goal": envelope.goal,
+                "known_context": envelope.known_context,
+                "relevant_files": envelope.relevant_files,
+                "constraints": envelope.constraints,
+                "validation_required": envelope.validation_required,
+                "expected_return_shape": envelope.expected_return_shape,
+            },
             "agent_type": self.agent_type,
             "state": self.state.value,
             "priority": self.priority.value,
@@ -220,12 +328,13 @@ class TaskManager:
 
     async def create_task(
         self,
-        description: str,
+        description: str | None = None,
         agent_type: str = "focused_coder",
         priority: TaskPriority = TaskPriority.NORMAL,
         parent_session_id: str | None = None,
         work_dir: Path | None = None,
         auto_start: bool = True,
+        envelope: DelegationEnvelope | None = None,
         **metadata: Any,
     ) -> Task:
         """Create a new task.
@@ -237,11 +346,16 @@ class TaskManager:
             parent_session_id: Parent session ID
             work_dir: Trusted working directory inherited from the parent agent
             auto_start: Whether to start the task immediately
+            envelope: Structured delegation context; description remains backward compatible
             **metadata: Additional metadata
 
         Returns:
             The created Task
         """
+        resolved_description = _optional_text(description)
+        if envelope is None and not resolved_description:
+            raise ValueError("description or envelope goal is required")
+
         # Validate agent type
         registry = get_agent_registry()
         if agent_type not in registry.list_agents():
@@ -250,11 +364,12 @@ class TaskManager:
 
         # Create task
         task = Task.create(
-            description=description,
+            description=resolved_description,
             agent_type=agent_type,
             priority=priority,
             parent_session_id=parent_session_id,
             work_dir=work_dir,
+            envelope=envelope,
             **metadata,
         )
 
@@ -265,13 +380,13 @@ class TaskManager:
         await emit_task_event(
             EventType.TASK_CREATED,
             task.id,
-            description,
+            task.description,
             parent_session_id,
             agent_type=agent_type,
             priority=priority.value,
         )
 
-        logger.info(f"Created task {task.id}: {description[:50]}...")
+        logger.info(f"Created task {task.id}: {task.description[:50]}...")
 
         if auto_start:
             await self.start_task(task.id)
@@ -332,7 +447,7 @@ class TaskManager:
                     # Create a custom subagent config
                     config = create_subagent_config(
                         parent_name="task_manager",
-                        task_description=task.description,
+                        task_description="Complete the delegated task in the user prompt.",
                     )
 
                 # Ensure it's a subagent
@@ -341,12 +456,14 @@ class TaskManager:
                     config = registry.get("focused_coder") or config
 
                 # Create agent
-                agent = create_agent_from_config(config)
+                agent = create_agent_from_config(config, ephemeral=True)
 
                 try:
                     # Execute the task in the same trusted workspace as its parent.
+                    envelope = task.envelope
+                    assert envelope is not None
                     result = await agent.run(
-                        user_input=task.description,
+                        user_input=envelope.render(),
                         work_dir=task.work_dir,
                         stream=False,
                         show_progress=False,
@@ -740,7 +857,42 @@ Example:
             },
             "description": {
                 "type": "string",
-                "description": "Task description (required for create)",
+                "description": "Legacy task description for create; maps to envelope.goal",
+            },
+            "envelope": {
+                "type": "object",
+                "description": "Explicit context for the delegated child (preferred for create)",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "Goal and expected outcome",
+                    },
+                    "known_context": {
+                        "type": "string",
+                        "description": "Relevant known context or evidence only",
+                    },
+                    "relevant_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Files the child should inspect or change",
+                    },
+                    "constraints": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Constraints and explicit non-goals",
+                    },
+                    "validation_required": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Checks the child must run",
+                    },
+                    "expected_return_shape": {
+                        "type": "string",
+                        "description": "Required shape of the child's result",
+                    },
+                },
+                "required": ["goal"],
+                "additionalProperties": False,
             },
             "agent_type": {
                 "type": "string",
@@ -757,6 +909,7 @@ Example:
             },
         },
         "required": ["action"],
+        "additionalProperties": False,
     }
 
     def __init__(
@@ -802,18 +955,28 @@ Example:
 
     async def _create_task(self, **kwargs: Any) -> str:
         """Create a new task."""
-        description = kwargs.get("description")
-        if not description:
-            return "Error: 'description' is required for create action"
+        raw_envelope = kwargs.get("envelope")
+        if raw_envelope is not None and not isinstance(raw_envelope, dict):
+            return "Error: 'envelope' must be an object"
+        try:
+            envelope = DelegationEnvelope.from_dict(raw_envelope) if raw_envelope is not None else None
+        except ValueError as exc:
+            return f"Error: {exc}"
+        description = _optional_text(kwargs.get("description"))
+        if envelope is None and not description:
+            return "Error: 'description' or 'envelope.goal' is required for create action"
+        if envelope is None:
+            envelope = DelegationEnvelope(goal=description or "")
 
         agent_type = kwargs.get("agent_type", "focused_coder")
 
         try:
             task = await self._manager.create_task(
-                description=description,
+                description=envelope.goal,
                 agent_type=agent_type,
                 parent_session_id=self.session_id,
                 work_dir=self.work_dir,
+                envelope=envelope,
             )
             return f"""Task created successfully!
 
