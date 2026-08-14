@@ -1142,6 +1142,18 @@ class Agent:
 
             self._emit_event("memory.review_start", {})
             memory_project_root = self._resolve_memory_project_root(work_dir)
+            memory_executor = ToolExecutor(
+                context=ToolExecutionContext(
+                    session_id=self.session_id,
+                    workspace_root=memory_project_root,
+                    turn_id="memory-review",
+                ),
+                capability=ToolCapability.from_spec(["memory"], [], False),
+                exposed_tools={"memory"},
+                registry=registry,
+                mcp_registry={},
+                config=cfg,
+            )
 
             result = await run_memory_review(
                 client=client,
@@ -1149,8 +1161,7 @@ class Agent:
                 system_prompt=system_prompt,
                 conversation_snapshot=conversation_snapshot,
                 tools=memory_tools,
-                tool_registry=registry,
-                project_root=str(memory_project_root),
+                tool_executor=memory_executor,
             )
 
             saved = bool(result and result.strip() != "Nothing to save.")

@@ -1272,9 +1272,10 @@ Example for fixing a bug:
 class TodoTool(BaseTool):
     """Tool for managing a todo list to track tasks."""
 
-    # Shared state across all instances — protected by a class-level lock
-    _todos: list[dict[str, str]] = []
-    _lock: threading.Lock = threading.Lock()
+    def __init__(self) -> None:
+        super().__init__()
+        self._todos_by_session: dict[str, list[dict[str, str]]] = {}
+        self._lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -1287,18 +1288,24 @@ class TodoTool(BaseTool):
             "action='write' with a complete list to update. Helps organize complex multi-step tasks."
         )
 
-    def execute(self, action: str, todos: list[dict[str, str]] | None = None) -> ToolResult:  # type: ignore[override]
+    def execute(  # type: ignore[override]
+        self,
+        action: str,
+        todos: list[dict[str, str]] | None = None,
+        *,
+        _session_id: str,
+    ) -> ToolResult:
         """Execute todo operations."""
         if action == "read":
-            return self._read_todos()
+            return self._read_todos(_session_id)
         elif action == "write":
-            return self._write_todos(todos or [])
+            return self._write_todos(_session_id, todos or [])
         else:
             return ToolResult(success=False, content="", error=f"Invalid action '{action}'. Use 'read' or 'write'.")
 
-    def _read_todos(self) -> ToolResult:
-        with TodoTool._lock:
-            todos = list(TodoTool._todos)
+    def _read_todos(self, session_id: str) -> ToolResult:
+        with self._lock:
+            todos = list(self._todos_by_session.get(session_id, []))
 
         if not todos:
             return ToolResult(success=True, content="No todos.", metadata={"count": 0})
@@ -1313,7 +1320,7 @@ class TodoTool(BaseTool):
 
         return ToolResult(success=True, content="\n".join(lines), metadata={"count": len(todos)})
 
-    def _write_todos(self, todos: list[dict[str, str]]) -> ToolResult:
+    def _write_todos(self, session_id: str, todos: list[dict[str, str]]) -> ToolResult:
         # Validate todos
         valid_statuses = {"pending", "in_progress", "completed", "cancelled"}
         for i, todo in enumerate(todos):
@@ -1327,8 +1334,8 @@ class TodoTool(BaseTool):
         if len(ids) != len(set(ids)):
             return ToolResult(success=False, content="", error="Todo IDs must be unique")
 
-        with TodoTool._lock:
-            TodoTool._todos = todos
+        with self._lock:
+            self._todos_by_session[session_id] = todos
         return ToolResult(
             success=True,
             content=f"Updated {len(todos)} todos.",

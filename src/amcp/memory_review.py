@@ -19,6 +19,8 @@ import asyncio
 import logging
 from typing import Any
 
+from .tool_execution import ToolExecutor, normalize_tool_calls
+
 logger = logging.getLogger(__name__)
 
 MEMORY_GUIDANCE = """\
@@ -90,8 +92,7 @@ async def run_memory_review(
     system_prompt: str,
     conversation_snapshot: list[dict[str, Any]],
     tools: list[dict[str, Any]],
-    tool_registry: Any,
-    project_root: str | None = None,
+    tool_executor: ToolExecutor,
 ) -> str:
     """Run a post-turn memory review.
 
@@ -105,14 +106,11 @@ async def run_memory_review(
         system_prompt: The current system prompt (for context).
         conversation_snapshot: Recent conversation messages.
         tools: Available tool specs (must include memory tool).
-        tool_registry: Tool registry for executing tool calls.
-        project_root: Current project root for project-scoped memory writes.
+        tool_executor: Memory-only executor bound to trusted runtime context.
 
     Returns:
         The review result text (or empty string on failure).
     """
-    import json
-
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         *conversation_snapshot,
@@ -130,11 +128,10 @@ async def run_memory_review(
             if not resp.tool_calls:
                 return resp.content or ""
 
-            # Execute tool calls
-            for tc in resp.tool_calls:
-                tool_name = tc["name"]
-                tool_id = tc["id"]
-                args = json.loads(tc["arguments"] or "{}")
+            tool_calls = normalize_tool_calls(resp.tool_calls)
+            for tc in tool_calls:
+                tool_name = tc.name
+                tool_id = tc.id
 
                 # Add assistant message with tool call
                 messages.append(
@@ -145,21 +142,22 @@ async def run_memory_review(
                             {
                                 "id": tool_id,
                                 "type": "function",
-                                "function": {"name": tool_name, "arguments": tc["arguments"]},
+                                "function": {"name": tool_name, "arguments": tc.raw_arguments},
                             }
                         ],
                     }
                 )
 
                 # Execute the tool
-                try:
-                    exec_args = args
-                    if tool_name == "memory" and project_root:
-                        exec_args = {**args, "project_root": project_root}
-                    tool_result = tool_registry.execute_tool(tool_name, **exec_args)
-                    result_text = tool_result.content if tool_result.success else f"Error: {tool_result.error}"
-                except Exception as e:
-                    result_text = f"Error: {e}"
+                if tc.argument_error:
+                    result_text = f"Tool argument error: {tc.argument_error}"
+                else:
+                    assert tc.arguments is not None
+                    try:
+                        tool_result = await tool_executor.execute(tool_name, tc.arguments)
+                        result_text = tool_result.content if tool_result.success else f"Error: {tool_result.error}"
+                    except Exception as e:
+                        result_text = f"Error: {e}"
 
                 messages.append(
                     {

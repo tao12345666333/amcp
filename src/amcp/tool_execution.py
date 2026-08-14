@@ -234,7 +234,10 @@ class ToolExecutor:
         """Canonicalize model input before hooks or trusted runtime binding."""
         if is_mcp_tool_name(name):
             return dict(arguments)
-        return self.registry.prepare_model_arguments(name, arguments)
+        prepared = self.registry.prepare_model_arguments(name, arguments)
+        if name == "todo":
+            prepared.pop("_session_id", None)
+        return prepared
 
     def _bind_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         args = dict(arguments)
@@ -252,6 +255,8 @@ class ToolExecutor:
             args.pop("cwd", None)
         elif name == "memory":
             args["project_root"] = str(self.context.workspace_root)
+        elif name == "todo":
+            args["_session_id"] = self.context.session_id
         return args
 
     async def _execute_mcp(self, name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -264,6 +269,13 @@ class ToolExecutor:
         response = await call_mcp_tool(server, inner_name, arguments)
         parts = [item.get("text", "") for item in response.get("content", []) or [] if item.get("type") == "text"]
         content = "\n\n".join(parts) or json.dumps(response, ensure_ascii=False)
+        if response.get("is_error"):
+            return ToolResult(
+                success=False,
+                content=content,
+                error=content,
+                metadata={"response": response},
+            )
         return ToolResult(success=True, content=content, metadata={"response": response})
 
     async def _execute_bash(self, arguments: dict[str, Any]) -> ToolResult:

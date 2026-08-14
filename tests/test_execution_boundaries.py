@@ -156,19 +156,51 @@ async def test_mcp_alias_dispatches_to_the_original_tool_name(tmp_path):
         mcp_registry={alias: ("tavily", "tavily.extract")},
         config=AMCPConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
     )
-    call_mcp_tool = AsyncMock(return_value={"content": [{"type": "text", "text": "extracted"}]})
+    response = {
+        "is_error": False,
+        "content": [{"type": "text", "text": "extracted"}],
+        "metadata": {"request_id": "success-1"},
+    }
+    call_mcp_tool = AsyncMock(return_value=response)
 
     with patch("amcp.tool_execution.call_mcp_tool", call_mcp_tool):
         result = await executor.execute(alias, {"url": "https://example.com"})
 
     assert result.success
     assert result.content == "extracted"
+    assert result.metadata == {"response": response}
     server, tool_name, arguments = call_mcp_tool.await_args.args
     assert (server.url, tool_name, arguments) == (
         "https://mcp.example.com/mcp",
         "tavily.extract",
         {"url": "https://example.com"},
     )
+
+
+@pytest.mark.asyncio
+async def test_mcp_error_response_returns_failed_result_with_metadata(tmp_path):
+    alias = "mcp__tavily__tavily_extract"
+    executor = ToolExecutor(
+        context=ToolExecutionContext("session", tmp_path, "turn"),
+        capability=ToolCapability.from_spec(None, [], True),
+        exposed_tools={alias},
+        registry=create_default_tool_registry(enable_task=False),
+        mcp_registry={alias: ("tavily", "tavily.extract")},
+        config=AMCPConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
+    )
+    response = {
+        "is_error": True,
+        "content": [{"type": "text", "text": "upstream rejected the request"}],
+        "metadata": {"request_id": "error-1", "status": 429},
+    }
+
+    with patch("amcp.tool_execution.call_mcp_tool", AsyncMock(return_value=response)):
+        result = await executor.execute(alias, {"url": "https://example.com"})
+
+    assert not result.success
+    assert result.content == "upstream rejected the request"
+    assert result.error == "upstream rejected the request"
+    assert result.metadata == {"response": response}
 
 
 @pytest.mark.asyncio
@@ -203,6 +235,36 @@ async def test_two_workspace_executors_are_isolated(tmp_path):
     )
     assert (first / "same.txt").read_text() == "first"
     assert (second / "same.txt").read_text() == "second"
+
+
+@pytest.mark.asyncio
+async def test_todos_are_isolated_by_trusted_runtime_session(tmp_path):
+    registry = create_default_tool_registry(enable_task=False)
+
+    def todo_executor(session_id):
+        return ToolExecutor(
+            context=ToolExecutionContext(session_id, tmp_path, "turn"),
+            capability=ToolCapability.from_spec(["todo"], [], False),
+            exposed_tools={"todo"},
+            registry=registry,
+            mcp_registry={},
+            config=AMCPConfig(servers={}, chat=None),
+        )
+
+    first = todo_executor("first")
+    second = todo_executor("second")
+    written = await first.execute(
+        "todo",
+        {
+            "action": "write",
+            "todos": [{"id": "1", "content": "first session only"}],
+            "_session_id": "second",
+        },
+    )
+
+    assert written.success
+    assert "first session only" in (await first.execute("todo", {"action": "read"})).content
+    assert "No todos" in (await second.execute("todo", {"action": "read"})).content
 
 
 @pytest.mark.asyncio

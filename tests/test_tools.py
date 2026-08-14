@@ -266,14 +266,10 @@ def test_web_fetch_tool_auto_prefers_exa():
 class TestTodoTool:
     """Tests for TodoTool."""
 
-    def setup_method(self):
-        """Reset todos before each test."""
-        TodoTool._todos = []
-
     def test_read_empty(self):
         """Test reading empty todo list."""
         tool = TodoTool()
-        result = tool.execute(action="read")
+        result = tool.execute(action="read", _session_id="test")
         assert result.success
         assert "No todos" in result.content
 
@@ -284,10 +280,10 @@ class TestTodoTool:
             {"id": "1", "content": "First task", "status": "pending"},
             {"id": "2", "content": "Second task", "status": "in_progress"},
         ]
-        result = tool.execute(action="write", todos=todos)
+        result = tool.execute(action="write", todos=todos, _session_id="test")
         assert result.success
 
-        result = tool.execute(action="read")
+        result = tool.execute(action="read", _session_id="test")
         assert "First task" in result.content
         assert "Second task" in result.content
 
@@ -300,8 +296,8 @@ class TestTodoTool:
             {"id": "3", "content": "Done", "status": "completed"},
             {"id": "4", "content": "Cancelled", "status": "cancelled"},
         ]
-        tool.execute(action="write", todos=todos)
-        result = tool.execute(action="read")
+        tool.execute(action="write", todos=todos, _session_id="test")
+        result = tool.execute(action="read", _session_id="test")
         assert "⬜" in result.content
         assert "🔄" in result.content
         assert "✅" in result.content
@@ -310,14 +306,14 @@ class TestTodoTool:
     def test_invalid_action(self):
         """Test invalid action."""
         tool = TodoTool()
-        result = tool.execute(action="invalid")
+        result = tool.execute(action="invalid", _session_id="test")
         assert not result.success
 
     def test_duplicate_ids_rejected(self):
         """Test duplicate IDs are rejected."""
         tool = TodoTool()
         todos = [{"id": "1", "content": "A"}, {"id": "1", "content": "B"}]
-        result = tool.execute(action="write", todos=todos)
+        result = tool.execute(action="write", todos=todos, _session_id="test")
         assert not result.success
 
     def test_registered_in_registry(self):
