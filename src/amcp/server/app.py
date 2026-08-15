@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .._version import __version__
+from ..application_services import ApplicationServices
 from ..llm import ProviderError, ProviderErrorKind
 from .config import AuthConfig, ServerConfig, get_server_config, set_server_config
 from .events import router as events_router
@@ -48,13 +49,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(f"   Working directory: {config.work_dir or 'current directory'}")
 
     # Initialize session manager
-    session_manager = SessionManager(config)
+    services: ApplicationServices = app.state.application_services
+    session_manager = SessionManager(config, services)
     set_session_manager(session_manager)
 
     # Enable skill hot reload for server runtime.
-    from ..skills import SkillWatcher, get_skill_manager
+    from ..skills import SkillWatcher
 
-    skill_manager = get_skill_manager()
+    skill_manager = services.skill_manager
     skill_manager.discover_skills(config.work_dir)
     skill_watcher = SkillWatcher(skill_manager)
     await skill_watcher.start(project_root=config.work_dir)
@@ -69,7 +71,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print("\n👋 AMCP Server shutting down...")
 
 
-def create_app(config: ServerConfig | None = None) -> FastAPI:
+def create_app(
+    config: ServerConfig | None = None,
+    services: ApplicationServices | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
@@ -86,7 +91,8 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
 
     cfg = get_server_config()
     cfg.validate_security()
-    set_session_manager(SessionManager(cfg))
+    application_services = services or ApplicationServices.default()
+    set_session_manager(SessionManager(cfg, application_services))
 
     # Create FastAPI app
     app = FastAPI(
@@ -99,6 +105,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.state.server_config = cfg
+    app.state.application_services = application_services
 
     # Configure CORS
     if cfg.cors.enabled:

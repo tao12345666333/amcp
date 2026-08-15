@@ -15,7 +15,7 @@ from typing import Any
 
 from ..agent import Agent
 from ..agent_spec import get_default_agent_spec
-from ..multi_agent import get_agent_registry
+from ..application_services import ApplicationServices
 from .config import ServerConfig, get_server_config
 from .models import Session, SessionStatus, TokenUsage
 
@@ -107,8 +107,13 @@ class SessionManager:
     Each session maintains its own Agent instance and conversation history.
     """
 
-    def __init__(self, config: ServerConfig | None = None):
+    def __init__(
+        self,
+        config: ServerConfig | None = None,
+        services: ApplicationServices | None = None,
+    ):
         self.config = config or get_server_config()
+        self.services = services or ApplicationServices.default()
         self._sessions: dict[str, ManagedSession] = {}
         self._lock = asyncio.Lock()
         self._event_listeners: list[Callable[[str, Any], None]] = []
@@ -156,7 +161,11 @@ class SessionManager:
             agent_spec = self._resolve_agent_spec(agent_name)
 
             # Create agent instance
-            agent = Agent(agent_spec=agent_spec, session_id=session_id)
+            agent = Agent(
+                agent_spec=agent_spec,
+                session_id=session_id,
+                services=self.services,
+            )
 
             # Create managed session
             session = ManagedSession(
@@ -463,7 +472,7 @@ class SessionManager:
             Resolved agent specification.
         """
         # Try to get from registry
-        registry = get_agent_registry()
+        registry = self.services.agent_registry
         agent_config = registry.get(agent_name)
 
         if agent_config:

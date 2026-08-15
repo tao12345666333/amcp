@@ -7,6 +7,10 @@ __all__ = [
     "AgentExecutionError",
     "MaxStepsReached",
     "BusyError",
+    "ApplicationServices",
+    "ContextBuilder",
+    "ToolLoop",
+    "TurnService",
     "create_agent_by_name",
     "create_agent_from_config",
     "create_subagent",
@@ -105,6 +109,7 @@ from .agent import (
     list_primary_agents,
     list_subagent_types,
 )
+from .application_services import ApplicationServices
 from .commands import (
     CommandManager,
     CommandResult,
@@ -128,6 +133,7 @@ from .config import (
     ModelConfig,
     TelegramConfig,
 )
+from .context_builder import ContextBuilder
 from .event_bus import (
     Event,
     EventBus,
@@ -189,3 +195,5 @@ from .task import (
     TaskState,
     TaskTool,
 )
+from .tool_loop import ToolLoop
+from .turn_service import TurnService

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import random
-import time
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
@@ -18,50 +16,42 @@ from typing import Any
 
 from rich.console import Console
 from rich.status import Status
-from rich.text import Text
 
 from .agent_spec import ResolvedAgentSpec, get_default_agent_spec
+from .application_services import ApplicationServices
 from .compaction import (
-    CompactionConfig,
     SmartCompactor,
     estimate_request_tokens,
     estimate_tokens,
     get_model_context_window,
 )
 from .config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig, load_config
-from .hooks import (
-    HookDecision,
-    run_post_tool_use_hooks,
-    run_pre_tool_use_hooks,
-    run_user_prompt_hooks,
-)
+from .context_builder import ContextBuilder
+from .hooks import run_post_tool_use_hooks, run_pre_tool_use_hooks, run_user_prompt_hooks
 from .llm import ContextOverflowError, ProviderError, classify_provider_error
 from .mcp_client import list_mcp_tools
-from .mcp_naming import is_mcp_tool_name, mcp_tool_name, unique_function_name
+from .mcp_naming import is_mcp_tool_name, mcp_tool_name
 from .memory import get_memory_manager
-from .memory_review import MEMORY_GUIDANCE, run_memory_review
+from .memory_review import run_memory_review
 from .message_queue import MessagePriority
-from .multi_agent import AgentConfig
+from .multi_agent import AgentConfig, get_agent_registry
 from .progressive.context_budget import ContextBudget, ContextBudgetManager, estimate_text_tokens
 from .progressive.relevance import RelevanceScorer
 from .progressive.skill_view import ProgressiveSkillView
 from .progressive.tool_view import ProgressiveToolView
-from .progressive.usage_tracker import ToolUsageTracker
 from .project_rules import ProjectRulesLoader
 from .runtime import CancellationResult, RuntimeClosedError, SessionRuntime, TurnCancelledError, TurnHandle, TurnRequest
-from .session_search import get_transcript_store
-from .session_state import CompactionCheckpoint, SessionState
+from .session_search import get_transcript_store  # noqa: F401 - legacy patch seam
+from .session_state import SessionState
 from .session_store import SessionStore, SessionTimelineStore
 from .skills import get_skill_manager
 from .tool_execution import (
-    ToolCallProtocolError,
     ToolCapability,
     ToolExecutionContext,
     ToolExecutor,
-    normalize_tool_calls,
 )
-from .tools import ToolRegistry
-from .ui import LiveUI
+from .tool_loop import ToolLoop
+from .turn_service import TurnService
 
 logger = logging.getLogger(__name__)
 
@@ -180,14 +170,17 @@ class Agent:
         session_id: str | None = None,
         *,
         ephemeral: bool = False,
+        services: ApplicationServices | None = None,
     ):
         """Initialize an agent, optionally without automatic durable projections."""
         from .task import TaskManager
 
         self.agent_spec = agent_spec or get_default_agent_spec()
+        self._uses_default_services = services is None
+        self.services = services or ApplicationServices.default()
         self.ephemeral = ephemeral
         self.console = Console()
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = self.services.tool_registry
         self.execution_context: dict[str, Any] = {}
         self.step_count = 0
         self.tool_calls_history: list[dict[str, Any]] = []
@@ -248,6 +241,9 @@ class Agent:
         self._relevance_scorer = RelevanceScorer()
         self._progressive_tool_view = ProgressiveToolView(self._relevance_scorer)
         self._progressive_skill_view = ProgressiveSkillView(self._relevance_scorer)
+        self.context_builder = ContextBuilder(self)
+        self.tool_loop = ToolLoop(self)
+        self.turn_service = TurnService(self)
         self._runtime = SessionRuntime(
             self.session_id,
             self._process_turn_request,
@@ -386,7 +382,7 @@ class Agent:
         """Return the session-frozen persona and memory prompt context."""
         memory_project_root = self._resolve_memory_project_root(work_dir)
         if self._frozen_memory_project_root != memory_project_root:
-            memory_manager = get_memory_manager(memory_project_root)
+            memory_manager = self._memory_manager(memory_project_root)
             self._frozen_memory_project_root = memory_project_root
             self._frozen_persona_context = memory_manager.get_persona_context()
             self._frozen_memory_context = memory_manager.get_memory_context()
@@ -575,115 +571,13 @@ class Agent:
         conversation_tokens: int,
         cfg: AMCPConfig | None = None,
     ) -> str:
-        """Get the system prompt budgeted against the actual model conversation."""
-        resolved_work_dir = work_dir.resolve() if work_dir else Path.cwd()
-        work_dir_str = str(resolved_work_dir)
-        cfg = cfg or self._resolve_turn_config()
-        context_cfg = cfg.context or ContextConfig()
-        model_name = self._resolve_model_name(cfg)
-
-        budget = self._calculate_context_budget(
-            conversation_tokens,
-            model_name=model_name,
-            model_config=cfg.chat.model_config if cfg.chat else None,
-            context_config=context_cfg,
+        """Compatibility proxy to the context builder."""
+        return self.context_builder.get_system_prompt(
+            work_dir,
+            user_input,
+            conversation_tokens=conversation_tokens,
+            cfg=cfg,
         )
-
-        # Note: MCP tools info will be loaded asynchronously during execution
-        mcp_tools_info: list[dict[str, Any]] = []
-
-        prompt_vars = {
-            "work_dir": work_dir_str,
-            "agent_name": self.agent_spec.name,
-            "mcp_tools": json.dumps(mcp_tools_info, indent=2),
-        }
-
-        # Build base system prompt
-        try:
-            base_prompt = self.agent_spec.system_prompt.format(**prompt_vars)
-        except KeyError as e:
-            self.console.print(f"[yellow]Warning: Missing template variable {e}[/yellow]")
-            base_prompt = self.agent_spec.system_prompt
-
-        # Load project rules from AGENTS.md files
-        project_rules = self._load_project_rules(resolved_work_dir)
-
-        # Get skills information
-        skill_manager = get_skill_manager()
-
-        # Ensure skills are discovered (includes built-in skills)
-        if not skill_manager.get_all_skills():
-            skill_manager.discover_skills(resolved_work_dir)
-
-        # Build skills context
-        skills_summary = ""
-        skills_content = ""
-        if context_cfg.progressive_skills:
-            skill_result = self._progressive_skill_view.build_prompt(
-                skills=skill_manager.get_skills(),
-                user_input=user_input,
-                active_skills={s.name for s in skill_manager.get_active_skills()},
-                budget_tokens=budget.skills,
-                relevance_threshold=context_cfg.skill_relevance_threshold,
-            )
-            skills_summary = skill_result.prompt
-        else:
-            combined_skills = "\n\n".join(
-                part
-                for part in (
-                    skill_manager.build_skills_summary(),
-                    skill_manager.get_active_skills_content(),
-                )
-                if part
-            )
-            skills_summary = self._trim_to_token_budget(combined_skills, budget.skills)
-
-        # Get session-frozen persona and memory context. Freezing keeps the
-        # prompt prefix stable across a long Telegram session.
-        persona_context, memory_context = self._get_memory_prompt_context(work_dir)
-
-        # Respect per-component budgets for every system-prompt section.
-        base_prompt = self._trim_to_token_budget(
-            base_prompt + "\n\n" + MEMORY_GUIDANCE,
-            budget.base_prompt,
-        )
-        if project_rules:
-            project_rules = self._trim_to_token_budget(project_rules, budget.rules)
-        if persona_context:
-            persona_context = self._trim_to_token_budget(persona_context, budget.memory)
-        remaining_memory_budget = max(budget.memory - estimate_text_tokens(persona_context), 0)
-        if memory_context:
-            memory_context = self._trim_to_token_budget(memory_context, remaining_memory_budget)
-        if skills_content:
-            skills_content = self._trim_to_token_budget(skills_content, budget.skills)
-
-        # Combine all parts
-        combined_prompt = base_prompt
-        if persona_context:
-            combined_prompt = persona_context + "\n\n" + combined_prompt
-        if project_rules:
-            combined_prompt += "\n\n" + project_rules
-        if skills_summary:
-            combined_prompt += "\n\n" + skills_summary
-        if memory_context:
-            combined_prompt += "\n\n" + memory_context
-        if skills_content:
-            combined_prompt += "\n\n" + skills_content
-
-        self._emit_event(
-            "context.budget_allocated",
-            {
-                "model": model_name,
-                "conversation_tokens": conversation_tokens,
-                "prompt_budget": budget.prompt_budget,
-                "tools_budget": budget.tools,
-                "skills_budget": budget.skills,
-                "memory_budget": budget.memory,
-                "rules_budget": budget.rules,
-            },
-        )
-
-        return combined_prompt
 
     def _load_project_rules(self, work_dir: Path) -> str:
         """Load project rules from AGENTS.md files.
@@ -893,216 +787,8 @@ class Agent:
         self._emit_event(event, data)
 
     async def _process_message(self, user_input: str, work_dir: Path | None, stream: bool, show_progress: bool) -> str:
-        """
-        Process a single message (internal implementation).
-
-        This is the core message processing logic, extracted from run()
-        to support queue-based processing.
-        """
-        committed_state = self._session_state
-        draft = committed_state.clone()
-        self._apply_session_state(draft)
-        self._reset_current_conversation_tool_calls()
-
-        # Run UserPromptSubmit hooks
-        try:
-            prompt_hook_output = await run_user_prompt_hooks(
-                session_id=self.session_id,
-                prompt=user_input,
-                project_dir=work_dir,
-            )
-        except BaseException:
-            self._apply_session_state(committed_state)
-            raise
-
-        # Check if hook denied the prompt
-        if not prompt_hook_output.continue_execution:
-            if prompt_hook_output.stop_reason:
-                self.console.print(f"[yellow]Prompt blocked: {prompt_hook_output.stop_reason}[/yellow]")
-            self._apply_session_state(committed_state)
-            return prompt_hook_output.stop_reason or "Prompt blocked by hook"
-
-        # Show hook feedback if any
-        if prompt_hook_output.feedback:
-            self.console.print(f"[dim]Hook: {prompt_hook_output.feedback}[/dim]")
-
-        turn_messages = [{"role": "user", "content": user_input}]
-
-        try:
-            with self._create_progress_context(show_progress) as status:
-                status.update(f"[bold]Agent {self.name}[/bold] thinking...")
-
-                # Prepare messages with conversation history
-                # Freeze provider and related settings for this turn. A
-                # `/model use` or config-file edit affects the next turn, but
-                # cannot mix providers between chat, compaction, and memory.
-                turn_config = self._resolve_turn_config()
-                history_to_add = draft.model_context(turn_messages)
-                conversation_tokens = estimate_tokens(history_to_add)
-                system_prompt = self._get_system_prompt(
-                    work_dir,
-                    user_input=user_input,
-                    conversation_tokens=conversation_tokens,
-                    cfg=turn_config,
-                )
-                messages = [{"role": "system", "content": system_prompt}]
-
-                # Build tools before compaction so their schemas are included in
-                # the request-size decision.
-                tools, tool_registry = await self._build_tools_and_registry(
-                    user_input=user_input,
-                    conversation_history=history_to_add,
-                    cfg=turn_config,
-                )
-
-                # Apply compaction if context is too large
-                cfg = turn_config
-                model = self._resolve_model_name(cfg)
-                compaction_chat = replace(cfg.chat) if cfg.chat else ChatConfig()
-                compaction_chat.model = model
-
-                from .llm import create_llm_client
-
-                client = create_llm_client(compaction_chat)
-                self._attach_context_overflow_observer(client)
-                compactor = SmartCompactor(
-                    client,
-                    model,
-                    model_config=cfg.chat.model_config if cfg.chat else None,
-                )
-
-                request_tokens = estimate_request_tokens(messages + history_to_add, tools)
-                if (
-                    request_tokens > compactor.threshold_tokens
-                    and estimate_tokens(history_to_add) >= compactor.config.min_tokens_to_compact
-                ):
-                    preserve_turns = max(compactor.config.preserve_last // 2, 1)
-                    covered_turn_count = max(len(draft.turns) - preserve_turns, 0)
-                    previous_covered_turns = draft.checkpoint.covered_turn_count if draft.checkpoint is not None else 0
-                    if covered_turn_count > previous_covered_turns:
-                        if not self.ephemeral:
-                            status.update(f"[bold]Agent {self.name}[/bold] saving memories before compaction...")
-                            await self._run_memory_review(
-                                conversation_snapshot=history_to_add,
-                                system_prompt=system_prompt,
-                                work_dir=work_dir,
-                                status=status,
-                                cfg=turn_config,
-                            )
-                            self._last_memory_review_turn_count = len(draft.turns) + 1
-                        status.update(f"[bold]Agent {self.name}[/bold] compacting context...")
-                        covered_message_count = draft.turns[covered_turn_count - 1].end_message
-                        previous_message_count = (
-                            draft.checkpoint.covered_message_count if draft.checkpoint is not None else 0
-                        )
-                        checkpoint_input = deepcopy(draft.checkpoint.context) if draft.checkpoint is not None else []
-                        checkpoint_input.extend(deepcopy(draft.messages[previous_message_count:covered_message_count]))
-                        checkpoint_context, compaction_result = await asyncio.to_thread(
-                            compactor.compact_checkpoint,
-                            checkpoint_input,
-                        )
-                        draft.checkpoint = CompactionCheckpoint(
-                            context=checkpoint_context,
-                            covered_message_count=covered_message_count,
-                            covered_turn_count=covered_turn_count,
-                            generation=(draft.checkpoint.generation + 1 if draft.checkpoint is not None else 1),
-                            strategy=compaction_result.strategy_used.value,
-                            strategy_version=1,
-                            original_tokens=compaction_result.original_tokens,
-                            compacted_tokens=compaction_result.compacted_tokens,
-                        )
-                        self._emit_event(
-                            "context.compacted",
-                            {
-                                "input_tokens": compaction_result.original_tokens,
-                                "output_tokens": compaction_result.compacted_tokens,
-                            },
-                        )
-                        history_to_add = draft.model_context(turn_messages)
-                        conversation_tokens = estimate_tokens(history_to_add)
-                        system_prompt = self._get_system_prompt(
-                            work_dir,
-                            user_input=user_input,
-                            conversation_tokens=conversation_tokens,
-                            cfg=turn_config,
-                        )
-                        messages[0]["content"] = system_prompt
-                        self.reset_memory_context_snapshot()
-                        self.console.print("[dim]Context compacted to reduce token usage[/dim]")
-
-                messages.extend(history_to_add)
-
-                # Run chat with tools
-                result, tool_messages = await self._run_with_tools(
-                    messages=messages,
-                    tools=tools,
-                    tool_registry=tool_registry,
-                    stream=stream,
-                    status=status,
-                    work_dir=work_dir,
-                    cfg=turn_config,
-                )
-
-                turn_messages.extend(tool_messages)
-                turn_messages.append({"role": "assistant", "content": result})
-                self._capture_session_state(draft)
-                draft.commit_turn(
-                    str(self.execution_context.get("turn_id", uuid.uuid4())),
-                    turn_messages,
-                )
-                turn_count = self._conversation_turn_count(draft.messages)
-                periodic_review_due = (
-                    not self.ephemeral
-                    and turn_count - self._last_memory_review_turn_count >= MEMORY_REVIEW_TURN_INTERVAL
-                )
-                if periodic_review_due:
-                    draft.last_memory_review_turn_count = turn_count
-                self._commit_session_state(draft)
-                if periodic_review_due:
-                    self._schedule_periodic_memory_review(
-                        conversation_snapshot=draft.messages,
-                        system_prompt=system_prompt,
-                        work_dir=work_dir,
-                        cfg=turn_config,
-                    )
-
-                if not self.ephemeral:
-                    # Best-effort projections for normal persistent conversations.
-                    try:
-                        memory_mgr = get_memory_manager(self._resolve_memory_project_root(work_dir))
-                        summary = self._format_conversation_history_entry(user_input, result)
-                        memory_mgr.append_history(
-                            content=summary,
-                            session_id=self.session_id,
-                            tags=["conversation"],
-                            scope=self._memory_history_scope(work_dir),
-                        )
-                    except Exception as e:
-                        logger.debug(f"Memory history logging failed (non-critical): {e}")
-
-                    try:
-                        get_transcript_store().append_turn(
-                            session_id=self.session_id,
-                            user=user_input,
-                            assistant=result,
-                            source=str(self.execution_context.get("source", "agent")),
-                            chat_id=self.execution_context.get("telegram_chat_id"),
-                        )
-                    except Exception as e:
-                        logger.debug(f"Transcript indexing failed (non-critical): {e}")
-
-                return result
-
-        except asyncio.CancelledError:
-            self._apply_session_state(committed_state)
-            raise
-        except (AgentExecutionError, MaxStepsReached, ProviderError, ToolCallProtocolError):
-            self._apply_session_state(committed_state)
-            raise
-        except Exception as e:
-            self._apply_session_state(committed_state)
-            self.console.print(Text.assemble(("Agent execution failed: ", "red"), str(e)))
-            raise AgentExecutionError(f"Agent execution failed: {e}") from e
+        """Compatibility proxy to the transactional turn service."""
+        return await self.turn_service.process_message(user_input, work_dir, stream, show_progress)
 
     async def _run_memory_review(
         self,
@@ -1131,10 +817,8 @@ class Agent:
             client = create_llm_client(memory_chat)
             self._attach_context_overflow_observer(client)
 
-            # Build memory-only tool list from the global registry
-            from .tools import get_tool_registry
-
-            registry = get_tool_registry()
+            # Build memory-only tool list from the application registry.
+            registry = self.services.tool_registry
             memory_tool = registry.get_tool("memory")
             if not memory_tool:
                 return False
@@ -1395,118 +1079,8 @@ class Agent:
         *,
         cfg: AMCPConfig | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
-        """Build list of available tools and registry for MCP tool dispatch.
-
-        Combined method to avoid duplicate MCP server calls.
-
-        Returns:
-            Tuple of (tools list, registry dict)
-        """
-        tools: list[dict[str, Any]] = []
-        registry: dict[str, tuple[str, str]] = {}
-        conversation = conversation_history or self.conversation_history
-
-        # Add all built-in tools from registry
-        from .tools import get_tool_registry
-
-        capability = ToolCapability.from_spec(
-            self.agent_spec.tools,
-            self.agent_spec.exclude_tools,
-            self.agent_spec.can_delegate,
-        )
-
-        tool_registry = get_tool_registry()
-        for tool_name in tool_registry.list_tools():
-            if not capability.allows(tool_name):
-                continue
-            tool_spec = tool_registry.get_tool_spec(tool_name)
-            if tool_spec:
-                tools.append(tool_spec)
-
-        # Load MCP tools
-        cfg = cfg or self._resolve_turn_config()
-        chat_cfg = cfg.chat
-
-        # Decide which servers to include
-        if chat_cfg and chat_cfg.mcp_tools_enabled is False:
-            selected = []
-        elif chat_cfg and chat_cfg.mcp_servers:
-            selected = [s for s in chat_cfg.mcp_servers if s in cfg.servers]
-        else:
-            selected = list(cfg.servers.keys())
-
-        # Load MCP tools asynchronously (single call per server). Server and
-        # tool names are untrusted, and providers disagree on legal function
-        # names (Kimi rejects the dots Gemini accepts), so every MCP tool is
-        # exposed under a sanitized alias that the registry maps back to its
-        # (server, tool) pair.
-        exposed_names = {tool_name for tool in tools if (tool_name := tool.get("function", {}).get("name"))}
-        for name in selected:
-            try:
-                server = cfg.servers[name]
-                info_list = await list_mcp_tools(server)
-                for info in info_list:
-                    tname = info.get("name") or "tool"
-                    oname = unique_function_name(mcp_tool_name(name, tname), exposed_names)
-                    if not capability.allows(oname):
-                        continue
-                    exposed_names.add(oname)
-                    params = info.get("inputSchema") or {"type": "object"}
-                    tools.append(
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": oname,
-                                "description": info.get("description", ""),
-                                "parameters": params,
-                            },
-                        }
-                    )
-                    # Also add to registry
-                    registry[oname] = (name, tname)
-            except (OSError, ValueError, KeyError) as e:
-                self.console.print(f"[yellow]MCP tool discovery failed for server {name}:[/yellow] {e}")
-
-        context_cfg = cfg.context or ContextConfig()
-        if not context_cfg.progressive_tools:
-            return tools, registry
-
-        conversation_tokens = estimate_tokens(conversation)
-        budget = self._calculate_context_budget(
-            conversation_tokens,
-            model_name=self._resolve_model_name(cfg),
-            model_config=cfg.chat.model_config if cfg.chat else None,
-            context_config=context_cfg,
-        )
-        usage_snapshot = ToolUsageTracker.from_history(self.tool_calls_history)
-
-        selection = self._progressive_tool_view.select_tools(
-            tools=tools,
-            user_input=user_input,
-            conversation=conversation,
-            usage=usage_snapshot,
-            budget_tokens=budget.tools,
-            relevance_threshold=context_cfg.tool_relevance_threshold,
-            tier_overrides=context_cfg.tool_tiers,
-        )
-
-        selected_tools = selection.selected_tools
-        selected_names = {
-            tool.get("function", {}).get("name", "") for tool in selected_tools if tool.get("function", {}).get("name")
-        }
-        filtered_registry = {name: ref for name, ref in registry.items() if name in selected_names}
-
-        self._emit_event(
-            "context.tools_filtered",
-            {
-                "selected_count": len(selected_tools),
-                "total_count": len(tools),
-                "hidden_count": selection.hidden_count,
-                "excluded_tools": selection.excluded_tools,
-            },
-        )
-
-        return selected_tools, filtered_registry
+        """Compatibility proxy to the context builder."""
+        return await self.context_builder.build_tools_and_registry(user_input, conversation_history, cfg=cfg)
 
     def _get_read_file_tool_spec(self) -> dict[str, Any]:
         """Get read_file tool specification."""
@@ -1551,29 +1125,8 @@ class Agent:
         *,
         cfg: AMCPConfig | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Run chat with tools and enhanced tracking."""
-        cfg = cfg or self._resolve_turn_config()
-
-        # Use new LLM client abstraction
-        from .llm import create_llm_client
-
-        llm_client = create_llm_client(cfg.chat)
-        self._attach_context_overflow_observer(llm_client)
-
-        # Override the chat function to add our tracking
-        result = await self._enhanced_chat_with_tools(
-            llm_client=llm_client,
-            messages=messages,
-            tools=tools,
-            tool_registry=tool_registry,
-            stream=stream,
-            status=status,
-            work_dir=work_dir,
-            return_message_delta=True,
-            cfg=cfg,
-        )
-        assert isinstance(result, tuple)
-        return result
+        """Compatibility proxy to the tool loop."""
+        return await self.tool_loop.run(messages, tools, tool_registry, stream, status, work_dir, cfg=cfg)
 
     async def _enhanced_chat_with_tools(
         self,
@@ -1589,439 +1142,19 @@ class Agent:
         return_message_delta: bool = False,
         cfg: AMCPConfig | None = None,
     ) -> str | tuple[str, list[dict[str, Any]]]:
-        """Enhanced version of _chat_with_tools with better tracking."""
-        max_steps = max_steps or self.max_steps
-
-        # Reset per-request counters at the start of each request
-        self.current_request_tool_calls = 0
-        self.current_request_llm_calls = 0
-
-        # Create a working copy of messages
-        messages = [dict(message) for message in messages]
-        message_delta: list[dict[str, Any]] = []
-
-        def append_canonical(message: dict[str, Any]) -> None:
-            messages.append(message)
-            message_delta.append(deepcopy(message))
-
-        def completed(text: str) -> str | tuple[str, list[dict[str, Any]]]:
-            if return_message_delta:
-                return text, message_delta
-            return text
-
-        used_tools = False
-
-        cfg = cfg or self._resolve_turn_config()
-        model_config = cfg.chat.model_config if cfg.chat else None
-        model = getattr(llm_client, "model", None) or self._resolve_model_name(cfg)
-        workspace_root = (work_dir or Path.cwd()).resolve()
-        exposed_tools = {name for tool in tools if (name := tool.get("function", {}).get("name"))}
-        capability = ToolCapability.from_spec(
-            self.agent_spec.tools,
-            self.agent_spec.exclude_tools,
-            self.agent_spec.can_delegate,
+        """Compatibility proxy to the tool loop."""
+        return await self.tool_loop.enhanced_chat_with_tools(
+            llm_client,
+            messages,
+            tools,
+            tool_registry,
+            stream,
+            status,
+            work_dir,
+            max_steps,
+            return_message_delta=return_message_delta,
+            cfg=cfg,
         )
-        from .tools import get_tool_registry
-
-        executor = ToolExecutor(
-            context=ToolExecutionContext(
-                session_id=self.session_id,
-                workspace_root=workspace_root,
-                turn_id=str(self.execution_context.get("turn_id", "direct")),
-            ),
-            capability=capability,
-            exposed_tools=exposed_tools,
-            registry=get_tool_registry(),
-            mcp_registry=tool_registry,
-            config=cfg,
-            task_manager=self._task_manager,
-        )
-        compaction_config = CompactionConfig()
-        context_window = get_model_context_window(model, model_config=model_config)
-        input_token_budget = int(
-            context_window * (1 - compaction_config.safety_margin) * compaction_config.threshold_ratio
-        )
-
-        for step in range(max_steps):
-            self.step_count = step + 1
-            status.update(f"[bold]Agent {self.name}[/bold] - LLM Call {self.current_request_llm_calls + 1}")
-
-            # Define stream callback if streaming is enabled
-            stream_callback = None
-            if stream:
-
-                def _stream_callback(chunk: str):
-                    self._emit_event("message.chunk", {"content": chunk})
-
-                stream_callback = _stream_callback
-
-            messages = self._fit_tool_context(messages, tools, input_token_budget)
-            estimated_input_tokens = estimate_request_tokens(messages, tools)
-            try:
-                resp = await self._call_llm(
-                    llm_client,
-                    messages=messages,
-                    tools=tools,
-                    stream_callback=stream_callback,
-                    cfg=cfg.chat,
-                )
-            except Exception as call_error:
-                if isinstance(call_error, ProviderError) and call_error.partial_output:
-                    raise
-                if not _is_tool_call_pairing_error(call_error):
-                    raise
-                logger.warning(
-                    "Provider rejected tool-call history (%s); repairing pairing and retrying once",
-                    call_error,
-                )
-                messages = self._fit_tool_context(
-                    _repair_tool_call_pairing(messages),
-                    tools,
-                    input_token_budget,
-                )
-                estimated_input_tokens = estimate_request_tokens(messages, tools)
-                resp = await self._call_llm(
-                    llm_client,
-                    messages=messages,
-                    tools=tools,
-                    stream_callback=stream_callback,
-                    cfg=cfg.chat,
-                )
-            self._record_llm_usage(resp, estimated_input_tokens, context_window)
-
-            if resp.tool_calls:
-                try:
-                    tool_calls = normalize_tool_calls(resp.tool_calls)
-                except ToolCallProtocolError as protocol_error:
-                    if protocol_error.tool_calls is None:
-                        raise
-                    logger.warning(
-                        "Provider returned malformed tool calls (%s); synthesizing tool results",
-                        protocol_error,
-                    )
-                    tool_calls = normalize_tool_calls(protocol_error.tool_calls)
-                used_tools = True
-                status.update(f"[bold]Agent {self.name}[/bold] - Executing {len(tool_calls)} tool(s)...")
-
-                # Check if any tool should be limited before processing
-                limited_tools = []
-                for tc in tool_calls:
-                    tool_name = tc.name
-                    if self._should_limit_tool_calls(tool_name, cfg):
-                        limited_tools.append(tool_name)
-
-                if limited_tools:
-                    status.update(
-                        f"[bold]Agent {self.name}[/bold] - Tools {limited_tools} limited, forcing response..."
-                    )
-                    self.console.print(f"[yellow]Tools {limited_tools} limited, forcing response[/yellow]")
-                    append_canonical(
-                        {
-                            "role": "assistant",
-                            "content": resp.content or "",
-                            "tool_calls": [
-                                {
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.name,
-                                        "arguments": tc.raw_arguments,
-                                    },
-                                }
-                                | ({"extra_content": tc.extra_content} if tc.extra_content else {})
-                                for tc in tool_calls
-                            ],
-                        }
-                    )
-                    for tc in tool_calls:
-                        append_canonical(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "name": tc.name,
-                                "content": (
-                                    "Tool call limited: further calls to this tool are not allowed in this request"
-                                ),
-                            }
-                        )
-                    # Add system message to force response
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": f"You have already called the following tools too many times: {', '.join(limited_tools)}. Please analyze the information you have and provide your response without calling these tools again.",
-                        }
-                    )
-                    # Get a final response from the LLM with the current messages
-                    try:
-                        messages = self._fit_tool_context(messages, [], input_token_budget)
-                        estimated_input_tokens = estimate_request_tokens(messages)
-                        final_resp = await self._call_llm(
-                            llm_client,
-                            messages=messages,
-                            cfg=cfg.chat,
-                        )
-                        self._record_llm_usage(final_resp, estimated_input_tokens, context_window)
-                        final_text = final_resp.content or ""
-                        status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
-                        return completed(final_text)
-                    except Exception as e:
-                        status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Error getting final response")
-                        if isinstance(e, ProviderError):
-                            raise
-                        raise AgentExecutionError(f"Could not get final response: {e}") from e
-
-                append_canonical(
-                    {
-                        "role": "assistant",
-                        "content": resp.content or "",
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": tc.raw_arguments,
-                                },
-                            }
-                            | ({"extra_content": tc.extra_content} if tc.extra_content else {})
-                            for tc in tool_calls
-                        ],
-                    }
-                )
-
-                # Process tool calls with Live UI
-                with LiveUI() as live_ui:
-                    for tc in tool_calls:
-                        tool_name = tc.name
-                        tool_id = tc.id
-                        if tc.argument_error:
-                            tool_result_text = f"Tool argument error: {tc.argument_error}"
-                            block = live_ui.add_tool(tool_name, {})
-                            live_ui.finish_tool(block, success=False, result=tool_result_text)
-                            append_canonical(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name,
-                                    "content": tool_result_text,
-                                }
-                            )
-                            continue
-                        assert tc.arguments is not None
-                        args = tc.arguments
-
-                        if tool_name not in exposed_tools or not capability.allows(tool_name):
-                            tool_result_text = f"Tool permission denied: '{tool_name}' is not authorized"
-                            block = live_ui.add_tool(tool_name, args)
-                            live_ui.finish_tool(block, success=False, result=tool_result_text)
-                            self._emit_event(
-                                "tool.call_denied",
-                                {
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "reason": tool_result_text,
-                                },
-                            )
-                            append_canonical(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name,
-                                    "content": tool_result_text,
-                                }
-                            )
-                            continue
-
-                        # Hooks must inspect the same canonical arguments that
-                        # execution will use. For example, grep's common
-                        # ``path`` near-miss becomes ``paths`` here.
-                        args = executor.prepare_model_arguments(tool_name, args)
-
-                        # Run PreToolUse hooks
-                        pre_hook_output = await run_pre_tool_use_hooks(
-                            session_id=self.session_id,
-                            tool_name=tool_name,
-                            tool_input=args,
-                            tool_use_id=tool_id,
-                            project_dir=workspace_root,
-                        )
-
-                        # Check hook decision
-                        if pre_hook_output.decision == HookDecision.DENY:
-                            # Tool execution denied by hook
-                            tool_result_text = (
-                                f"Tool denied by hook: {pre_hook_output.decision_reason or 'No reason given'}"
-                            )
-                            block = live_ui.add_tool(tool_name, args)
-                            live_ui.finish_tool(block, success=False, result=tool_result_text)
-                            append_canonical(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name,
-                                    "content": tool_result_text,
-                                }
-                            )
-                            continue
-
-                        # Apply any input updates from hooks
-                        if pre_hook_output.updated_input:
-                            args = {**args, **pre_hook_output.updated_input}
-
-                        # Record tool call
-                        tool_call_record = {
-                            "step": self.step_count,
-                            "tool": tool_name,
-                            "args": tc.raw_arguments,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        self.tool_calls_history.append(tool_call_record)
-                        self.current_conversation_tool_calls.append(tool_call_record)
-                        self.current_request_tool_calls += 1  # Track per-request tool calls
-
-                        # Add tool block to UI
-                        block = live_ui.add_tool(tool_name, args)
-
-                        # Emit tool call start event
-                        self._emit_event(
-                            "tool.call_start",
-                            {
-                                "tool_name": tool_name,
-                                "tool_id": tool_id,
-                                "arguments": args,
-                                "step": self.step_count,
-                            },
-                        )
-
-                        # Track execution time
-                        tool_start_time = time.time()
-
-                        # Execute tool
-                        try:
-                            tool_result = await executor.execute(tool_name, args)
-                            if tool_result.success:
-                                tool_result_text = tool_result.content
-                                tool_response_data = {
-                                    "success": True,
-                                    "content": tool_result_text,
-                                }
-                                live_ui.finish_tool(block, success=True, result=tool_result_text)
-                            else:
-                                tool_result_text = f"Error: {tool_result.error}"
-                                tool_response_data = {
-                                    "success": False,
-                                    "error": tool_result.error,
-                                }
-                                live_ui.finish_tool(block, success=False, result=tool_result_text)
-
-                            # Run PostToolUse hooks
-                            post_hook_output = await run_post_tool_use_hooks(
-                                session_id=self.session_id,
-                                tool_name=tool_name,
-                                tool_input=args,
-                                tool_response=tool_response_data,
-                                tool_use_id=tool_id,
-                                project_dir=workspace_root,
-                            )
-
-                            # Apply any response updates from hooks
-                            if post_hook_output.updated_response:
-                                tool_result_text = json.dumps(post_hook_output.updated_response, ensure_ascii=False)
-
-                            # Add hook feedback if any
-                            if post_hook_output.feedback:
-                                tool_result_text += f"\n\n[Hook feedback: {post_hook_output.feedback}]"
-
-                            # Calculate execution duration
-                            tool_duration_ms = (time.time() - tool_start_time) * 1000
-
-                            # Emit tool call complete event
-                            tool_success = (
-                                tool_response_data.get("success", True)
-                                if isinstance(tool_response_data, dict)
-                                else True
-                            )
-                            self._emit_event(
-                                "tool.call_complete",
-                                {
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "success": tool_success,
-                                    "duration_ms": tool_duration_ms,
-                                    "result_length": len(tool_result_text),
-                                },
-                            )
-
-                            # Add tool result to messages (truncate large results)
-                            MAX_TOOL_RESULT_LEN = 8000
-                            truncated_result = tool_result_text
-                            if len(tool_result_text) > MAX_TOOL_RESULT_LEN:
-                                truncated_result = tool_result_text[:MAX_TOOL_RESULT_LEN] + "\n... [truncated]"
-
-                            append_canonical(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name,
-                                    "content": truncated_result,
-                                }
-                            )
-
-                        except asyncio.CancelledError:
-                            tool_duration_ms = (time.time() - tool_start_time) * 1000
-                            self._emit_event(
-                                "tool.call_cancelled",
-                                {
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "success": False,
-                                    "settled": True,
-                                    "duration_ms": tool_duration_ms,
-                                },
-                            )
-                            raise
-                        except Exception as e:
-                            error_msg = f"Tool {tool_name} error: {type(e).__name__}: {e}"
-                            live_ui.finish_tool(block, success=False, result=error_msg)
-
-                            # Calculate execution duration
-                            tool_duration_ms = (time.time() - tool_start_time) * 1000
-
-                            # Emit tool call error event
-                            self._emit_event(
-                                "tool.call_error",
-                                {
-                                    "tool_name": tool_name,
-                                    "tool_id": tool_id,
-                                    "success": False,
-                                    "error": error_msg,
-                                    "duration_ms": tool_duration_ms,
-                                },
-                            )
-
-                            append_canonical(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name,
-                                    "content": error_msg,
-                                }
-                            )
-
-                continue
-            else:
-                # No tool calls, return the response
-                final_text = resp.content or ""
-                if stream and not used_tools:
-                    # For streaming, we'll implement a simple version
-                    pass
-
-                status.update(f"[bold]Agent {self.name}[/bold] - ✅ Complete")
-                return completed(final_text)
-
-        # Max steps reached
-        status.update(f"[bold]Agent {self.name}[/bold] - ⚠️ Max steps reached")
-        raise MaxStepsReached(self.max_steps)
 
     async def _call_llm(
         self,
@@ -2181,53 +1314,60 @@ class Agent:
         tools: list[dict[str, Any]],
         token_budget: int,
     ) -> list[dict[str, Any]]:
-        """Fit request-local tool exchanges into the model input budget."""
-        fitted = [dict(message) for message in messages]
-        if estimate_request_tokens(fitted, tools) <= token_budget:
-            return _repair_tool_call_pairing(fitted)
+        """Compatibility entry point for request-local context fitting."""
+        return ContextBuilder.fit_tool_context(messages, tools, token_budget)
 
-        tool_indexes = [i for i, message in enumerate(fitted) if message.get("role") == "tool"]
+    @staticmethod
+    def _repair_tool_call_pairing(messages):
+        return _repair_tool_call_pairing(messages)
 
-        # Retain useful head/tail excerpts, shrinking oldest results first.
-        for index in tool_indexes:
-            content = fitted[index].get("content")
-            if not isinstance(content, str) or len(content) <= 1200:
-                continue
-            fitted[index]["content"] = (
-                content[:600] + "\n... [tool result trimmed for context budget] ...\n" + content[-600:]
-            )
-            if estimate_request_tokens(fitted, tools) <= token_budget:
-                return fitted
+    @staticmethod
+    def _is_tool_call_pairing_error(error):
+        return _is_tool_call_pairing_error(error)
 
-        # Remove oldest complete tool-call batches, preferring the latest batch.
-        batch_ranges: list[tuple[int, int]] = []
-        index = 0
-        while index < len(fitted):
-            message = fitted[index]
-            if message.get("role") != "assistant" or not message.get("tool_calls"):
-                index += 1
-                continue
-            call_ids = {call.get("id") for call in message["tool_calls"]}
-            end = index + 1
-            seen_ids: set[str | None] = set()
-            while end < len(fitted) and fitted[end].get("role") == "tool":
-                seen_ids.add(fitted[end].get("tool_call_id"))
-                end += 1
-            if call_ids and call_ids <= seen_ids:
-                batch_ranges.append((index, end))
-            index = end
+    @staticmethod
+    def _agent_execution_error(message):
+        return AgentExecutionError(message)
 
-        for start, end in reversed(batch_ranges[:-1]):
-            del fitted[start:end]
-            if estimate_request_tokens(fitted, tools) <= token_budget:
-                return fitted
+    @staticmethod
+    def _max_steps_reached(max_steps):
+        return MaxStepsReached(max_steps)
 
-        # If the newest result alone is too large, reduce all remaining results
-        # to explicit placeholders rather than sending a known-oversized request.
-        for message in fitted:
-            if message.get("role") == "tool" and message.get("content"):
-                message["content"] = "[Tool result omitted: context budget exceeded]"
-        return _repair_tool_call_pairing(fitted)
+    @staticmethod
+    def _execution_exception_types():
+        return (AgentExecutionError, MaxStepsReached)
+
+    def _memory_manager(self, root: Path | None):
+        if self._uses_default_services:
+            return get_memory_manager(root)
+        return self.services.memory_manager(root)
+
+    def _skill_manager(self):
+        if self._uses_default_services:
+            return get_skill_manager()
+        return self.services.skill_manager
+
+    async def _run_user_prompt_hooks(self, **kwargs):
+        return await run_user_prompt_hooks(**kwargs)
+
+    async def _run_pre_tool_use_hooks(self, **kwargs):
+        return await run_pre_tool_use_hooks(**kwargs)
+
+    async def _run_post_tool_use_hooks(self, **kwargs):
+        return await run_post_tool_use_hooks(**kwargs)
+
+    async def _list_mcp_tools(self, server):
+        return await list_mcp_tools(server)
+
+    @staticmethod
+    def _smart_compactor(*args, **kwargs):
+        return SmartCompactor(*args, **kwargs)
+
+    @staticmethod
+    def _estimate_tokens(messages, tools=None):
+        if tools is None:
+            return estimate_tokens(messages)
+        return estimate_request_tokens(messages, tools)
 
     def _create_progress_context(self, show_progress: bool):
         """Create progress display context."""
@@ -2268,6 +1408,7 @@ def create_agent_from_config(
     session_id: str | None = None,
     *,
     ephemeral: bool = False,
+    services: ApplicationServices | None = None,
 ) -> Agent:
     """
     Create an Agent from an AgentConfig.
@@ -2299,12 +1440,19 @@ def create_agent_from_config(
         can_delegate=config.can_delegate,
     )
 
-    return Agent(agent_spec=spec, session_id=session_id, ephemeral=ephemeral)
+    return Agent(
+        agent_spec=spec,
+        session_id=session_id,
+        ephemeral=ephemeral,
+        services=services,
+    )
 
 
 def create_agent_by_name(
     name: str,
     session_id: str | None = None,
+    *,
+    services: ApplicationServices | None = None,
 ) -> Agent:
     """
     Create an Agent by looking up its name in the registry.
@@ -2319,16 +1467,13 @@ def create_agent_by_name(
     Raises:
         ValueError: If agent name is not found in registry
     """
-    from .multi_agent import get_agent_config
-
-    config = get_agent_config(name)
+    registry = services.agent_registry if services is not None else get_agent_registry()
+    config = registry.get(name)
     if config is None:
-        from .multi_agent import get_agent_registry
-
-        available = get_agent_registry().list_agents()
+        available = registry.list_agents()
         raise ValueError(f"Unknown agent: {name}. Available agents: {', '.join(available)}")
 
-    return create_agent_from_config(config, session_id)
+    return create_agent_from_config(config, session_id, services=services)
 
 
 def create_subagent(
@@ -2365,7 +1510,7 @@ def create_subagent(
     )
 
     # Create subagent with a new session (isolated from parent)
-    return create_agent_from_config(config)
+    return create_agent_from_config(config, services=parent_agent.services)
 
 
 def list_available_agents() -> list[str]:
