@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.13.0] — 2026-08-16
+
 ### Added
 
 - **Provider error classification and retry** (`#28`): structured `ProviderError` with type, retryability, and `retry_after`; agent-level exponential backoff with jitter for transient errors; partial-stream detection disables retry to prevent duplicate messages.
@@ -196,7 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release: core agent engine, built-in tools (`read_file`, `grep`, `bash`, `write_file`), TOML configuration, CLI interface, and Dockerfile.
 
-[Unreleased]: https://github.com/tao12345666333/amcp/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/tao12345666333/amcp/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/tao12345666333/amcp/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/tao12345666333/amcp/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/tao12345666333/amcp/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/tao12345666333/amcp/compare/v0.10.1...v0.11.0

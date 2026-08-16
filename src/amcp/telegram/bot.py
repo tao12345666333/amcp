@@ -20,7 +20,7 @@ from ..event_bus import EventType, get_event_bus
 from ..memory import CONFIG_DIR
 from ..memory_dream import MemoryDreamer
 from ..multi_agent import get_agent_registry
-from ..runtime import CancellationResult, TurnCancelledError, TurnStatus
+from ..runtime import CancellationResult, TurnCancelledError, TurnHandle, TurnStatus
 from .auth import AuthMiddleware
 from .config import TelegramConfig, TelegramStreamingConfig, normalize_dm_policy, normalize_group_policy
 from .formatter import TelegramFormatter
@@ -910,7 +910,7 @@ class TelegramBot:
             elif status_message_id is not None:
                 await self._edit_if_current(token, session, status_message_id, "Done.")
 
-    async def _wait_with_streaming(self, handle: Any, streamer: _StreamingDeliveryManager) -> str:
+    async def _wait_with_streaming(self, handle: TurnHandle, streamer: _StreamingDeliveryManager) -> str:
         """Wait for a turn while periodically flushing streaming chunks to Telegram."""
         flush_interval = max(0.3, self._config.streaming.streaming_interval_seconds)
         while not handle.done:
