@@ -1,11 +1,18 @@
-# AMCP
+<p align="center">
+  <img src="assets/brand/ankaloop-wordmark.svg" alt="AnkaLoop — persistent coding-agent runtime" width="700">
+</p>
 
-[![PyPI version](https://badge.fury.io/py/amcp-agent.svg)](https://badge.fury.io/py/amcp-agent)
-[![CI](https://github.com/tao12345666333/amcp/workflows/CI/badge.svg)](https://github.com/tao12345666333/amcp/actions)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-**A batteries-included, self-hostable, persistent coding-agent runtime for CLI, API, and
-Telegram.**
+<h1 align="center">AnkaLoop</h1>
+
+<p align="center">
+  <a href="https://pypi.org/project/amcp-agent/"><img src="https://badge.fury.io/py/amcp-agent.svg" alt="PyPI version"></a>
+  <a href="https://github.com/tao12345666333/amcp/actions"><img src="https://github.com/tao12345666333/amcp/workflows/CI/badge.svg" alt="CI"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center"><strong>A batteries-included, self-hostable, persistent coding-agent runtime
+for CLI, API, and Telegram.</strong></p>
 
 AMCP is built for developers who want a useful agent immediately, not a framework they must
 assemble first. It ships with file editing, shell execution, web access, memory, skills,
