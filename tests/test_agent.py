@@ -9,25 +9,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached, _is_tool_call_pairing_error
-from amcp.agent_spec import ResolvedAgentSpec
-from amcp.compaction import estimate_tokens
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig, ModelConfig
-from amcp.hooks import HookDecision, HookOutput
-from amcp.llm import ContextOverflowError, LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
-from amcp.memory import MemoryManager, MemoryStore
-from amcp.multi_agent import AgentMode
-from amcp.progressive.context_budget import ContextBudget, estimate_text_tokens
-from amcp.runtime import RuntimeClosedError, TurnStatus
-from amcp.session_state import CompactionCheckpoint, SessionState
-from amcp.session_store import SessionConflictError, SessionLoadError, SessionSaveError
-from amcp.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
-from amcp.tools import create_default_tool_registry
+from ankaloop.agent import Agent, AgentExecutionError, BusyError, MaxStepsReached, _is_tool_call_pairing_error
+from ankaloop.agent_spec import ResolvedAgentSpec
+from ankaloop.compaction import estimate_tokens
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig, ModelConfig
+from ankaloop.hooks import HookDecision, HookOutput
+from ankaloop.llm import ContextOverflowError, LLMResponse, ProviderError, ProviderErrorKind, TokenUsage
+from ankaloop.memory import MemoryManager, MemoryStore
+from ankaloop.multi_agent import AgentMode
+from ankaloop.progressive.context_budget import ContextBudget, estimate_text_tokens
+from ankaloop.runtime import RuntimeClosedError, TurnStatus
+from ankaloop.session_state import CompactionCheckpoint, SessionState
+from ankaloop.session_store import SessionConflictError, SessionLoadError, SessionSaveError
+from ankaloop.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
+from ankaloop.tools import create_default_tool_registry
 
 
 class TestAgentInit:
     def test_default_init(self):
-        with patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.load_config") as mock_load:
             mock_load.return_value = MagicMock()
             agent = Agent()
             assert agent.name == "default"
@@ -35,13 +35,13 @@ class TestAgentInit:
             assert agent.conversation_history == []
 
     def test_custom_session_id(self):
-        with patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.load_config") as mock_load:
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
             assert agent.session_id == "test-session"
 
     def test_custom_agent_spec(self):
-        with patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.load_config") as mock_load:
             mock_load.return_value = MagicMock()
             spec = ResolvedAgentSpec(
                 name="custom",
@@ -59,17 +59,17 @@ class TestAgentInit:
             assert agent.max_steps == 10
 
     def test_turn_config_follows_provider_switch_unless_agent_is_pinned(self, tmp_path):
-        first = AMCPConfig(
+        first = AnkaloopConfig(
             servers={},
             chat=ChatConfig(model="model-a", base_url="https://a.example/v1"),
         )
-        second = AMCPConfig(
+        second = AnkaloopConfig(
             servers={},
             chat=ChatConfig(model="model-b", base_url="https://b.example/v1"),
         )
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", side_effect=[first, second]),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", side_effect=[first, second]),
         ):
             agent = Agent(session_id="provider-switch")
             assert agent._resolve_turn_config().chat.base_url == "https://a.example/v1"
@@ -90,8 +90,8 @@ class TestAgentInit:
             base_url="https://pinned.example/v1",
         )
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", return_value=second),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", return_value=second),
         ):
             pinned = Agent(pinned_spec, session_id="provider-pinned")._resolve_turn_config()
 
@@ -114,9 +114,9 @@ class TestAgentInit:
         data = {**state.to_snapshot(), "schema_version": 2}
         session_file.write_text(json.dumps(data))
 
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
                 assert len(agent.conversation_history) == 2
@@ -127,9 +127,9 @@ class TestAgentInit:
         session_file.parent.mkdir(parents=True)
         session_file.write_text("not json")
 
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 with pytest.raises(SessionLoadError, match="Could not load session"):
                     Agent(session_id="test-session")
@@ -144,9 +144,9 @@ class TestAgentToolLimits:
             return HookOutput(continue_execution=False, stop_reason="blocked")
 
         with (
-            patch("amcp.agent.Path.home") as mock_home,
-            patch("amcp.agent.load_config") as mock_load,
-            patch("amcp.agent.run_user_prompt_hooks", side_effect=deny_prompt),
+            patch("ankaloop.agent.Path.home") as mock_home,
+            patch("ankaloop.agent.load_config") as mock_load,
+            patch("ankaloop.agent.run_user_prompt_hooks", side_effect=deny_prompt),
         ):
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
@@ -160,7 +160,7 @@ class TestAgentToolLimits:
 
     def test_read_file_session_limit_still_applies(self, tmp_path):
         """Resetting per-request counts must not remove the session-level cap."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -172,7 +172,7 @@ class TestAgentToolLimits:
 
     def test_bash_per_request_limit_applies(self, tmp_path):
         """Bash calls are capped per request to avoid oversized tool context."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -183,9 +183,9 @@ class TestAgentToolLimits:
 
     def test_bash_per_request_limit_is_configurable(self, tmp_path):
         """Config can tune the bash cap for long-running Telegram agents."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(servers={}, chat=ChatConfig(bash_tool_limit=20))
+            mock_load.return_value = AnkaloopConfig(servers={}, chat=ChatConfig(bash_tool_limit=20))
             agent = Agent(session_id="test-session")
 
             agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(19)]
@@ -196,9 +196,9 @@ class TestAgentToolLimits:
 
     def test_bash_per_request_limit_can_be_disabled(self, tmp_path):
         """Non-positive bash_tool_limit disables only the bash-specific cap."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(servers={}, chat=ChatConfig(bash_tool_limit=0))
+            mock_load.return_value = AnkaloopConfig(servers={}, chat=ChatConfig(bash_tool_limit=0))
             agent = Agent(session_id="test-session")
 
             agent.current_conversation_tool_calls = [{"tool": "bash"} for _ in range(500)]
@@ -207,7 +207,7 @@ class TestAgentToolLimits:
 
     def test_bash_limit_resets_for_new_request(self, tmp_path):
         """A new user request can use bash again after per-request reset."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -243,9 +243,9 @@ class TestAgentToolLimits:
                 assert str(tmp_path.resolve()) in tool_messages[-1]["content"]
                 return SimpleNamespace(content="done", tool_calls=None)
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            mock_load.return_value = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
             agent = Agent(session_id="test-session")
 
         result = await agent._enhanced_chat_with_tools(
@@ -282,9 +282,9 @@ class TestAgentToolLimits:
                 self.seen_messages = messages
                 return SimpleNamespace(content="recovered", tool_calls=None)
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            mock_load.return_value = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
             agent = Agent(session_id="test-session")
 
         llm = FakeLLM()
@@ -334,7 +334,7 @@ class TestAgentToolLimits:
                     raise TransientError("upstream detail with secret")
                 return SimpleNamespace(content="recovered", tool_calls=None, usage=None)
 
-        with patch("amcp.agent.Path.home", return_value=tmp_path):
+        with patch("ankaloop.agent.Path.home", return_value=tmp_path):
             agent = Agent(session_id="provider-retry")
 
         llm = FakeLLM()
@@ -361,7 +361,7 @@ class TestAgentToolLimits:
                 stream_callback("partial")
                 raise TimeoutError("late timeout")
 
-        with patch("amcp.agent.Path.home", return_value=tmp_path):
+        with patch("ankaloop.agent.Path.home", return_value=tmp_path):
             agent = Agent(session_id="provider-stream")
 
         llm = FakeLLM()
@@ -390,7 +390,7 @@ class TestAgentToolLimits:
                 error.status_code = 400
                 raise error
 
-        with patch("amcp.agent.Path.home", return_value=tmp_path):
+        with patch("ankaloop.agent.Path.home", return_value=tmp_path):
             agent = Agent(session_id="pairing-stream")
 
         llm = FakeLLM()
@@ -403,7 +403,7 @@ class TestAgentToolLimits:
                 stream=True,
                 status=MagicMock(),
                 work_dir=tmp_path,
-                cfg=AMCPConfig(
+                cfg=AnkaloopConfig(
                     servers={},
                     chat=ChatConfig(max_retries=2, retry_base_delay_seconds=0),
                     context=ContextConfig(),
@@ -438,14 +438,14 @@ class TestAgentToolLimits:
                 assert any(message.get("role") == "tool" for message in messages)
                 return SimpleNamespace(content="done", tool_calls=None)
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+            mock_load.return_value = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
             agent = Agent(session_id="test-session")
 
         denied = HookOutput(decision=HookDecision.DENY, decision_reason="test")
         with patch(
-            "amcp.agent.run_pre_tool_use_hooks",
+            "ankaloop.agent.run_pre_tool_use_hooks",
             new_callable=AsyncMock,
             return_value=denied,
         ) as pre_hook:
@@ -469,9 +469,9 @@ class TestAgentToolLimits:
 class TestAgentHistoryManagement:
     @pytest.mark.asyncio
     async def test_clear_conversation_history(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
                 agent.conversation_history = [{"role": "user", "content": "hi"}]
@@ -485,8 +485,8 @@ class TestAgentHistoryManagement:
     @pytest.mark.asyncio
     async def test_stale_owner_cannot_clear_newer_session(self, tmp_path):
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", return_value=MagicMock()),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", return_value=MagicMock()),
         ):
             first = Agent(session_id="shared-clear")
             stale = Agent(session_id="shared-clear")
@@ -516,7 +516,7 @@ class TestAgentHistoryManagement:
             await asyncio.sleep(60)
             return "late"
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -551,7 +551,7 @@ class TestAgentHistoryManagement:
             exposed_tools={"slow_write"},
             registry=registry,
             mcp_registry={},
-            config=AMCPConfig(servers={}, chat=None),
+            config=AnkaloopConfig(servers={}, chat=None),
         )
 
         async def process(*_args):
@@ -559,8 +559,8 @@ class TestAgentHistoryManagement:
             return "late"
 
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", return_value=MagicMock()),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", return_value=MagicMock()),
         ):
             agent = Agent(session_id="run-cancel")
 
@@ -586,7 +586,7 @@ class TestAgentHistoryManagement:
             await release.wait()
             return "done"
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -603,7 +603,7 @@ class TestAgentHistoryManagement:
 
     @pytest.mark.asyncio
     async def test_reset_session_publishes_only_after_save(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -643,7 +643,7 @@ class TestAgentHistoryManagement:
             await asyncio.sleep(60)
             return "late"
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -668,7 +668,7 @@ class TestAgentHistoryManagement:
             finally:
                 review_cancelled.set()
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -698,7 +698,7 @@ class TestAgentHistoryManagement:
             finally:
                 review_cancelled.set()
 
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -714,9 +714,9 @@ class TestAgentHistoryManagement:
         assert review_cancelled.is_set()
 
     def test_get_conversation_summary(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
                 agent.conversation_history = [{"role": "user", "content": "hi"}]
@@ -729,7 +729,7 @@ class TestAgentHistoryManagement:
                 assert summary["total_llm_calls"] == 3
 
     def test_memory_prompt_context_is_frozen_per_root(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -738,7 +738,7 @@ class TestAgentHistoryManagement:
         manager.get_persona_context.return_value = "persona"
         manager.get_memory_context.return_value = "memory"
 
-        with patch("amcp.agent.get_memory_manager", return_value=manager) as get_manager:
+        with patch("ankaloop.agent.get_memory_manager", return_value=manager) as get_manager:
             assert agent._get_memory_prompt_context(tmp_path) == ("persona", "memory")
             manager.get_persona_context.return_value = "changed-persona"
             manager.get_memory_context.return_value = "changed-memory"
@@ -747,7 +747,7 @@ class TestAgentHistoryManagement:
         get_manager.assert_called_once_with(tmp_path.resolve())
 
     def test_reset_memory_context_snapshot_refreshes_memory(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -759,14 +759,14 @@ class TestAgentHistoryManagement:
         second.get_persona_context.return_value = "second-persona"
         second.get_memory_context.return_value = "second-memory"
 
-        with patch("amcp.agent.get_memory_manager", side_effect=[first, second]):
+        with patch("ankaloop.agent.get_memory_manager", side_effect=[first, second]):
             assert agent._get_memory_prompt_context(tmp_path) == ("first-persona", "first-memory")
             agent.reset_memory_context_snapshot()
             assert agent._get_memory_prompt_context(tmp_path) == ("second-persona", "second-memory")
 
     @pytest.mark.asyncio
     async def test_periodic_memory_review_runs_every_ten_user_turns(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -796,7 +796,7 @@ class TestAgentHistoryManagement:
 
     @pytest.mark.asyncio
     async def test_flush_memory_marks_reviewed_turn_count(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -816,9 +816,9 @@ class TestAgentHistoryManagement:
         assert agent._last_memory_review_turn_count == 1
 
     def test_save_conversation_history(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent(session_id="test-session")
                 agent._session_state.commit_turn(
@@ -841,7 +841,7 @@ class TestAgentHistoryManagement:
     @pytest.mark.asyncio
     async def test_ephemeral_agent_keeps_turn_in_memory_without_durable_projections(self, tmp_path):
         """Ephemeral turns run normally without session, timeline, history, or transcript writes."""
-        config = AMCPConfig(
+        config = AnkaloopConfig(
             servers={},
             chat=ChatConfig(model="test-model"),
             context=ContextConfig(),
@@ -849,15 +849,15 @@ class TestAgentHistoryManagement:
         memory_manager = MagicMock()
         transcript_store = MagicMock()
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", return_value=config),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", return_value=config),
             patch(
-                "amcp.agent.run_user_prompt_hooks",
+                "ankaloop.agent.run_user_prompt_hooks",
                 new=AsyncMock(return_value=HookOutput()),
             ),
-            patch("amcp.llm.create_llm_client"),
-            patch("amcp.agent.get_memory_manager", return_value=memory_manager),
-            patch("amcp.agent.get_transcript_store", return_value=transcript_store) as transcript_getter,
+            patch("ankaloop.llm.create_llm_client"),
+            patch("ankaloop.agent.get_memory_manager", return_value=memory_manager),
+            patch("ankaloop.agent.get_transcript_store", return_value=transcript_store) as transcript_getter,
         ):
             agent = Agent(session_id="task-child", ephemeral=True)
             with (
@@ -981,7 +981,7 @@ class TestAgentContextFit:
 
     @pytest.mark.asyncio
     async def test_context_overflow_is_not_retried_and_records_timeline_event(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1019,7 +1019,7 @@ class TestAgentContextFit:
         so ``raise provider_error from exc`` would set ``__cause__ = self``.
         The bare ``raise`` guard must prevent this.
         """
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1054,7 +1054,7 @@ class TestAgentContextFit:
         """When a non-retryable ProviderError is freshly created by classify_provider_error,
         ``raise provider_error from exc`` must link the original exception as __cause__.
         """
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1079,7 +1079,7 @@ class TestAgentContextFit:
         assert isinstance(caught.value.__cause__, ValueError)
 
     def test_context_overflow_observer_records_auxiliary_client_failures(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1103,9 +1103,9 @@ class TestAgentContextFit:
         assert overflows[0]["data"]["input_limit"] == 80
 
     def test_agent_model_override_drops_mismatched_model_metadata(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
-            mock_load.return_value = AMCPConfig(
+            mock_load.return_value = AnkaloopConfig(
                 servers={},
                 chat=ChatConfig(
                     model="large-model",
@@ -1136,7 +1136,7 @@ class TestAgentContextFit:
         assert resolved.chat.model_config is None
 
     def test_records_provider_usage_for_status(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1163,7 +1163,7 @@ class TestAgentContextFit:
         assert usage["last_usage_from_api"] is True
 
     def test_estimates_input_when_provider_omits_usage(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent(session_id="test-session")
@@ -1185,9 +1185,9 @@ class TestAgentContextFit:
 
 class TestAgentEventCallbacks:
     def test_add_and_emit_event(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 events = []
@@ -1202,9 +1202,9 @@ class TestAgentEventCallbacks:
                 assert events[0][1]["key"] == "value"
 
     def test_remove_event_callback(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 events = []
@@ -1218,9 +1218,9 @@ class TestAgentEventCallbacks:
                 assert len(events) == 0
 
     def test_emit_event_suppresses_callback_errors(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
 
@@ -1234,9 +1234,9 @@ class TestAgentEventCallbacks:
 
 class TestAgentContextBudget:
     def test_resolve_model_name_from_spec(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 spec = ResolvedAgentSpec(
                     name="test",
@@ -1253,9 +1253,9 @@ class TestAgentContextBudget:
                 assert agent._resolve_model_name() == "gpt-5.5"
 
     def test_resolve_model_name_fallback(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_cfg = MagicMock()
                 mock_cfg.chat = None
                 mock_load.return_value = mock_cfg
@@ -1263,24 +1263,24 @@ class TestAgentContextBudget:
                 assert agent._resolve_model_name() == "DeepSeek-V3.1-Terminus"
 
     def test_trim_to_token_budget_empty(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 assert agent._trim_to_token_budget("", 100) == ""
 
     def test_trim_to_token_budget_within_budget(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 text = "short text"
                 assert agent._trim_to_token_budget(text, 1000) == text
 
     def test_trim_to_token_budget_honors_one_token_limit(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent()
@@ -1293,7 +1293,7 @@ class TestAgentContextBudget:
         """Regression: _is_tool_call_pairing_error must not infinite-loop when
         __cause__ points to the same object (self-reference from raise ... from exc).
         """
-        from amcp.llm import ContextOverflowError
+        from ankaloop.llm import ContextOverflowError
 
         error = ContextOverflowError(
             input_tokens=100,
@@ -1307,7 +1307,7 @@ class TestAgentContextBudget:
         assert _is_tool_call_pairing_error(error) is False
 
     def test_non_progressive_skills_share_one_budget(self, tmp_path):
-        cfg = AMCPConfig(
+        cfg = AnkaloopConfig(
             servers={},
             chat=ChatConfig(model="test-model"),
             context=ContextConfig(progressive_skills=False),
@@ -1327,9 +1327,9 @@ class TestAgentContextBudget:
             buffer=0,
         )
         with (
-            patch("amcp.agent.Path.home") as mock_home,
-            patch("amcp.agent.load_config", return_value=cfg),
-            patch("amcp.agent.get_skill_manager", return_value=skill_manager),
+            patch("ankaloop.agent.Path.home") as mock_home,
+            patch("ankaloop.agent.load_config", return_value=cfg),
+            patch("ankaloop.agent.get_skill_manager", return_value=skill_manager),
             patch.object(Agent, "_calculate_context_budget", return_value=budget),
             patch.object(Agent, "_load_project_rules", return_value=""),
             patch.object(Agent, "_get_memory_prompt_context", return_value=("", "")),
@@ -1341,7 +1341,7 @@ class TestAgentContextBudget:
         assert prompt.count("S") + prompt.count("C") <= budget.skills * 4 + 3
 
     def test_system_prompt_budget_uses_checkpoint_model_context(self, tmp_path):
-        cfg = AMCPConfig(
+        cfg = AnkaloopConfig(
             servers={},
             chat=ChatConfig(
                 model="small-test-model",
@@ -1359,9 +1359,9 @@ class TestAgentContextBudget:
         skill_manager.get_active_skills.return_value = []
 
         with (
-            patch("amcp.agent.Path.home", return_value=tmp_path),
-            patch("amcp.agent.load_config", return_value=cfg),
-            patch("amcp.agent.get_skill_manager", return_value=skill_manager),
+            patch("ankaloop.agent.Path.home", return_value=tmp_path),
+            patch("ankaloop.agent.load_config", return_value=cfg),
+            patch("ankaloop.agent.get_skill_manager", return_value=skill_manager),
             patch.object(Agent, "_load_project_rules", return_value="CHECKPOINT_RULE_MARKER"),
             patch.object(Agent, "_get_memory_prompt_context", return_value=("", "")),
         ):
@@ -1420,29 +1420,29 @@ class TestAgentContextBudget:
         manager = MemoryManager(project_root=tmp_path / "project")
         manager.user_store = MemoryStore(tmp_path / "user-memory")
         manager.write_soul("Soul marker: careful continuity", scope="user")
-        manager.write_identity("Identity marker: AMCP Atlas", scope="user")
+        manager.write_identity("Identity marker: AnkaLoop Atlas", scope="user")
         manager.write_long_term("Memory marker: user prefers concise replies", scope="user")
 
-        cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+        cfg = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
         with (
-            patch("amcp.agent.Path.home") as mock_home,
-            patch("amcp.agent.load_config", return_value=cfg),
-            patch("amcp.agent.get_memory_manager", return_value=manager),
+            patch("ankaloop.agent.Path.home") as mock_home,
+            patch("ankaloop.agent.load_config", return_value=cfg),
+            patch("ankaloop.agent.get_memory_manager", return_value=manager),
         ):
             mock_home.return_value = tmp_path
             agent = Agent()
             prompt = agent._get_system_prompt(tmp_path / "project", conversation_tokens=0)
 
         assert "Soul marker: careful continuity" in prompt
-        assert "Identity marker: AMCP Atlas" in prompt
+        assert "Identity marker: AnkaLoop Atlas" in prompt
         assert "Memory marker: user prefers concise replies" in prompt
 
 
 class TestAgentToolRegistry:
     def test_tool_registry_initialized(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 assert agent.tool_registry is not None
@@ -1450,17 +1450,17 @@ class TestAgentToolRegistry:
 
 class TestAgentStepTracking:
     def test_step_count_starts_at_zero(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 assert agent.step_count == 0
 
     def test_request_counters_reset(self, tmp_path):
-        with patch("amcp.agent.Path.home") as mock_home:
+        with patch("ankaloop.agent.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            with patch("amcp.agent.load_config") as mock_load:
+            with patch("ankaloop.agent.load_config") as mock_load:
                 mock_load.return_value = MagicMock()
                 agent = Agent()
                 agent.current_request_tool_calls = 5
@@ -1478,7 +1478,7 @@ class TestAgentMemoryReview:
 
     def test_run_memory_review_exists(self, tmp_path):
         """Agent has _run_memory_review method."""
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock()
             agent = Agent()
@@ -1489,11 +1489,11 @@ class TestAgentMemoryReview:
         manager = MemoryManager(project_root=tmp_path / "project")
         manager.user_store = MemoryStore(tmp_path / "user-memory")
 
-        cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
+        cfg = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
         with (
-            patch("amcp.agent.Path.home") as mock_home,
-            patch("amcp.agent.load_config", return_value=cfg),
-            patch("amcp.agent.get_memory_manager", return_value=manager),
+            patch("ankaloop.agent.Path.home") as mock_home,
+            patch("ankaloop.agent.load_config", return_value=cfg),
+            patch("ankaloop.agent.get_memory_manager", return_value=manager),
         ):
             mock_home.return_value = tmp_path
             agent = Agent()
@@ -1507,7 +1507,7 @@ class TestAgentMemoryReview:
 
 def test_process_message_wraps_markup_like_exceptions(tmp_path):
     async def _run():
-        with patch("amcp.agent.Path.home") as mock_home, patch("amcp.agent.load_config") as mock_load:
+        with patch("ankaloop.agent.Path.home") as mock_home, patch("ankaloop.agent.load_config") as mock_load:
             mock_home.return_value = tmp_path
             mock_load.return_value = MagicMock(chat=None)
             agent = Agent(session_id="test-session")
@@ -1521,7 +1521,7 @@ def test_process_message_wraps_markup_like_exceptions(tmp_path):
         markup_error = "closing tag '[/llms.txt]' at position 48 doesn't match any open tag"
 
         with (
-            patch("amcp.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
+            patch("ankaloop.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
             patch.object(agent, "_create_progress_context") as mock_progress,
             patch.object(agent, "_get_system_prompt", return_value="system"),
             patch.object(agent, "_build_tools_and_registry") as mock_build_tools,
@@ -1539,8 +1539,11 @@ def test_process_message_wraps_markup_like_exceptions(tmp_path):
 
 @pytest.mark.asyncio
 async def test_process_message_preserves_max_steps_exception(tmp_path):
-    cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
-    with patch("amcp.agent.Path.home", return_value=tmp_path), patch("amcp.agent.load_config", return_value=cfg):
+    cfg = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
+    with (
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=cfg),
+    ):
         agent = Agent(session_id="max-steps")
     prompt_hook_output = SimpleNamespace(
         continue_execution=True,
@@ -1549,8 +1552,8 @@ async def test_process_message_preserves_max_steps_exception(tmp_path):
     )
     status = SimpleNamespace(update=lambda *args, **kwargs: None)
     with (
-        patch("amcp.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
-        patch("amcp.llm.create_llm_client", return_value=MagicMock()),
+        patch("ankaloop.agent.run_user_prompt_hooks", return_value=prompt_hook_output),
+        patch("ankaloop.llm.create_llm_client", return_value=MagicMock()),
         patch.object(agent, "_create_progress_context") as progress,
         patch.object(agent, "_get_system_prompt", return_value="system"),
         patch.object(agent, "_build_tools_and_registry", return_value=([], {})),

@@ -1,31 +1,31 @@
-# AMCP Server — Dockerfile
+# AnkaLoop Server — Dockerfile
 #
 # Build:
-#   docker build -t amcp .
+#   docker build -t ankaloop .
 #
 # Run (interactive CLI inside the container):
-#   docker run -it amcp
+#   docker run -it ankaloop
 #
 # Run server on loopback (safe default, no auth required):
-#   docker run -it amcp serve
+#   docker run -it ankaloop serve
 #
 # Run server exposed to the host network with authentication (via env vars):
 #   docker run -p 8080:8080 \
-#       -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
-#       amcp serve
+#       -e ANKA_HOST=0.0.0.0 -e ANKA_API_KEY=your-secret \
+#       ankaloop serve
 #
 # Run server exposed to the host network with authentication (via config file):
 #   docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
-#       amcp serve --host 0.0.0.0
+#       ankaloop serve --host 0.0.0.0
 #
 # With scheduler & reactor:
 #   docker run -p 8080:8080 \
-#       -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
-#       amcp serve --scheduler --reactor
+#       -e ANKA_HOST=0.0.0.0 -e ANKA_API_KEY=your-secret \
+#       ankaloop serve --scheduler --reactor
 #
 # NOTE: A non-loopback --host (e.g. 0.0.0.0) requires authentication.
-#       Use --api-key, AMCP_API_KEY env var, or [server.auth] in config.toml.
-#       Custom ports via AMCP_PORT are picked up by the HEALTHCHECK automatically.
+#       Use --api-key, ANKA_API_KEY env var, or [server.auth] in config.toml.
+#       Custom ports via ANKA_PORT are picked up by the HEALTHCHECK automatically.
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only files needed to install AMCP. Avoid sending local deployment
+# Copy only files needed to install AnkaLoop. Avoid sending local deployment
 # files (for example e2b/env) into the runtime image and keep dependency
 # installation cacheable across unrelated repository changes.
 COPY pyproject.toml uv.lock README.md ./
@@ -61,9 +61,9 @@ WORKDIR /workspace
 
 # Health check — hits the server /api/v1/health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:%s/api/v1/health' % os.environ.get('AMCP_PORT', '8080'))" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:%s/api/v1/health' % os.environ.get('ANKA_PORT', '8080'))" || exit 1
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/bin/tini", "--", "amcp"]
+ENTRYPOINT ["/usr/bin/tini", "--", "anka"]
 CMD ["serve"]

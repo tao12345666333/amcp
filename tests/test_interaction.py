@@ -1,7 +1,7 @@
 """Tests for shared interaction routing."""
 
-from amcp.commands import reset_command_manager
-from amcp.interaction import route_interaction
+from ankaloop.commands import reset_command_manager
+from ankaloop.interaction import route_interaction
 
 
 def test_plain_message_routes_to_prompt():

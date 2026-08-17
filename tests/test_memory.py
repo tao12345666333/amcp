@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from amcp.memory import MemoryManager, MemoryStore, reset_memory_manager
-from amcp.tools import MemoryTool, ToolResult
+from ankaloop.memory import MemoryManager, MemoryStore, reset_memory_manager
+from ankaloop.tools import MemoryTool, ToolResult
 
 # --- Fixtures ---
 
@@ -255,7 +255,7 @@ class TestMemoryTool:
     @pytest.fixture(autouse=True)
     def _setup_memory(self, tmp_path: Path, monkeypatch):
         """Set up memory in temp dir to avoid touching real files."""
-        from amcp import memory
+        from ankaloop import memory
 
         # Create a manager with temp dirs
         user_dir = tmp_path / "user-memory"
@@ -325,7 +325,7 @@ class TestMemoryTool:
 
     def test_project_root_parameter_directs_project_scope(self, tmp_path: Path, monkeypatch):
         """Internal project_root parameter directs project memory to the current project."""
-        from amcp import memory
+        from ankaloop import memory
 
         reset_memory_manager()
         monkeypatch.setattr(memory, "CONFIG_DIR", tmp_path / "config")
@@ -355,7 +355,7 @@ class TestMemoryTool:
     def test_soul_and_identity_actions(self):
         """Memory tool manages durable soul and identity."""
         soul = self.tool.execute(action="write_soul", content="Be precise and persistent.")
-        identity = self.tool.execute(action="identify", content="Name: AMCP Atlas")
+        identity = self.tool.execute(action="identify", content="Name: AnkaLoop Atlas")
 
         assert soul.success
         assert identity.success
@@ -364,7 +364,7 @@ class TestMemoryTool:
         identity_read = self.tool.execute(action="read_identity")
 
         assert "precise and persistent" in soul_read.content
-        assert "AMCP Atlas" in identity_read.content
+        assert "AnkaLoop Atlas" in identity_read.content
 
     def test_persona_actions_reject_project_scope(self):
         """Persona tool actions are global-only."""

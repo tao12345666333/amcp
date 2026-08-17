@@ -171,7 +171,7 @@ Web Developer: Perfect! I've now integrated the security improvements and docume
 
 1. **Start the Web Developer agent:**
    ```bash
-   amcp --agent examples/agents/web-developer.yaml
+   anka --agent examples/agents/web-developer.yaml
    ```
 
 2. **Make sure other agents are available:**

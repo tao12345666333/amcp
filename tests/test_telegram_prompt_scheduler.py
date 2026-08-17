@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from amcp.telegram.scheduler import (
+from ankaloop.telegram.scheduler import (
     SCHEDULE_BLUEPRINTS,
     TelegramPromptScheduler,
     TelegramScheduleStore,
 )
-from amcp.telegram.tools import TelegramScheduleTool
+from ankaloop.telegram.tools import TelegramScheduleTool
 
 
 class _ScheduledAgent:

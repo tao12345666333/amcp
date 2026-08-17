@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "description": "Security validation hooks with pattern-based detection and warnings",
     "author": "AMCP Team",
-    "homepage": "https://github.com/tao12345666333/amcp",
+    "homepage": "https://github.com/tao12345666333/ankaloop",
     "components": {
         "commands": [],
         "agents": [],

@@ -7,17 +7,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.runtime import CancellationResult
-from amcp.telegram.auth import AuthMiddleware
-from amcp.telegram.config import (
+from ankaloop.runtime import CancellationResult
+from ankaloop.telegram.auth import AuthMiddleware
+from ankaloop.telegram.config import (
     TelegramConfig,
     TelegramGroupConfig,
     TelegramPairingConfig,
     TelegramStreamingConfig,
     TelegramTopicConfig,
 )
-from amcp.telegram.formatter import TelegramFormatter
-from amcp.telegram.handlers import (
+from ankaloop.telegram.formatter import TelegramFormatter
+from ankaloop.telegram.handlers import (
     RateLimiter,
     SessionManager,
     TelegramHandlers,
@@ -637,17 +637,17 @@ def _make_bot_for_typing(
     message_ids = iter(range(1, 1000))
     mock_app.bot.send_message = AsyncMock(side_effect=lambda **kwargs: SimpleNamespace(message_id=next(message_ids)))
     mock_app.bot.edit_message_text = AsyncMock()
-    importlib.import_module("amcp.telegram.bot")
+    importlib.import_module("ankaloop.telegram.bot")
 
     with (
-        patch("amcp.telegram.bot.ApplicationBuilder") as builder_cls,
-        patch("amcp.telegram.bot.CommandHandler", MagicMock()),
-        patch("amcp.telegram.bot.MessageHandler", MagicMock()),
-        patch("amcp.telegram.bot.filters", MagicMock()),
+        patch("ankaloop.telegram.bot.ApplicationBuilder") as builder_cls,
+        patch("ankaloop.telegram.bot.CommandHandler", MagicMock()),
+        patch("ankaloop.telegram.bot.MessageHandler", MagicMock()),
+        patch("ankaloop.telegram.bot.filters", MagicMock()),
     ):
         builder_cls.return_value.token.return_value.post_init.return_value.build.return_value = mock_app
 
-        from amcp.telegram.bot import TelegramBot
+        from ankaloop.telegram.bot import TelegramBot
 
         bot = TelegramBot(
             token="fake-token",
@@ -664,7 +664,7 @@ def test_post_init_registers_user_facing_bot_commands():
         bot = _make_bot_for_typing()
         bot._application.bot.set_my_commands = AsyncMock()
 
-        with patch("amcp.telegram.bot.BotCommand") as mock_bot_command:
+        with patch("ankaloop.telegram.bot.BotCommand") as mock_bot_command:
             mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
             await bot._post_init(bot._application)
 
@@ -697,7 +697,7 @@ def test_post_init_registers_user_facing_bot_commands():
 def test_get_user_bot_commands_descriptions():
     bot = _make_bot_for_typing()
 
-    with patch("amcp.telegram.bot.BotCommand") as mock_bot_command:
+    with patch("ankaloop.telegram.bot.BotCommand") as mock_bot_command:
         mock_bot_command.side_effect = lambda cmd, desc: SimpleNamespace(command=cmd, description=desc)
         commands = bot._get_user_bot_commands()
 
@@ -711,10 +711,10 @@ def test_persist_config_does_not_write_environment_bot_token(monkeypatch, tmp_pa
         bot = _make_bot_for_typing()
         loaded_config = SimpleNamespace(telegram=None)
 
-        monkeypatch.setenv("AMCP_TELEGRAM_BOT_TOKEN", "runtime-secret")
+        monkeypatch.setenv("ANKA_TELEGRAM_BOT_TOKEN", "runtime-secret")
         with (
-            patch("amcp.telegram.bot.load_config", return_value=loaded_config),
-            patch("amcp.telegram.bot.save_config", return_value=tmp_path / "config.toml") as save_config,
+            patch("ankaloop.telegram.bot.load_config", return_value=loaded_config),
+            patch("ankaloop.telegram.bot.save_config", return_value=tmp_path / "config.toml") as save_config,
         ):
             await bot.persist_config()
 
@@ -874,7 +874,7 @@ def test_memory_dream_once_runs_for_active_chat():
         run_once = MagicMock(return_value=SimpleNamespace(ran=True, updated=False, reason="no_reply"))
         dreamer_cls = MagicMock(return_value=SimpleNamespace(run_once=run_once))
 
-        with patch("amcp.telegram.bot.MemoryDreamer", dreamer_cls):
+        with patch("ankaloop.telegram.bot.MemoryDreamer", dreamer_cls):
             await bot._run_memory_dream_once()
 
         dreamer_cls.assert_called_once_with(bot.memory_project_root(801))
@@ -1408,7 +1408,7 @@ def test_telegram_config_has_streaming_field():
 
 def test_streaming_delivery_manager_accumulates_chunks():
     """Test that _StreamingDeliveryManager accumulates chunks from the event callback."""
-    from amcp.telegram.bot import _StreamingDeliveryManager
+    from ankaloop.telegram.bot import _StreamingDeliveryManager
 
     formatter = TelegramFormatter(max_length=4096)
     cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)
@@ -1447,7 +1447,7 @@ def test_streaming_delivery_manager_accumulates_chunks():
 
 def test_streaming_delivery_manager_ignores_non_chunk_events():
     """Test that _StreamingDeliveryManager ignores non-chunk events."""
-    from amcp.telegram.bot import _StreamingDeliveryManager
+    from ankaloop.telegram.bot import _StreamingDeliveryManager
 
     formatter = TelegramFormatter(max_length=4096)
     cfg = TelegramStreamingConfig()
@@ -1484,7 +1484,7 @@ def test_streaming_delivery_manager_ignores_non_chunk_events():
 
 def test_streaming_delivery_manager_flush_edits_message():
     """Test that maybe_flush edits the status message with accumulated text."""
-    from amcp.telegram.bot import _StreamingDeliveryManager
+    from ankaloop.telegram.bot import _StreamingDeliveryManager
 
     formatter = TelegramFormatter(max_length=4096)
     cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)
@@ -1522,7 +1522,7 @@ def test_streaming_delivery_manager_flush_edits_message():
 
 def test_streaming_delivery_manager_respects_is_current():
     """Test that _StreamingDeliveryManager stops delivering when session is no longer current."""
-    from amcp.telegram.bot import _StreamingDeliveryManager
+    from ankaloop.telegram.bot import _StreamingDeliveryManager
 
     formatter = TelegramFormatter(max_length=4096)
     cfg = TelegramStreamingConfig(streaming_min_chars=1, streaming_interval_seconds=0.0)

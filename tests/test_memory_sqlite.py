@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from amcp.memory import MemoryManager, MemoryStore, reset_memory_manager
-from amcp.memory_store import SQLiteMemoryStore
-from amcp.tools import MemoryTool
+from ankaloop.memory import MemoryManager, MemoryStore, reset_memory_manager
+from ankaloop.memory_store import SQLiteMemoryStore
+from ankaloop.tools import MemoryTool
 
 # --- Fixtures ---
 
@@ -254,7 +254,7 @@ class TestMemoryToolFacts:
     @pytest.fixture(autouse=True)
     def _setup_memory(self, tmp_path: Path, monkeypatch):
         """Set up memory in temp dir."""
-        from amcp import memory
+        from ankaloop import memory
 
         user_dir = tmp_path / "user-memory"
         project_dir = tmp_path / "project"

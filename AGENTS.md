@@ -1,8 +1,8 @@
-# AMCP Project Rules
+# AnkaLoop Project Rules
 
 ## Project Overview
 
-AMCP is a Python coding-agent runtime with a CLI, HTTP/WebSocket server, Telegram integration,
+AnkaLoop is a Python coding-agent runtime with a CLI, HTTP/WebSocket server, Telegram integration,
 MCP tools, multi-agent delegation, skills, hooks, memory, and
 progressive context management.
 
@@ -17,17 +17,17 @@ progressive context management.
 
 ## Architecture Patterns
 
-- Tools are classes inheriting from `BaseTool` in `src/amcp/tools.py`.
+- Tools are classes inheriting from `BaseTool` in `src/ankaloop/tools.py`.
 - Agents are configured through `AgentSpec` and `ResolvedAgentSpec`.
-- Built-in agent types live in `src/amcp/multi_agent.py`.
-- Configuration is TOML and is loaded through `src/amcp/config.py`.
-- Project rules are loaded from `AGENTS.md` through `src/amcp/project_rules.py`.
-- HTTP/WebSocket server code lives under `src/amcp/server/`.
-- Client transports live under `src/amcp/client/`; protocol conversion code lives under
-  `src/amcp/protocol/`.
-- Telegram command handling is split between `src/amcp/telegram/bot.py` and
-  `src/amcp/telegram/handlers.py`.
-- Keep shared slash-command behavior in `src/amcp/interaction.py` when possible so CLI,
+- Built-in agent types live in `src/ankaloop/multi_agent.py`.
+- Configuration is TOML and is loaded through `src/ankaloop/config.py`.
+- Project rules are loaded from `AGENTS.md` through `src/ankaloop/project_rules.py`.
+- HTTP/WebSocket server code lives under `src/ankaloop/server/`.
+- Client transports live under `src/ankaloop/client/`; protocol conversion code lives under
+  `src/ankaloop/protocol/`.
+- Telegram command handling is split between `src/ankaloop/telegram/bot.py` and
+  `src/ankaloop/telegram/handlers.py`.
+- Keep shared slash-command behavior in `src/ankaloop/interaction.py` when possible so CLI,
   server, and Telegram stay consistent.
 
 ## Agent Behavior
@@ -41,7 +41,7 @@ progressive context management.
 - Telegram `/new` should create a fresh session, abandon old active work, and clear old queued
   messages.
 - Model provider failures currently bubble up through `AgentExecutionError`; do not assume an
-  AMCP application-level retry exists.
+  AnkaLoop application-level retry exists.
 
 ## Testing
 
@@ -55,7 +55,7 @@ progressive context management.
 ## Important Files
 
 ```text
-src/amcp/
+src/ankaloop/
 ├── agent.py              # Main Agent class and tool loop
 ├── agent_spec.py         # Agent configuration specs
 ├── tools.py              # Built-in tool definitions and registry
@@ -102,7 +102,7 @@ Before committing code, run the checks that match the change. For normal code ch
 ```bash
 ruff format src tests
 ruff check src tests
-mypy src/amcp --ignore-missing-imports
+mypy src/ankaloop --ignore-missing-imports
 python -m pytest -q
 ```
 
@@ -118,12 +118,12 @@ When releasing a new version, update all version references in this order:
 | File | Location | Format |
 |------|----------|--------|
 | `pyproject.toml` | project metadata | `version = "X.Y.Z"` |
-| `src/amcp/_version.py` | module constant | `__version__ = "X.Y.Z"` |
+| `src/ankaloop/_version.py` | module constant | `__version__ = "X.Y.Z"` |
 
 Verify the version update with:
 
 ```bash
-grep -rn "X.Y.Z" pyproject.toml src/amcp/_version.py
+grep -rn "X.Y.Z" pyproject.toml src/ankaloop/_version.py
 ```
 
 Then run:

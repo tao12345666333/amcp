@@ -580,7 +580,7 @@ All errors follow this format:
 ### Python SDK
 
 ```python
-from amcp.client import AMCPClient
+from ankaloop.client import AMCPClient
 
 async with AMCPClient("http://localhost:8080") as client:
     # Create session

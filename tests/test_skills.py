@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.skills import (
+from ankaloop.skills import (
     SkillManager,
     SkillMetadata,
     get_skill_manager,
@@ -304,7 +304,7 @@ Agent skill body""")
         # Setup user skills dir
         user_config_dir = temp_skills_dir / "user_config"
         user_skills_dir = user_config_dir / "skills"
-        monkeypatch.setattr("amcp.skills.CONFIG_DIR", user_config_dir)
+        monkeypatch.setattr("ankaloop.skills.CONFIG_DIR", user_config_dir)
 
         # Setup ~/.agents/skills dir
         home_dir = temp_skills_dir / "home"

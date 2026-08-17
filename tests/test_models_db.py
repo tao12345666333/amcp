@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from amcp.models_db import (
+from ankaloop.models_db import (
     BUILTIN_MODELS,
     DEFAULT_CONTEXT_WINDOW,
     ModelInfo,
@@ -163,7 +163,7 @@ class TestGetContextWindowFromDatabase:
 
     def test_returns_builtin_when_no_cache(self):
         """Test fallback to built-in values."""
-        with patch("amcp.models_db.load_models_cache", return_value=None):
+        with patch("ankaloop.models_db.load_models_cache", return_value=None):
             # Use a model from BUILTIN_MODELS
             first_model = next(iter(BUILTIN_MODELS.keys()))
             result = get_context_window_from_database(first_model)
@@ -171,7 +171,7 @@ class TestGetContextWindowFromDatabase:
 
     def test_returns_default_for_unknown(self):
         """Test default for unknown models."""
-        with patch("amcp.models_db.load_models_cache", return_value=None):
+        with patch("ankaloop.models_db.load_models_cache", return_value=None):
             result = get_context_window_from_database("unknown-model-xyz")
             assert result == DEFAULT_CONTEXT_WINDOW
 
@@ -181,7 +181,7 @@ class TestGetContextWindowFromDatabase:
         provider = ProviderInfo(id="custom", name="Custom", models={"custom-model": model})
         db = ModelsDatabase(providers={"custom": provider})
 
-        with patch("amcp.models_db.load_models_cache", return_value=db):
+        with patch("ankaloop.models_db.load_models_cache", return_value=db):
             result = get_context_window_from_database("custom-model")
             assert result == 999999
 
@@ -199,8 +199,8 @@ class TestCacheFunctions:
             cache_file = Path(tmpdir) / "models.json"
 
             with (
-                patch("amcp.models_db.MODELS_CACHE_FILE", cache_file),
-                patch("amcp.models_db.CACHE_DIR", Path(tmpdir)),
+                patch("ankaloop.models_db.MODELS_CACHE_FILE", cache_file),
+                patch("ankaloop.models_db.CACHE_DIR", Path(tmpdir)),
             ):
                 # Save
                 save_models_cache(db)
@@ -219,6 +219,6 @@ class TestCacheFunctions:
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "nonexistent.json"
 
-            with patch("amcp.models_db.MODELS_CACHE_FILE", cache_file):
+            with patch("ankaloop.models_db.MODELS_CACHE_FILE", cache_file):
                 result = load_models_cache()
                 assert result is None

@@ -1,4 +1,4 @@
-# AMCP — Docker Compose example
+# AnkaLoop — Docker Compose example
 #
 # Start:
 #   docker compose up -d
@@ -10,17 +10,17 @@
 #   Place your config.toml in the same directory and it will be mounted.
 
 services:
-  amcp:
+  ankaloop:
     build: ..
     ports:
       - "8080:8080"
     volumes:
       - ./config.toml:/root/.config/amcp/config.toml:ro
-      - amcp-data:/root/.config/amcp
+      - ankaloop-data:/root/.config/amcp
     environment:
       - PYTHONUNBUFFERED=1
-      # - AMCP_MODEL_API_KEY=sk-xxxx
+      # - ANKA_MODEL_API_KEY=sk-xxxx
     restart: unless-stopped
 
 volumes:
-  amcp-data:
+  ankaloop-data:

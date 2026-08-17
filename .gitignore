@@ -153,3 +153,5 @@ Thumbs.db
 .amcp/memory/
 e2b/
 e2b.toml
+deploy_k8s/secret.yaml
+deploy_vm/amcp.env

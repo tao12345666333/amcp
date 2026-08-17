@@ -1,6 +1,6 @@
-# AMCP Examples
+# AnkaLoop Examples
 
-This directory contains ready-to-use examples that demonstrate the various capabilities of AMCP (Agent Model Context Protocol). These examples are designed to help you get started quickly and understand how to leverage different features of the system.
+This directory contains ready-to-use examples that demonstrate the various capabilities of AnkaLoop (Agent Model Context Protocol). These examples are designed to help you get started quickly and understand how to leverage different features of the system.
 
 ## 📁 Directory Structure
 
@@ -36,14 +36,14 @@ Agent specifications define the behavior, capabilities, and system prompts for d
    cp examples/agents/web-developer.yaml ~/.config/amcp/agents/
    ```
 
-2. **Use the agent with AMCP:**
+2. **Use the agent with AnkaLoop:**
    ```bash
-   amcp --agent web-developer
+   anka --agent web-developer
    ```
 
 3. **Or use it directly from the examples directory:**
    ```bash
-   amcp --agent examples/agents/web-developer.yaml
+   anka --agent examples/agents/web-developer.yaml
    ```
 
 ### Creating Custom Agents
@@ -87,10 +87,10 @@ Slash commands provide quick shortcuts for common tasks. These examples demonstr
    cp examples/commands/*.toml .amcp/commands/
    ```
 
-2. **Use commands in AMCP:**
+2. **Use commands in AnkaLoop:**
    ```
-   AMCP> /debug "My function is not working"
-   AMCP> /docker:build "Optimize my Dockerfile"
+   AnkaLoop> /debug "My function is not working"
+   AnkaLoop> /docker:build "Optimize my Dockerfile"
    ```
 
 ### Creating Custom Commands
@@ -136,8 +136,8 @@ Skills provide specialized knowledge and behavior patterns to agents. These exam
 
 2. **Activate skills in your agent or during conversation:**
    ```
-   AMCP> Activate the react-developer skill
-   AMCP> I need help with React hooks
+   AnkaLoop> Activate the react-developer skill
+   AnkaLoop> I need help with React hooks
    ```
 
 ### Creating Custom Skills
@@ -162,7 +162,7 @@ Detailed documentation about the skill, including:
 
 ## 🪝 Hooks (`hooks/`)
 
-Hooks provide automation and validation capabilities that run at various points in the AMCP workflow. These examples demonstrate different hook configurations for common automation needs.
+Hooks provide automation and validation capabilities that run at various points in the AnkaLoop workflow. These examples demonstrate different hook configurations for common automation needs.
 
 ### Available Hook Examples
 
@@ -212,42 +212,42 @@ enabled = true
 
 ## 🔄 Multi-Agent Workflows
 
-AMCP supports multi-agent workflows where agents can delegate tasks to specialized subagents. Here are some example workflows:
+AnkaLoop supports multi-agent workflows where agents can delegate tasks to specialized subagents. Here are some example workflows:
 
 ### Example 1: Web Development with Security Review
 ```bash
 # Start with web-developer agent
-amcp --agent web-developer
+anka --agent web-developer
 
 # In the conversation, the agent can delegate to security-auditor:
-AMCP> "Create a login form and have it security reviewed"
+AnkaLoop> "Create a login form and have it security reviewed"
 ```
 
 ### Example 2: Data Science with Documentation
 ```bash
 # Use data-scientist agent
-amcp --agent data-scientist
+anka --agent data-scientist
 
 # The agent can delegate to documentation-writer:
-AMCP> "Analyze this dataset and create comprehensive documentation"
+AnkaLoop> "Analyze this dataset and create comprehensive documentation"
 ```
 
 ### Example 3: DevOps with Security
 ```bash
 # Use devops-engineer agent
-amcp --agent devops-engineer
+anka --agent devops-engineer
 
 # The agent can delegate to security-auditor:
-AMCP> "Set up a CI/CD pipeline and ensure it meets security standards"
+AnkaLoop> "Set up a CI/CD pipeline and ensure it meets security standards"
 ```
 
 ## 🛠️ Setup and Configuration
 
 ### Quick Setup
 
-1. **Initialize AMCP configuration:**
+1. **Initialize AnkaLoop configuration:**
    ```bash
-   amcp init
+   anka init
    ```
 
 2. **Copy examples to your configuration:**
@@ -259,9 +259,9 @@ AMCP> "Set up a CI/CD pipeline and ensure it meets security standards"
    cp examples/hooks/*.toml ~/.config/amcp/
    ```
 
-3. **Start using AMCP with examples:**
+3. **Start using AnkaLoop with examples:**
    ```bash
-   amcp --agent web-developer
+   anka --agent web-developer
    ```
 
 ### Project-Specific Configuration
@@ -321,7 +321,7 @@ To contribute new examples:
 
 ## 📖 Additional Resources
 
-- [AMCP Main Documentation](../README.md)
+- [AnkaLoop Main Documentation](../README.md)
 - [Agent Capabilities](../docs/design/phase2-agent-capabilities.md)
 - [Commands and Skills Guide](../docs/skills-and-commands.md)
 - [Hooks System Guide](../docs/hooks.md)
@@ -338,10 +338,10 @@ To contribute new examples:
 
 ### Getting Help
 
-- Check the [AMCP documentation](../README.md)
+- Check the [AnkaLoop documentation](../README.md)
 - Review the setup and notes in the [main documentation](../README.md)
 - Open an issue on the GitHub repository
 
 ---
 
-Happy coding with AMCP! 🚀
+Happy coding with AnkaLoop! 🚀

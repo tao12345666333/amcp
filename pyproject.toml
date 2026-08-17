@@ -1,7 +1,7 @@
 [project]
-name = "amcp-agent"
-version = "0.13.0"
-description = "AMCP is an out-of-the-box coding-agent runtime for terminal, server, and Telegram, with built-in tools, subagents, skills, memory, MCP, hooks, and automation."
+name = "ankaloop"
+version = "0.14.0rc1"
+description = "AnkaLoop is an out-of-the-box coding-agent runtime for terminal, server, and Telegram, with built-in tools, subagents, skills, memory, MCP, hooks, and automation."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
@@ -67,23 +67,23 @@ dev = [
 ]
 
 [project.scripts]
-amcp = "amcp.cli:app"
-amcp-agent = "amcp.cli:app"
+anka = "ankaloop.cli:app"
+ankaloop = "ankaloop.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/tao12345666333/amcp"
-Repository = "https://github.com/tao12345666333/amcp"
-Issues = "https://github.com/tao12345666333/amcp/issues"
+Homepage = "https://github.com/tao12345666333/ankaloop"
+Repository = "https://github.com/tao12345666333/ankaloop"
+Issues = "https://github.com/tao12345666333/ankaloop/issues"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/amcp"]
+packages = ["src/ankaloop"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/amcp"]
+include = ["src/ankaloop"]
 
 [tool.ruff]
 line-length = 100
@@ -94,7 +94,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=src/amcp --cov-report=term-missing"
+addopts = "-v --cov=src/ankaloop --cov-report=term-missing"
 
 [tool.mypy]
 python_version = "3.11"

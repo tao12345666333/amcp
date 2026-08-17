@@ -401,7 +401,7 @@ DevOps Engineer: Perfect! Your secure CI/CD pipeline is now complete with all se
 
 1. **Start the DevOps Engineer agent:**
    ```bash
-   amcp --agent examples/agents/devops-engineer.yaml
+   anka --agent examples/agents/devops-engineer.yaml
    ```
 
 2. **Ensure supporting agents are available:**

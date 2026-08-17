@@ -276,7 +276,7 @@ Data Scientist: Perfect! Your customer churn prediction system is now complete w
 
 1. **Start the Data Scientist agent:**
    ```bash
-   amcp --agent examples/agents/data-scientist.yaml
+   anka --agent examples/agents/data-scientist.yaml
    ```
 
 2. **Ensure supporting agents are available:**

@@ -1,4 +1,4 @@
-"""Tests for the AMCP hooks system."""
+"""Tests for the AnkaLoop hooks system."""
 
 import asyncio
 import json
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from amcp.hooks import (
+from ankaloop.hooks import (
     HookDecision,
     HookEvent,
     HookHandler,
@@ -403,7 +403,7 @@ class TestEnvironmentVariables:
         reset_hooks_manager()
 
     def test_amcp_project_dir_substitution(self):
-        """Test $AMCP_PROJECT_DIR substitution in commands."""
+        """Test $ANKA_PROJECT_DIR substitution in commands."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             amcp_dir = project_dir / ".amcp"
@@ -414,7 +414,7 @@ class TestEnvironmentVariables:
 [[hooks.PreToolUse.handlers]]
 matcher = "*"
 type = "command"
-command = "echo $AMCP_PROJECT_DIR"
+command = "echo $ANKA_PROJECT_DIR"
 timeout = 5
 enabled = true
 """
@@ -423,7 +423,7 @@ enabled = true
             manager = HooksManager(project_dir)
             handlers = manager.get_handlers(HookEvent.PRE_TOOL_USE, "any")
 
-            # The $AMCP_PROJECT_DIR should be available in the command's environment
+            # The $ANKA_PROJECT_DIR should be available in the command's environment
             assert len(handlers) == 1
 
 

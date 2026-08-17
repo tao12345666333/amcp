@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from amcp.event_bus import (
+from ankaloop.event_bus import (
     Event,
     EventBus,
     EventHandler,

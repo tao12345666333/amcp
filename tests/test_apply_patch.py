@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.apply_patch import (
+from ankaloop.apply_patch import (
     FileOperation,
     Hunk,
     HunkLine,

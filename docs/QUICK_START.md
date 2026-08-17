@@ -10,27 +10,27 @@
 ### Install and run
 
 ```bash
-python -m pip install amcp-agent
-amcp init
-amcp
+python -m pip install ankaloop
+anka init
+anka
 
 # Run one task and exit
-amcp --once "summarize this repository"
+anka --once "summarize this repository"
 ```
 
-`amcp-agent` is the package name. Installation provides `amcp` (the recommended command) and
-`amcp-agent` (a compatibility alias). The initialization wizard stores configuration in
-`~/.config/amcp/config.toml`. Alternatively, run without installing via `uvx amcp-agent init`
-and `uvx amcp-agent`.
+`ankaloop` is the package name. Installation provides the `anka` command (recommended) and
+the `ankaloop` command. The initialization wizard stores configuration in
+`~/.config/amcp/config.toml`. Alternatively, run without installing via `uvx ankaloop init`
+and `uvx ankaloop`.
 
-Telegram support is optional: `python -m pip install "amcp-agent[telegram]"`. Provider support,
+Telegram support is optional: `python -m pip install "ankaloop[telegram]"`. Provider support,
 including Anthropic, is included in the base package; do not install an `anthropic` extra.
 
 ## For Contributors
 
 ### 1. Clone and Setup
 ```bash
-git clone https://github.com/tao12345666333/amcp.git
+git clone https://github.com/tao12345666333/ankaloop.git
 cd amcp
 
 # Install with development dependencies
@@ -99,7 +99,7 @@ git push origin feature/my-feature
 ```python
 # tests/test_myfeature.py
 import pytest
-from amcp.myfeature import MyClass
+from ankaloop.myfeature import MyClass
 
 def test_my_feature():
     obj = MyClass()
@@ -109,7 +109,7 @@ def test_my_feature():
 
 ### Adding a New Tool
 ```python
-# src/amcp/tools.py
+# src/ankaloop/tools.py
 class MyNewTool(BaseTool):
     @property
     def name(self) -> str:

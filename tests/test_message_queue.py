@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from amcp.message_queue import (
+from ankaloop.message_queue import (
     MessagePriority,
     MessageQueueManager,
     QueuedMessage,

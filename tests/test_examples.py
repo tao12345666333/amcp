@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent
-from amcp.agent_spec import load_agent_spec
-from amcp.commands import CommandManager
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig, ServerConfig, _decode_server_config
-from amcp.hooks import HookOutput, HooksManager
-from amcp.llm import LLMResponse
-from amcp.tools import create_default_tool_registry
+from ankaloop.agent import Agent
+from ankaloop.agent_spec import load_agent_spec
+from ankaloop.commands import CommandManager
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig, ServerConfig, _decode_server_config
+from ankaloop.hooks import HookOutput, HooksManager
+from ankaloop.llm import LLMResponse
+from ankaloop.tools import create_default_tool_registry
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
@@ -89,9 +89,9 @@ def test_readme_commands_smoke_parse() -> None:
     for path in expected_files:
         assert (ROOT / path).exists(), f"README references missing example path: {path}"
 
-    assert "amcp init" in readme
-    assert "amcp --agent web-developer" in readme
-    assert "amcp --agent examples/agents/web-developer.yaml" in readme
+    assert "anka init" in readme
+    assert "anka --agent web-developer" in readme
+    assert "anka --agent examples/agents/web-developer.yaml" in readme
     assert "/delegate" not in readme
 
 
@@ -177,7 +177,7 @@ async def test_web_development_workflow_task_tool_runs_with_mock_provider(tmp_pa
     assert task_spec is not None
 
     agent_spec = load_agent_spec(EXAMPLES / "agents" / "web-developer.yaml")
-    cfg = AMCPConfig(
+    cfg = AnkaloopConfig(
         servers={},
         chat=ChatConfig(model="mock-model", request_timeout_seconds=5, max_retries=0),
         context=ContextConfig(progressive_tools=False, progressive_skills=False),
@@ -185,13 +185,13 @@ async def test_web_development_workflow_task_tool_runs_with_mock_provider(tmp_pa
     )
 
     with (
-        patch("amcp.agent.Path.home") as mock_home,
-        patch("amcp.agent.load_config", return_value=cfg),
-        patch("amcp.agent.run_pre_tool_use_hooks", new=AsyncMock(return_value=HookOutput())),
-        patch("amcp.agent.run_post_tool_use_hooks", new=AsyncMock(return_value=HookOutput())),
-        patch("amcp.agent.Agent._maybe_run_periodic_memory_review", new=AsyncMock(return_value=None)),
-        patch("amcp.agent.Agent._run_memory_review", new=AsyncMock(return_value=False)),
-        patch("amcp.agent.Agent.run", new=fake_subagent_run),
+        patch("ankaloop.agent.Path.home") as mock_home,
+        patch("ankaloop.agent.load_config", return_value=cfg),
+        patch("ankaloop.agent.run_pre_tool_use_hooks", new=AsyncMock(return_value=HookOutput())),
+        patch("ankaloop.agent.run_post_tool_use_hooks", new=AsyncMock(return_value=HookOutput())),
+        patch("ankaloop.agent.Agent._maybe_run_periodic_memory_review", new=AsyncMock(return_value=None)),
+        patch("ankaloop.agent.Agent._run_memory_review", new=AsyncMock(return_value=False)),
+        patch("ankaloop.agent.Agent.run", new=fake_subagent_run),
     ):
         mock_home.return_value = tmp_path
         agent = Agent(agent_spec=agent_spec, session_id="example-session")

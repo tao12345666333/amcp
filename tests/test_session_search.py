@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from amcp.session_search import TranscriptStore
-from amcp.tools import SessionSearchTool
+from ankaloop.session_search import TranscriptStore
+from ankaloop.tools import SessionSearchTool
 
 
 def test_transcript_store_appends_and_searches_turn(tmp_path):
@@ -44,7 +44,7 @@ def test_session_search_tool_formats_results(tmp_path):
 
     tool = SessionSearchTool()
 
-    with patch("amcp.session_search.get_transcript_store", return_value=store):
+    with patch("ankaloop.session_search.get_transcript_store", return_value=store):
         result = tool.execute(query="autoDream")
 
     assert result.success is True

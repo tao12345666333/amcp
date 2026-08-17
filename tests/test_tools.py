@@ -2,7 +2,7 @@ import json
 import re
 from unittest.mock import patch
 
-from amcp.tools import (
+from ankaloop.tools import (
     BashTool,
     GrepTool,
     ReadFileTool,
@@ -100,7 +100,7 @@ def test_web_search_tool_firecrawl_backend():
         }
     }
 
-    with patch("amcp.tools._firecrawl_search", return_value=response):
+    with patch("ankaloop.tools._firecrawl_search", return_value=response):
         result = tool.execute(query="firecrawl docs", backend="firecrawl", fetch_content=True)
 
     assert result.success
@@ -120,16 +120,16 @@ def test_web_tool_specs_hide_provider_details():
 
 
 def test_internal_web_provider_defaults_do_not_require_config(monkeypatch):
-    from amcp import config as config_module
-    from amcp import tools
+    from ankaloop import config as config_module
+    from ankaloop import tools
 
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
-    monkeypatch.delenv("AMCP_FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("ANKA_FIRECRAWL_API_KEY", raising=False)
     monkeypatch.delenv("FIRECRAWL_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(
         config_module,
         "load_config",
-        lambda: config_module.AMCPConfig(servers={}, chat=None),
+        lambda: config_module.AnkaloopConfig(servers={}, chat=None),
     )
 
     assert tools._get_exa_server_config().url == "https://mcp.exa.ai/mcp"
@@ -138,11 +138,11 @@ def test_internal_web_provider_defaults_do_not_require_config(monkeypatch):
 
 def test_firecrawl_search_uses_mcp_when_no_api_key(monkeypatch):
     """Without an API key, the keyless MCP free tier is used (no REST call)."""
-    from amcp import tools
-    from amcp.config import Server
+    from ankaloop import tools
+    from ankaloop.config import Server
 
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
-    monkeypatch.delenv("AMCP_FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("ANKA_FIRECRAWL_API_KEY", raising=False)
     monkeypatch.delenv("FIRECRAWL_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(tools, "_get_firecrawl_server_config", lambda: Server(url="https://mcp.firecrawl.dev/v2/mcp"))
 
@@ -150,8 +150,8 @@ def test_firecrawl_search_uses_mcp_when_no_api_key(monkeypatch):
         "data": {"web": [{"title": "Rust Async", "url": "https://rust-lang.org/async", "description": "async await"}]}
     }
     with (
-        patch("amcp.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
-        patch("amcp.tools._call_firecrawl") as rest_call,
+        patch("ankaloop.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
+        patch("ankaloop.tools._call_firecrawl") as rest_call,
     ):
         result = tools._firecrawl_search({"query": "rust async", "limit": 3})
 
@@ -165,16 +165,16 @@ def test_firecrawl_search_uses_mcp_when_no_api_key(monkeypatch):
 
 def test_firecrawl_search_uses_rest_when_api_key_set(monkeypatch):
     """With an API key set, the REST API is used (higher rate limits, full tools)."""
-    from amcp import tools
-    from amcp.config import Server
+    from ankaloop import tools
+    from ankaloop.config import Server
 
     monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
     monkeypatch.setattr(tools, "_get_firecrawl_server_config", lambda: Server(url="https://mcp.firecrawl.dev/v2/mcp"))
 
     rest_response = {"data": {"web": []}}
     with (
-        patch("amcp.tools._call_firecrawl", return_value=rest_response) as rest_call,
-        patch("amcp.tools._call_firecrawl_mcp") as mcp_call,
+        patch("ankaloop.tools._call_firecrawl", return_value=rest_response) as rest_call,
+        patch("ankaloop.tools._call_firecrawl_mcp") as mcp_call,
     ):
         result = tools._firecrawl_search({"query": "rust async", "limit": 3})
 
@@ -185,11 +185,11 @@ def test_firecrawl_search_uses_rest_when_api_key_set(monkeypatch):
 
 def test_web_search_tool_firecrawl_mcp_keyless(monkeypatch):
     """End-to-end: firecrawl backend routes through MCP when no API key is set."""
-    from amcp import tools
-    from amcp.config import Server
+    from ankaloop import tools
+    from ankaloop.config import Server
 
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
-    monkeypatch.delenv("AMCP_FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("ANKA_FIRECRAWL_API_KEY", raising=False)
     monkeypatch.delenv("FIRECRAWL_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(tools, "_get_firecrawl_server_config", lambda: Server(url="https://mcp.firecrawl.dev/v2/mcp"))
 
@@ -198,9 +198,9 @@ def test_web_search_tool_firecrawl_mcp_keyless(monkeypatch):
     }
     tool = WebSearchTool()
     with (
-        patch("amcp.tools._call_exa_tool", side_effect=Exception("exa unavailable")),
-        patch("amcp.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
-        patch("amcp.tools._call_firecrawl") as rest_call,
+        patch("ankaloop.tools._call_exa_tool", side_effect=Exception("exa unavailable")),
+        patch("ankaloop.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
+        patch("ankaloop.tools._call_firecrawl") as rest_call,
     ):
         result = tool.execute(query="python docs", backend="auto")
 
@@ -212,11 +212,11 @@ def test_web_search_tool_firecrawl_mcp_keyless(monkeypatch):
 
 def test_web_fetch_tool_firecrawl_mcp_keyless(monkeypatch):
     """web_fetch firecrawl fallback uses MCP keyless tier without an API key."""
-    from amcp import tools
-    from amcp.config import Server
+    from ankaloop import tools
+    from ankaloop.config import Server
 
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
-    monkeypatch.delenv("AMCP_FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("ANKA_FIRECRAWL_API_KEY", raising=False)
     monkeypatch.delenv("FIRECRAWL_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(tools, "_get_firecrawl_server_config", lambda: Server(url="https://mcp.firecrawl.dev/v2/mcp"))
 
@@ -228,9 +228,9 @@ def test_web_fetch_tool_firecrawl_mcp_keyless(monkeypatch):
     }
     tool = WebFetchTool()
     with (
-        patch("amcp.tools._call_exa_tool", side_effect=Exception("exa unavailable")),
-        patch("amcp.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
-        patch("amcp.tools._call_firecrawl") as rest_call,
+        patch("ankaloop.tools._call_exa_tool", side_effect=Exception("exa unavailable")),
+        patch("ankaloop.tools._call_firecrawl_mcp", return_value=mcp_response) as mcp_call,
+        patch("ankaloop.tools._call_firecrawl") as rest_call,
     ):
         result = tool.execute(url="https://example.com", backend="auto")
 
@@ -253,8 +253,8 @@ def test_web_fetch_tool_auto_prefers_exa():
     }
 
     with (
-        patch("amcp.tools._call_exa_tool", return_value=exa_response),
-        patch("amcp.tools._call_firecrawl") as firecrawl_call,
+        patch("ankaloop.tools._call_exa_tool", return_value=exa_response),
+        patch("ankaloop.tools._call_firecrawl") as firecrawl_call,
     ):
         result = tool.execute(url="https://example.com", backend="auto")
 

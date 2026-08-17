@@ -1,4 +1,4 @@
-import amcp.config as config_module
+import ankaloop.config as config_module
 
 
 def test_config_dir_default():
@@ -8,7 +8,7 @@ def test_config_dir_default():
 
 def test_load_config():
     config = config_module.load_config()
-    assert isinstance(config, config_module.AMCPConfig)
+    assert isinstance(config, config_module.AnkaloopConfig)
     assert isinstance(config.servers, dict)
     assert config.context is None or isinstance(config.context, config_module.ContextConfig)
 

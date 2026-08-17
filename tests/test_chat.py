@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from amcp.chat import _make_client, _resolve_api_key, _resolve_base_url
+from ankaloop.chat import _make_client, _resolve_api_key, _resolve_base_url
 
 
 class TestResolveBaseUrl:
@@ -15,11 +15,11 @@ class TestResolveBaseUrl:
         assert _resolve_base_url(None, cfg) == "https://cfg.com"
 
     def test_env_used_when_no_config(self, monkeypatch):
-        monkeypatch.setenv("AMCP_OPENAI_BASE", "https://env.com")
+        monkeypatch.setenv("ANKA_OPENAI_BASE", "https://env.com")
         assert _resolve_base_url(None, None) == "https://env.com"
 
     def test_default_fallback(self, monkeypatch):
-        monkeypatch.delenv("AMCP_OPENAI_BASE", raising=False)
+        monkeypatch.delenv("ANKA_OPENAI_BASE", raising=False)
         assert _resolve_base_url(None, None) == "https://api.gmi-serving.com/v1"
 
     def test_preserves_provider_specific_path(self):
@@ -42,7 +42,7 @@ class TestResolveApiKey:
 
 class TestMakeClient:
     def test_creates_client(self):
-        with patch("amcp.chat.AnyLLMClient") as client_cls:
+        with patch("ankaloop.chat.AnyLLMClient") as client_cls:
             _make_client(
                 base_url="https://api.example.com/v1",
                 api_key="test-key",

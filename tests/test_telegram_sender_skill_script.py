@@ -10,7 +10,7 @@ import pytest
 SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent
     / "src"
-    / "amcp"
+    / "ankaloop"
     / "builtin_skills"
     / "telegram-sender"
     / "scripts"

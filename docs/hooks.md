@@ -52,7 +52,7 @@ timeout = 5
 [[hooks.PostToolUse.handlers]]
 matcher = "write_file"
 type = "command"
-command = "$AMCP_PROJECT_DIR/scripts/lint-file.sh"
+command = "$ANKA_PROJECT_DIR/scripts/lint-file.sh"
 timeout = 60
 ```
 
@@ -89,10 +89,10 @@ command = "./scripts/my-hook.sh"
 ```
 
 Environment variables available:
-- `$AMCP_PROJECT_DIR` - Project directory path
-- `$AMCP_SESSION_ID` - Current session ID
-- `$AMCP_HOOK_EVENT` - Hook event name
-- `$AMCP_TOOL_NAME` - Tool name (for tool-related events)
+- `$ANKA_PROJECT_DIR` - Project directory path
+- `$ANKA_SESSION_ID` - Current session ID
+- `$ANKA_HOOK_EVENT` - Hook event name
+- `$ANKA_TOOL_NAME` - Tool name (for tool-related events)
 
 ### Python Script Handlers
 
@@ -264,7 +264,7 @@ The `matcher` field supports:
 ## Programmatic Usage
 
 ```python
-from amcp.hooks import (
+from ankaloop.hooks import (
     get_hooks_manager,
     run_pre_tool_use_hooks,
     run_post_tool_use_hooks,

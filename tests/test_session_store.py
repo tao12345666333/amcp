@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from amcp.session_state import CanonicalTurn, CompactionCheckpoint, SessionState
-from amcp.session_store import (
+from ankaloop.session_state import CanonicalTurn, CompactionCheckpoint, SessionState
+from ankaloop.session_store import (
     InvalidSessionIdError,
     SessionConflictError,
     SessionLoadError,
@@ -90,7 +90,7 @@ def test_atomic_replace_failure_preserves_previous_session(tmp_path):
     store.save(old)
 
     with (
-        patch("amcp.session_store.os.replace", side_effect=OSError("interrupted")),
+        patch("ankaloop.session_store.os.replace", side_effect=OSError("interrupted")),
         pytest.raises(SessionSaveError, match="interrupted"),
     ):
         store.save(SessionState(session_id="atomic", agent_name="new").to_snapshot())

@@ -1,16 +1,16 @@
-# Contributing to AMCP
+# Contributing to AnkaLoop
 
-Thank you for helping improve AMCP. Keep changes focused, add tests for behavior changes, and
+Thank you for helping improve AnkaLoop. Keep changes focused, add tests for behavior changes, and
 update user-facing documentation when commands or configuration change.
 
 ## Development Setup
 
-AMCP requires Python 3.11 or newer. Clone the repository, then install the project in editable
+AnkaLoop requires Python 3.11 or newer. Clone the repository, then install the project in editable
 mode with the development and Telegram extras so the full test suite can be collected.
 
 ```bash
-git clone https://github.com/tao12345666333/amcp.git
-cd amcp
+git clone https://github.com/tao12345666333/ankaloop.git
+cd anka
 
 # Recommended: create and sync a uv-managed environment
 uv sync --extra dev --extra telegram
@@ -57,7 +57,7 @@ the standard sequence is:
 ```bash
 ruff format src tests
 ruff check src tests
-mypy src/amcp --ignore-missing-imports
+mypy src/ankaloop --ignore-missing-imports
 python -m pytest -q -m "not llm"
 ```
 
@@ -75,17 +75,17 @@ pre-commit run --all-files
 - Follow PEP 8; Ruff enforces formatting and a 100-character line length.
 - Add focused pytest coverage for fixes and behavior changes.
 - Use `logging` rather than `print` for runtime diagnostics.
-- Keep shared slash-command behavior in `src/amcp/interaction.py` so CLI, server, and Telegram
+- Keep shared slash-command behavior in `src/ankaloop/interaction.py` so CLI, server, and Telegram
   remain consistent.
-- Define built-in tools as `BaseTool` subclasses in `src/amcp/tools.py`.
+- Define built-in tools as `BaseTool` subclasses in `src/ankaloop/tools.py`.
 - Do not include secrets, local configuration, generated coverage files, or build artifacts in
   commits.
 
 ## Project Structure
 
 ```text
-amcp/
-├── src/amcp/
+ankaloop/
+├── src/ankaloop/
 │   ├── agent.py         # Main agent and tool loop
 │   ├── agent_spec.py    # Agent configuration specs
 │   ├── cli.py           # Typer CLI commands

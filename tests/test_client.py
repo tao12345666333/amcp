@@ -1,4 +1,4 @@
-"""Tests for AMCP Client SDK."""
+"""Tests for AnkaLoop Client SDK."""
 
 from __future__ import annotations
 
@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from amcp.client import (
-    AMCPClient,
+from ankaloop.client import (
+    AnkaloopClient,
     BaseClient,
     ClientMode,
     ClientSession,
     HTTPClient,
     WebSocketClient,
 )
-from amcp.client.base import ResponseChunk
-from amcp.client.embedded import EmbeddedClient
-from amcp.client.exceptions import (
-    AMCPClientError,
+from ankaloop.client.base import ResponseChunk
+from ankaloop.client.embedded import EmbeddedClient
+from ankaloop.client.exceptions import (
+    AnkaloopClientError,
     ConnectionError,
     PromptError,
     SessionError,
@@ -36,7 +36,7 @@ class TestExceptions:
 
     def test_amcp_client_error(self):
         """Test base exception."""
-        err = AMCPClientError("test error", code="TEST_CODE", details={"key": "value"})
+        err = AnkaloopClientError("test error", code="TEST_CODE", details={"key": "value"})
         assert str(err) == "test error"
         assert err.message == "test error"
         assert err.code == "TEST_CODE"
@@ -104,42 +104,42 @@ class TestResponseChunk:
 
 
 # ============================================================================
-# Test AMCPClient
+# Test AnkaloopClient
 # ============================================================================
 
 
-class TestAMCPClient:
-    """Test AMCPClient class."""
+class TestAnkaloopClient:
+    """Test AnkaloopClient class."""
 
     def test_remote_mode_creation(self):
         """Test creating client in remote mode."""
-        client = AMCPClient.remote("http://localhost:8080")
+        client = AnkaloopClient.remote("http://localhost:8080")
         assert client.mode == ClientMode.REMOTE
         assert client.url == "http://localhost:8080"
         assert client.is_connected is False
 
     def test_embedded_mode_creation(self):
         """Test creating client in embedded mode."""
-        client = AMCPClient.embedded()
+        client = AnkaloopClient.embedded()
         assert client.mode == ClientMode.EMBEDDED
         assert client.url is None
 
     def test_auto_mode_with_url(self):
         """Test auto mode with URL defaults to remote."""
-        client = AMCPClient.auto("http://localhost:8080")
+        client = AnkaloopClient.auto("http://localhost:8080")
         assert client.mode == ClientMode.REMOTE
 
     def test_auto_mode_without_url(self):
         """Test auto mode without URL defaults to embedded."""
-        client = AMCPClient.auto()
+        client = AnkaloopClient.auto()
         assert client.mode == ClientMode.EMBEDDED
 
     def test_url_based_mode_detection(self):
         """Test that URL presence determines mode."""
-        with_url = AMCPClient("http://localhost:8080")
+        with_url = AnkaloopClient("http://localhost:8080")
         assert with_url.mode == ClientMode.REMOTE
 
-        without_url = AMCPClient()
+        without_url = AnkaloopClient()
         assert without_url.mode == ClientMode.EMBEDDED
 
 
@@ -274,7 +274,7 @@ class TestWebSocketClient:
             client._client = object()
 
         monkeypatch.setattr(HTTPClient, "connect", connect_without_network)
-        client = AMCPClient.remote(
+        client = AnkaloopClient.remote(
             "https://example.test",
             headers={"X-Custom": "value"},
             api_key="secret",
@@ -326,7 +326,7 @@ class TestEmbeddedClient:
         """Test info endpoint."""
         async with EmbeddedClient() as client:
             info = await client.info()
-            assert info["name"] == "amcp-embedded"
+            assert info["name"] == "ankaloop-embedded"
             assert info["mode"] == "embedded"
             assert "capabilities" in info
 
@@ -493,7 +493,7 @@ class TestClientIntegration:
     @pytest.mark.asyncio
     async def test_full_workflow_embedded(self):
         """Test full workflow with embedded client."""
-        client = AMCPClient.embedded()
+        client = AnkaloopClient.embedded()
 
         async with client:
             # Check health

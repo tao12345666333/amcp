@@ -5,31 +5,31 @@
 <h1 align="center">AnkaLoop</h1>
 
 <p align="center">
-  <a href="https://pypi.org/project/amcp-agent/"><img src="https://badge.fury.io/py/amcp-agent.svg" alt="PyPI version"></a>
-  <a href="https://github.com/tao12345666333/amcp/actions"><img src="https://github.com/tao12345666333/amcp/workflows/CI/badge.svg" alt="CI"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://pypi.org/project/ankaloop/"><img src="https://badge.fury.io/py/ankaloop.svg" alt="PyPI version"></a>
+AnkaLoop is built for developers who want a useful agent immediately, not a framework they must
+## Why AnkaLoop
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
-</p>
+python -m pip install ankaloop
 
 <p align="center"><strong>A batteries-included, self-hostable, persistent coding-agent runtime
-for CLI, API, and Telegram.</strong></p>
-
-AMCP is built for developers who want a useful agent immediately, not a framework they must
+anka init
+anka
+AnkaLoop is built for developers who want a useful agent immediately, not a framework they must
 assemble first. It ships with file editing, shell execution, web access, memory, skills,
-subagents, MCP integration, hooks, remote server mode, Telegram control, and scheduled
+anka --once "summarize this repository and suggest the next test to run"
 automation as first-class capabilities.
 
-Use it as a local coding assistant, a long-running remote worker, or the runtime behind your own
-agent workflows.
+The package is named `ankaloop`. It installs the recommended `anka` command and the
+`ankaloop` command. For a no-install run, use `uvx ankaloop`.
 
-## Why AMCP
+uvx ankaloop init
 
 - **Ready on the first run**: read/search/edit files, apply patches, run commands, browse the web,
-  keep todos, and remember project context without installing a pile of plugins.
-- **One runtime, many surfaces**: run agents through the CLI, HTTP/WebSocket API, Telegram, or
+uvx ankaloop
+pip install ankaloop
   cron/systemd/Kubernetes jobs. Each surface supports persistent sessions; session discovery and
   management are not yet identical across every surface.
-- **Autonomous but inspectable**: persistent sessions, request-scoped tool limits, context
+pip install ankaloop[telegram]
   compaction, progress events, and cancellation support make long-running work easier to trust.
 - **Extensible when you need it**: add MCP servers, skills, slash commands, hooks, and custom agent
   specs without giving up the built-in experience.
@@ -42,18 +42,18 @@ OpenAI-compatible endpoint). `init` writes the provider configuration to
 
 ```bash
 # Install the PyPI package
-python -m pip install amcp-agent
+python -m pip install ankaloop
 
 # Configure your model provider, then start in the current project
-amcp init
-amcp
+anka init
+anka
 
 # Or run a single task
-amcp --once "summarize this repository and suggest the next test to run"
+anka --once "summarize this repository and suggest the next test to run"
 ```
 
-The package is named `amcp-agent`. It installs the recommended `amcp` command and the
-backward-compatible `amcp-agent` command. For a no-install run, use `uvx amcp-agent`.
+The package is named `ankaloop`. It installs the recommended `anka` command and the
+`ankaloop` command. For a no-install run, use `uvx ankaloop`.
 
 ## What you get
 
@@ -73,26 +73,26 @@ backward-compatible `amcp-agent` command. For a no-install run, use `uvx amcp-ag
 
 ```bash
 # Initialize config first (model and runtime settings)
-uvx amcp-agent init
+uvx ankaloop init
 
 # Run the agent
-uvx amcp-agent
+uvx ankaloop
 ```
 
 ### From PyPI
 
 ```bash
-pip install amcp-agent
+pip install ankaloop
 
 # With Telegram bot support
-pip install amcp-agent[telegram]
+pip install ankaloop[telegram]
 ```
 
 ### From Source (development)
 
 ```bash
-git clone https://github.com/tao12345666333/amcp.git
-cd amcp
+git clone https://github.com/tao12345666333/ankaloop.git
+cd anka
 
 # Using uv (recommended); includes dependencies needed by the full test suite
 uv sync --extra dev --extra telegram
@@ -107,35 +107,35 @@ python -m pip install -e ".[dev,telegram]"
 
 ```bash
 # Initialize config
-amcp init              # interactive wizard
-amcp init --quick      # default config without prompts
+anka init              # interactive wizard
+anka init --quick      # default config without prompts
 
 # Agent chat (default command)
-amcp                                    # interactive mode with conversation history
-amcp --once "create a hello.py file"    # single message
-amcp -t explorer --once "find all TODOs"  # use built-in agent type
-amcp --agent path/to/agent.yaml         # use custom agent spec
-amcp --session my-session               # use specific session ID
-amcp --clear                            # clear conversation history
-amcp --list                             # list available agent specifications
-amcp --list-types                       # list built-in agent types
-amcp --list-sessions                    # list saved sessions
+anka                                    # interactive mode with conversation history
+anka --once "create a hello.py file"    # single message
+anka -t explorer --once "find all TODOs"  # use built-in agent type
+anka --agent path/to/agent.yaml         # use custom agent spec
+anka --session my-session               # use specific session ID
+anka --clear                            # clear conversation history
+anka --list                             # list available agent specifications
+anka --list-types                       # list built-in agent types
+anka --list-sessions                    # list saved sessions
 
 # MCP server management
-amcp mcp tools --server custom
-amcp mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
+anka mcp tools --server custom
+anka mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
 
 # HTTP/WebSocket server
-amcp serve                              # start on localhost:8080
-amcp serve --port 8080 --host 0.0.0.0   # requires [server.auth] configuration
-amcp serve --telegram                   # start Telegram bot alongside
-amcp attach http://localhost:8080       # connect to a running server
-amcp attach https://server.example --api-key "$AMCP_SERVER_API_KEY"
+anka serve                              # start on localhost:8080
+anka serve --port 8080 --host 0.0.0.0   # requires [server.auth] configuration
+anka serve --telegram                   # start Telegram bot alongside
+anka attach http://localhost:8080       # connect to a running server
+anka attach https://server.example --api-key "$ANKA_SERVER_API_KEY"
 
 # Telegram bot
-amcp telegram start                     # start polling
-amcp telegram status                    # show config status
-amcp telegram setup                     # interactive setup
+anka telegram start                     # start polling
+anka telegram status                    # show config status
+anka telegram setup                     # interactive setup
 
 ```
 
@@ -158,7 +158,7 @@ amcp telegram setup                     # interactive setup
 
 ## Multi-Agent System
 
-AMCP supports a Primary/Subagent architecture with built-in agent types:
+AnkaLoop supports a Primary/Subagent architecture with built-in agent types:
 
 | Agent Type | Mode | Description |
 |------------|------|-------------|
@@ -181,7 +181,7 @@ Skills are reusable knowledge or behavior definitions (markdown with YAML frontm
 - `telegram-sender` - Send messages via Telegram
 
 **Discovery locations (increasing precedence):**
-1. Built-in skills (bundled with AMCP)
+1. Built-in skills (bundled with AnkaLoop)
 2. User skills: `~/.config/amcp/skills/<name>/SKILL.md`
 3. Home agent skills: `~/.agents/skills/<name>/SKILL.md`
 4. Project skills: `.amcp/skills/<name>/SKILL.md`
@@ -204,13 +204,13 @@ See [docs/skills-and-commands.md](docs/skills-and-commands.md) for details and [
 
 ## HTTP/WebSocket Server
 
-AMCP can run as an HTTP/WebSocket server for remote access:
+AnkaLoop can run as an HTTP/WebSocket server for remote access:
 
 ```bash
-amcp serve                    # start on localhost:8080
-amcp serve --port 8080        # custom port
-amcp serve -w /path/to/project  # set working directory
-amcp attach http://localhost:8080  # connect from another terminal
+anka serve                    # start on localhost:8080
+anka serve --port 8080        # custom port
+anka serve -w /path/to/project  # set working directory
+anka attach http://localhost:8080  # connect from another terminal
 ```
 
 **API endpoints** (visit `/docs` for interactive Swagger UI):
@@ -234,7 +234,7 @@ non-loopback bind (for example `0.0.0.0`) requires authentication; configure an 
 exposing the service. This is transport authentication, so use TLS or a trusted reverse proxy for
 traffic that leaves the machine.
 
-Authenticated CLI clients can pass `--api-key` or set `AMCP_SERVER_API_KEY`. HTTP clients send
+Authenticated CLI clients can pass `--api-key` or set `ANKA_SERVER_API_KEY`. HTTP clients send
 `Authorization: Bearer <api-key>`; WebSocket clients may use the same header. The health endpoint
 remains public for probes.
 
@@ -243,35 +243,35 @@ remains public for probes.
 The default Docker command starts the server on loopback — safe without authentication:
 
 ```bash
-docker build -t amcp .
-docker run -it amcp serve          # loopback:8080, no auth needed
+docker build -t ankaloop .
+docker run -it ankaloop serve          # loopback:8080, no auth needed
 ```
 
 To expose the server on the host network, provide an API key via environment variables:
 
 ```bash
 docker run -p 8080:8080 \
-    -e AMCP_HOST=0.0.0.0 -e AMCP_API_KEY=your-secret \
-    amcp serve
+    -e ANKA_HOST=0.0.0.0 -e ANKA_API_KEY=your-secret \
+    ankaloop serve
 ```
 
 Alternatively, mount a `config.toml` with `[server.auth]` enabled:
 
 ```bash
 docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
-    amcp serve --host 0.0.0.0
+    ankaloop serve --host 0.0.0.0
 ```
 
 The health check (`GET /api/v1/health`) always remains public for container orchestration probes.
 For interactive CLI usage inside a container without starting the server:
 
 ```bash
-docker run -it amcp --once "explain this codebase"
+docker run -it ankaloop --once "explain this codebase"
 ```
 
 ### Durable execution timeline
 
-AMCP stores a bounded per-session timeline beside each session snapshot. It records turn, tool,
+AnkaLoop stores a bounded per-session timeline beside each session snapshot. It records turn, tool,
 subagent task, context-compaction, provider retry/error, and token-usage metadata so interrupted
 sessions remain inspectable. Prompt content, tool arguments, tool output, and raw
 provider exception text are deliberately excluded. The newest 2,000 events are retained by
@@ -279,7 +279,7 @@ default and can be queried with `GET /api/v1/sessions/{id}/timeline`.
 
 ## Telegram Integration
 
-AMCP provides a Telegram Bot interface for remote interaction with agents. Install with `pip install amcp-agent[telegram]`.
+AnkaLoop provides a Telegram Bot interface for remote interaction with agents. Install with `pip install ankaloop[telegram]`.
 
 **Features:**
 - DM and group chat support with configurable policies (allowlist, mention, open, disabled)
@@ -291,11 +291,11 @@ AMCP provides a Telegram Bot interface for remote interaction with agents. Insta
 - Shared slash commands including `/new`, `/session list`, `/session switch <id>`, `/clear`, and `/cancel`
 - `/new` creates a fresh session and abandons the previous Telegram session's active work and queued messages
 
-Configure via `amcp telegram setup` or in `config.toml` under `[telegram]`.
+Configure via `anka telegram setup` or in `config.toml` under `[telegram]`.
 
 ## Memory System
 
-AMCP maintains persistent cross-session context using complementary memory layers:
+AnkaLoop maintains persistent cross-session context using complementary memory layers:
 - **MEMORY.md**: Curated long-term facts, preferences, and knowledge
 - **HISTORY.md**: Append-only activity and decision history
 - **memory.db**: Durable facts and episodic events with SQLite FTS5 search
@@ -312,7 +312,7 @@ global so the agent keeps one identity across interfaces and projects.
 
 ## Hooks System
 
-AMCP provides a flexible hooks system to extend and customize agent behavior. Hooks can:
+AnkaLoop provides a flexible hooks system to extend and customize agent behavior. Hooks can:
 - Validate and modify tool inputs before execution
 - Process tool outputs after execution
 - Block dangerous operations
@@ -341,7 +341,7 @@ See [docs/hooks.md](docs/hooks.md) for full documentation.
 The CLI loads configuration from `~/.config/amcp/config.toml`. Generate a starter config:
 
 ```bash
-amcp init
+anka init
 ```
 
 ### Chat Configuration
@@ -384,7 +384,7 @@ api_type = "anthropic"
 model = "claude-model-name"
 ```
 
-Anthropic support is included in the base `amcp-agent` package; no separate extra is required.
+Anthropic support is included in the base `ankaloop` package; no separate extra is required.
 
 ### MCP Servers
 
@@ -430,7 +430,7 @@ For a non-loopback host, set `enabled = true` and `api_key`, then send the key a
 
 ### Provider and deployment options
 
-[Deploy AMCP on GMI Cloud](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/amcp-agent).
+[Deploy AnkaLoop on GMI Cloud](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/ankaloop).
 New GMI Cloud users can optionally sign up with the maintainer's
 [referral link](https://console.gmicloud.ai/ref/KP3NWZV4) (a referral, not a requirement).
 

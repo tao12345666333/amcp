@@ -20,7 +20,7 @@ AMCP 使用模板化的 system prompt 系统，支持：
 ## 目录结构
 
 ```
-src/amcp/prompts/
+src/ankaloop/prompts/
 ├── __init__.py          # 模块导出
 ├── manager.py           # PromptManager 和 PromptContext 类
 └── templates/           # Prompt 模板文件
@@ -37,7 +37,7 @@ src/amcp/prompts/
 ### 基本用法
 
 ```python
-from amcp.prompts import PromptContext, get_prompt_manager
+from ankaloop.prompts import PromptContext, get_prompt_manager
 
 # 创建上下文
 context = PromptContext.from_environment(
@@ -68,7 +68,7 @@ prompt = pm.get_system_prompt(context, template_name="coder")
 ### 获取子代理 Prompt
 
 ```python
-from amcp.agent_spec import get_subagent_spec
+from ankaloop.agent_spec import get_subagent_spec
 
 # 获取 explorer 子代理配置
 explorer_spec = get_subagent_spec(
@@ -81,7 +81,7 @@ explorer_spec = get_subagent_spec(
 ### 列出可用模板
 
 ```python
-from amcp.agent_spec import list_available_templates
+from ankaloop.agent_spec import list_available_templates
 
 templates = list_available_templates()
 # ['coder', 'coder_anthropic', 'coder_gemini', 'explorer', 'initialize', 'planner']
@@ -125,7 +125,7 @@ ${memory_section}
 
 ## 自定义模板
 
-1. 在 `src/amcp/prompts/templates/` 目录下创建新模板文件
+1. 在 `src/ankaloop/prompts/templates/` 目录下创建新模板文件
 2. 使用 `.md` 或 `.txt` 扩展名
 3. 模板会自动被发现和加载
 

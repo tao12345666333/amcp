@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a live E2E self-test for skill create/discover/trigger in `amcp serve` mode."""
+"""Run a live E2E self-test for skill create/discover/trigger in `anka serve` mode."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def wait_server_ready(base_url: str, timeout_seconds: int = 60) -> None:
         except Exception:
             pass
         time.sleep(1)
-    raise RuntimeError("amcp serve did not become ready in time")
+    raise RuntimeError("anka serve did not become ready in time")
 
 
 def create_session(base_url: str, cwd: Path, timeout_seconds: float = 20.0) -> str:
@@ -180,7 +180,7 @@ def run_e2e(
                 [
                     sys.executable,
                     "-m",
-                    "amcp.cli",
+                    "ankaloop.cli",
                     "serve",
                     "--host",
                     host,
@@ -203,7 +203,7 @@ def run_e2e(
         collector_create.start()
 
         create_prompt = f"""
-Create a new AMCP skill via built-in skill-creator workflow.
+Create a new AnkaLoop skill via built-in skill-creator workflow.
 - Name: {skill_name}
 - Location: ~/.config/amcp/skills/{skill_name}
 - You MUST read skill-creator SKILL.md first.

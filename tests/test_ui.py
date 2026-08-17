@@ -2,7 +2,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from amcp.ui import ToolBlock
+from ankaloop.ui import ToolBlock
 
 
 def test_tool_block_renders_markup_like_dynamic_text_safely():

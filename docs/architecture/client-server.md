@@ -28,7 +28,7 @@ This document describes the Client-Server (C/S) architecture for AMCP, enabling 
 │                                                                              │
 │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                      │
 │   │  CLI Client  │  │  Web Client  │  │Desktop Client│                      │
-│   │ amcp attach  │  │  (React/Vue) │  │  (Tauri)     │                      │
+│   │ anka attach  │  │  (React/Vue) │  │  (Tauri)     │                      │
 │   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                      │
 │          │                 │                 │                              │
 │          └─────────────────┴────────┬────────┘                              │
@@ -317,11 +317,11 @@ class EventType(str, Enum):
 **Status**: ✅ Completed on 2026-01-07
 
 **Implemented**:
-1. ✅ Created `src/amcp/server/` module structure
+1. ✅ Created `src/ankaloop/server/` module structure
 2. ✅ Implemented FastAPI application with basic routes
 3. ✅ Implemented session manager with async support
-4. ✅ Added `amcp serve` command with host/port options
-5. ✅ Added `amcp attach <url>` command for CLI client
+4. ✅ Added `anka serve` command with host/port options
+5. ✅ Added `anka attach <url>` command for CLI client
 6. ✅ Added health, info, and status endpoints
 7. ✅ Added session CRUD operations with streaming support
 8. ✅ Added tools and agents list endpoints
@@ -330,8 +330,8 @@ class EventType(str, Enum):
 11. ✅ Added 20 unit tests (all passing)
 
 **Deliverables**:
-- ✅ `amcp serve [--port] [--host] [--work-dir]` command
-- ✅ `amcp attach <url> [--session] [--work-dir]` command
+- ✅ `anka serve [--port] [--host] [--work-dir]` command
+- ✅ `anka attach <url> [--session] [--work-dir]` command
 - ✅ `/api/v1/health`, `/api/v1/info` endpoints
 - ✅ Session management endpoints (`/api/v1/sessions/*`)
 - ✅ Tool listing endpoints (`/api/v1/tools/*`)
@@ -390,9 +390,9 @@ class EventType(str, Enum):
 **Status**: ✅ Completed on 2026-01-08
 
 **Implemented**:
-1. ✅ Created `src/amcp/client/` module structure
+1. ✅ Created `src/ankaloop/client/` module structure
    ```
-   src/amcp/client/
+   src/ankaloop/client/
    ├── __init__.py        # Main AMCPClient class and exports (11KB)
    ├── base.py            # Abstract client interface, ResponseChunk (6KB)
    ├── exceptions.py      # Client exceptions (ConnectionError, SessionError, etc.) (5KB)
@@ -404,7 +404,7 @@ class EventType(str, Enum):
 
 2. ✅ Implemented `AMCPClient` class
    ```python
-   from amcp.client import AMCPClient
+   from ankaloop.client import AMCPClient
 
    # For Python applications (async)
    async with AMCPClient("http://localhost:8080") as client:
@@ -421,7 +421,7 @@ class EventType(str, Enum):
 
 3. ✅ Implemented WebSocket client for real-time interaction
    ```python
-   from amcp.client import WebSocketClient
+   from ankaloop.client import WebSocketClient
 
    async with WebSocketClient("http://localhost:8080", session_id="my-session") as ws:
        await ws.send_prompt("Hello")
@@ -431,7 +431,7 @@ class EventType(str, Enum):
            print(chunk.content, end="")
    ```
 
-4. ✅ `amcp attach` command with new features
+4. ✅ `anka attach` command with new features
    - Uses synchronous httpx for CLI stability (avoids event loop issues)
    - Added `/tools` command - list available tools
    - Added `/agents` command - list available agents
@@ -449,13 +449,13 @@ class EventType(str, Enum):
    ```
 
 **Deliverables**:
-- ✅ `amcp.client` module with full API coverage (~68KB total)
+- ✅ `ankaloop.client` module with full API coverage (~68KB total)
 - ✅ `AMCPClient` class for Python applications
 - ✅ `HTTPClient` for REST API access with retry logic
 - ✅ `WebSocketClient` for streaming
 - ✅ `EmbeddedClient` for local mode
 - ✅ `ClientSession` wrapper for high-level API
-- ✅ `amcp attach` with new `/tools` and `/agents` commands
+- ✅ `anka attach` with new `/tools` and `/agents` commands
 
 **Tests Added**:
 - ✅ `tests/test_client.py` - 35 tests covering:
@@ -476,9 +476,9 @@ class EventType(str, Enum):
 **Status**: ✅ Completed on 2026-01-08
 
 **Implemented**:
-1. ✅ Created `src/amcp/protocol/` module for protocol unification
+1. ✅ Created `src/ankaloop/protocol/` module for protocol unification
    ```
-   src/amcp/protocol/
+   src/ankaloop/protocol/
    ├── __init__.py        # Module exports
    ├── adapter.py         # ProtocolAdapter class
    ├── converters.py      # Event conversion functions
@@ -496,7 +496,7 @@ class EventType(str, Enum):
 
 4. ✅ ProtocolAdapter class with unified interface
    ```python
-   from amcp.protocol import get_protocol_adapter
+   from ankaloop.protocol import get_protocol_adapter
 
    adapter = get_protocol_adapter()
 
@@ -524,9 +524,9 @@ class EventType(str, Enum):
 **Deliverables**:
 - ✅ OpenAPI spec at `/openapi.json`
 - ✅ TypeScript type generation script (`scripts/generate_types.py`)
-- ✅ Unified error handling via `amcp.protocol.ErrorCode`
+- ✅ Unified error handling via `ankaloop.protocol.ErrorCode`
 - ✅ API documentation in `docs/api/`
-- ✅ Protocol adapter in `amcp.protocol.ProtocolAdapter`
+- ✅ Protocol adapter in `ankaloop.protocol.ProtocolAdapter`
 
 **Tests Added**:
 - ✅ `tests/test_protocol.py` - 35+ tests covering:
@@ -588,7 +588,7 @@ class EventType(str, Enum):
 ## Directory Structure
 
 ```
-src/amcp/
+src/ankaloop/
 ├── __init__.py
 ├── cli.py                     # CLI entry (modified)
 ├── agent.py                   # Agent core (unchanged)
@@ -624,14 +624,14 @@ src/amcp/
 
 ```bash
 # Start server in headless mode
-amcp serve [--port 8080] [--host 0.0.0.0]
+anka serve [--port 8080] [--host 0.0.0.0]
 
 # Connect to running server
-amcp attach <url> [--session <id>]
+anka attach <url> [--session <id>]
 
 # Example usage
-amcp serve --port 8080
-amcp attach http://localhost:8080 --session my-session
+anka serve --port 8080
+anka attach http://localhost:8080 --session my-session
 ```
 
 ### Modified Commands
@@ -641,8 +641,8 @@ amcp attach http://localhost:8080 --session my-session
 amcp "help me with this code"
 
 # Explicit mode selection
-amcp --mode embedded "help me"     # Force embedded
-amcp --mode remote --server http://... "help me"  # Force remote
+anka --mode embedded "help me"     # Force embedded
+anka --mode remote --server http://... "help me"  # Force remote
 ```
 
 ## Configuration

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from amcp.task import (
+from ankaloop.task import (
     DelegationEnvelope,
     Task,
     TaskManager,
@@ -210,7 +210,7 @@ class TestTaskManager:
             async def close(self):
                 self.closed = True
 
-        with patch("amcp.agent.create_agent_from_config", side_effect=FakeAgent):
+        with patch("ankaloop.agent.create_agent_from_config", side_effect=FakeAgent):
             first = await manager.create_task("first", "explorer")
             await started.wait()
             second = await manager.create_task("second", "explorer")
@@ -239,7 +239,7 @@ class TestTaskManager:
             async def close(self):
                 pass
 
-        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+        with patch("ankaloop.agent.create_agent_from_config", return_value=FakeAgent()):
             task = await manager.create_task("slow", "explorer")
             with pytest.raises(TimeoutError):
                 await manager.wait_for_task(task.id, timeout=0.01)
@@ -264,7 +264,7 @@ class TestTaskManager:
             async def close(self):
                 pass
 
-        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+        with patch("ankaloop.agent.create_agent_from_config", return_value=FakeAgent()):
             task = await manager.create_task("fail", "explorer")
             completed = await manager.wait_for_task(task.id, timeout=1)
 
@@ -288,7 +288,7 @@ class TestTaskManager:
                 nonlocal closed
                 closed = True
 
-        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+        with patch("ankaloop.agent.create_agent_from_config", return_value=FakeAgent()):
             task = await manager.create_task(
                 "work",
                 "explorer",
@@ -318,7 +318,7 @@ class TestTaskManager:
                 close_started.set()
                 await release_close.wait()
 
-        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+        with patch("ankaloop.agent.create_agent_from_config", return_value=FakeAgent()):
             task = await manager.create_task("cancel", "explorer")
             await running.wait()
             cancellation = asyncio.create_task(manager.cancel_task(task.id))
@@ -348,7 +348,7 @@ class TestTaskManager:
                 pass
 
         with patch(
-            "amcp.agent.create_agent_from_config",
+            "ankaloop.agent.create_agent_from_config",
             side_effect=lambda config, *, ephemeral: FakeAgent(),
         ):
             tasks = []
@@ -377,7 +377,7 @@ class TestTaskManager:
             async def close(self):
                 pass
 
-        with patch("amcp.agent.create_agent_from_config", return_value=FakeAgent()):
+        with patch("ankaloop.agent.create_agent_from_config", return_value=FakeAgent()):
             task = await manager.create_task("evict", "explorer")
             waiter = asyncio.create_task(manager.wait_for_any([task.id], timeout=1))
             await asyncio.sleep(0)
@@ -435,7 +435,7 @@ class TestTaskTool:
             "validation_required": ["pytest tests/test_parser.py"],
             "expected_return_shape": "Summary and test result",
         }
-        with patch("amcp.agent.create_agent_from_config", side_effect=create_agent):
+        with patch("ankaloop.agent.create_agent_from_config", side_effect=create_agent):
             result = await tool.execute(
                 action="create",
                 envelope=envelope,

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from amcp.config import AMCPConfig
-from amcp.memory_review import MEMORY_GUIDANCE, MEMORY_REVIEW_PROMPT, run_memory_review
-from amcp.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
+from ankaloop.config import AnkaloopConfig
+from ankaloop.memory_review import MEMORY_GUIDANCE, MEMORY_REVIEW_PROMPT, run_memory_review
+from ankaloop.tool_execution import ToolCapability, ToolExecutionContext, ToolExecutor
 
 
 class TestMemoryGuidance:
@@ -132,7 +132,7 @@ class TestRunMemoryReview:
             exposed_tools={"memory"},
             registry=registry,
             mcp_registry={},
-            config=AMCPConfig(servers={}, chat=None),
+            config=AnkaloopConfig(servers={}, chat=None),
         )
         mock_client = MagicMock()
         mock_client.achat = AsyncMock(

@@ -32,7 +32,7 @@ This document describes how AMCP handles different protocols and ensures consist
 
 ## Unified Event Model
 
-All protocols use a unified event model defined in `amcp.server.models.EventType`:
+All protocols use a unified event model defined in `ankaloop.server.models.EventType`:
 
 | Event Type | HTTP | WebSocket | SSE |
 |------------|------|-----------|-----|
@@ -48,7 +48,7 @@ All protocols use a unified event model defined in `amcp.server.models.EventType
 The `ProtocolAdapter` class provides unified conversion between protocols:
 
 ```python
-from amcp.protocol import ProtocolAdapter, get_protocol_adapter
+from ankaloop.protocol import ProtocolAdapter, get_protocol_adapter
 
 adapter = get_protocol_adapter()
 
@@ -83,7 +83,7 @@ AMCP uses a unified error code system that maps to appropriate responses in each
 ### Usage
 
 ```python
-from amcp.protocol import ProtocolError, ErrorCode, SessionNotFoundError
+from ankaloop.protocol import ProtocolError, ErrorCode, SessionNotFoundError
 
 # Raise unified error
 raise SessionNotFoundError("session-123")
@@ -161,7 +161,7 @@ data: {"type":"tool.call_start","session_id":"abc","payload":{"tool_name":"read_
 Always use `ProtocolAdapter` instead of manual conversions to ensure consistency:
 
 ```python
-from amcp.protocol import get_protocol_adapter
+from ankaloop.protocol import get_protocol_adapter
 
 adapter = get_protocol_adapter()
 
@@ -177,7 +177,7 @@ ws_msg = {"type": "event", "payload": event.payload}  # May miss fields
 Unified error handling across protocols:
 
 ```python
-from amcp.protocol import ProtocolError, ErrorCode
+from ankaloop.protocol import ProtocolError, ErrorCode
 
 # Works correctly in HTTP, WebSocket, and SSE contexts
 raise ProtocolError(ErrorCode.SESSION_NOT_FOUND, "Session not found")

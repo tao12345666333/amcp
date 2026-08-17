@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from amcp.prompts import PromptContext, PromptManager, get_prompt_manager
-from amcp.prompts.manager import ModelFamily
+from ankaloop.prompts import PromptContext, PromptManager, get_prompt_manager
+from ankaloop.prompts.manager import ModelFamily
 
 
 class TestModelFamily:
@@ -68,7 +68,7 @@ class TestPromptContext:
 
     def test_git_info_detection(self):
         """Test git info detection in git repo."""
-        # Use the AMCP repo itself for testing
+        # Use the AnkaLoop repo itself for testing
         ctx = PromptContext.from_environment(working_dir=str(Path(__file__).parent.parent))
         assert ctx.is_git_repo is True
         # Branch should be detected
@@ -117,7 +117,7 @@ class TestPromptManager:
         prompt = pm.get_system_prompt(ctx, template_name="coder")
 
         assert len(prompt) > 0
-        assert "AMCP" in prompt
+        assert "AnkaLoop" in prompt
 
     def test_get_anthropic_template(self):
         """Test getting Anthropic-specific template."""
@@ -126,7 +126,7 @@ class TestPromptManager:
         prompt = pm.get_system_prompt(ctx, template_name="coder")
 
         # Should use anthropic template
-        assert "AMCP" in prompt
+        assert "AnkaLoop" in prompt
 
     def test_explorer_template(self):
         """Test explorer subagent template."""
@@ -300,4 +300,4 @@ class TestCustomTemplates:
             prompt = pm.get_system_prompt(ctx, template_name="nonexistent")
 
             # Should use built-in default
-            assert "AMCP" in prompt
+            assert "AnkaLoop" in prompt

@@ -1,0 +1,199 @@
+"""AnkaLoop - out-of-the-box coding-agent runtime with multi-agent support."""
+
+__all__ = [
+    "__version__",
+    # Agent classes and functions
+    "Agent",
+    "AgentExecutionError",
+    "MaxStepsReached",
+    "BusyError",
+    "ApplicationServices",
+    "ContextBuilder",
+    "ToolLoop",
+    "TurnService",
+    "create_agent_by_name",
+    "create_agent_from_config",
+    "create_subagent",
+    "list_available_agents",
+    "list_primary_agents",
+    "list_subagent_types",
+    # Multi-agent system
+    "AgentMode",
+    "AgentConfig",
+    "AgentRegistry",
+    "get_agent_registry",
+    "get_agent_config",
+    # Message queue
+    "MessagePriority",
+    "QueuedMessage",
+    "MessageQueueManager",
+    "get_message_queue_manager",
+    # Event bus
+    "Event",
+    "EventBus",
+    "EventType",
+    "EventPriority",
+    "get_event_bus",
+    # Task system
+    "DelegationEnvelope",
+    "Task",
+    "TaskManager",
+    "TaskState",
+    "TaskPriority",
+    "TaskTool",
+    # Smart compaction
+    "SmartCompactor",
+    "CompactionConfig",
+    "CompactionStrategy",
+    "CompactionResult",
+    "get_model_context_window",
+    "estimate_tokens",
+    "create_compactor",
+    # Models database
+    "ModelsDatabase",
+    "ModelInfo",
+    "ProviderInfo",
+    "get_models_database",
+    "get_context_window_from_database",
+    # Config
+    "AnkaloopConfig",
+    "ChatConfig",
+    "ChatProviderConfig",
+    "ContextConfig",
+    "ModelConfig",
+    "TelegramConfig",
+    # Project rules
+    "ProjectRulesLoader",
+    "load_project_rules",
+    "get_project_rules_info",
+    # Hooks system
+    "HookEvent",
+    "HookDecision",
+    "HookInput",
+    "HookOutput",
+    "HookHandler",
+    "HooksManager",
+    "get_hooks_manager",
+    "run_pre_tool_use_hooks",
+    "run_post_tool_use_hooks",
+    "run_user_prompt_hooks",
+    "run_session_start_hooks",
+    "run_session_end_hooks",
+    "run_stop_hooks",
+    "run_pre_compact_hooks",
+    # Skills system
+    "SkillMetadata",
+    "SkillManager",
+    "get_skill_manager",
+    # Slash commands system
+    "SlashCommand",
+    "CommandManager",
+    "CommandResult",
+    "get_command_manager",
+    # Version info
+    "__git_commit__",
+]
+
+from ._version import __git_commit__, __version__
+
+# Lazy imports for cleaner namespace
+from .agent import (
+    Agent,
+    AgentExecutionError,
+    BusyError,
+    MaxStepsReached,
+    create_agent_by_name,
+    create_agent_from_config,
+    create_subagent,
+    list_available_agents,
+    list_primary_agents,
+    list_subagent_types,
+)
+from .application_services import ApplicationServices
+from .commands import (
+    CommandManager,
+    CommandResult,
+    SlashCommand,
+    get_command_manager,
+)
+from .compaction import (
+    CompactionConfig,
+    CompactionResult,
+    CompactionStrategy,
+    SmartCompactor,
+    create_compactor,
+    estimate_tokens,
+    get_model_context_window,
+)
+from .config import (
+    AnkaloopConfig,
+    ChatConfig,
+    ChatProviderConfig,
+    ContextConfig,
+    ModelConfig,
+    TelegramConfig,
+)
+from .context_builder import ContextBuilder
+from .event_bus import (
+    Event,
+    EventBus,
+    EventPriority,
+    EventType,
+    get_event_bus,
+)
+from .hooks import (
+    HookDecision,
+    HookEvent,
+    HookHandler,
+    HookInput,
+    HookOutput,
+    HooksManager,
+    get_hooks_manager,
+    run_post_tool_use_hooks,
+    run_pre_compact_hooks,
+    run_pre_tool_use_hooks,
+    run_session_end_hooks,
+    run_session_start_hooks,
+    run_stop_hooks,
+    run_user_prompt_hooks,
+)
+from .message_queue import (
+    MessagePriority,
+    MessageQueueManager,
+    QueuedMessage,
+    get_message_queue_manager,
+)
+from .models_db import (
+    ModelInfo,
+    ModelsDatabase,
+    ProviderInfo,
+    get_context_window_from_database,
+    get_models_database,
+)
+from .multi_agent import (
+    AgentConfig,
+    AgentMode,
+    AgentRegistry,
+    get_agent_config,
+    get_agent_registry,
+)
+from .project_rules import (
+    ProjectRulesLoader,
+    get_project_rules_info,
+    load_project_rules,
+)
+from .skills import (
+    SkillManager,
+    SkillMetadata,
+    get_skill_manager,
+)
+from .task import (
+    DelegationEnvelope,
+    Task,
+    TaskManager,
+    TaskPriority,
+    TaskState,
+    TaskTool,
+)
+from .tool_loop import ToolLoop
+from .turn_service import TurnService

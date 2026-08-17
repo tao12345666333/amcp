@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent
-from amcp.agent_spec import ResolvedAgentSpec
-from amcp.config import AMCPConfig, ContextConfig, Server
-from amcp.multi_agent import AgentMode
-from amcp.task import TaskManager
-from amcp.tool_execution import (
+from ankaloop.agent import Agent
+from ankaloop.agent_spec import ResolvedAgentSpec
+from ankaloop.config import AnkaloopConfig, ContextConfig, Server
+from ankaloop.multi_agent import AgentMode
+from ankaloop.task import TaskManager
+from ankaloop.tool_execution import (
     ToolCallProtocolError,
     ToolCapability,
     ToolExecutionContext,
@@ -23,7 +23,7 @@ from amcp.tool_execution import (
     WorkspaceBoundaryError,
     normalize_tool_calls,
 )
-from amcp.tools import create_default_tool_registry
+from ankaloop.tools import create_default_tool_registry
 
 
 def _spec(*, tools=None, exclude_tools=None, can_delegate=True):
@@ -48,7 +48,7 @@ def _executor(tmp_path, *, tools=None, exposed=None):
         exposed_tools=exposed or {"read_file", "write_file", "apply_patch", "bash"},
         registry=create_default_tool_registry(enable_task=False),
         mcp_registry={},
-        config=AMCPConfig(servers={}, chat=None),
+        config=AnkaloopConfig(servers={}, chat=None),
     )
 
 
@@ -154,7 +154,7 @@ async def test_mcp_alias_dispatches_to_the_original_tool_name(tmp_path):
         exposed_tools={alias},
         registry=create_default_tool_registry(enable_task=False),
         mcp_registry={alias: ("tavily", "tavily.extract")},
-        config=AMCPConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
+        config=AnkaloopConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
     )
     response = {
         "is_error": False,
@@ -163,7 +163,7 @@ async def test_mcp_alias_dispatches_to_the_original_tool_name(tmp_path):
     }
     call_mcp_tool = AsyncMock(return_value=response)
 
-    with patch("amcp.tool_execution.call_mcp_tool", call_mcp_tool):
+    with patch("ankaloop.tool_execution.call_mcp_tool", call_mcp_tool):
         result = await executor.execute(alias, {"url": "https://example.com"})
 
     assert result.success
@@ -186,7 +186,7 @@ async def test_mcp_error_response_returns_failed_result_with_metadata(tmp_path):
         exposed_tools={alias},
         registry=create_default_tool_registry(enable_task=False),
         mcp_registry={alias: ("tavily", "tavily.extract")},
-        config=AMCPConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
+        config=AnkaloopConfig(servers={"tavily": Server(url="https://mcp.example.com/mcp")}, chat=None),
     )
     response = {
         "is_error": True,
@@ -194,7 +194,7 @@ async def test_mcp_error_response_returns_failed_result_with_metadata(tmp_path):
         "metadata": {"request_id": "error-1", "status": 429},
     }
 
-    with patch("amcp.tool_execution.call_mcp_tool", AsyncMock(return_value=response)):
+    with patch("ankaloop.tool_execution.call_mcp_tool", AsyncMock(return_value=response)):
         result = await executor.execute(alias, {"url": "https://example.com"})
 
     assert not result.success
@@ -209,7 +209,7 @@ async def test_task_tool_inherits_trusted_runtime_workspace(tmp_path):
     task_tool = MagicMock()
     task_tool.execute = AsyncMock(return_value="created")
 
-    with patch("amcp.tool_execution.TaskTool", return_value=task_tool) as task_tool_class:
+    with patch("ankaloop.tool_execution.TaskTool", return_value=task_tool) as task_tool_class:
         executor.task_manager = TaskManager()
         result = await executor.execute("task", {"action": "create", "description": "inspect"})
 
@@ -248,7 +248,7 @@ async def test_todos_are_isolated_by_trusted_runtime_session(tmp_path):
             exposed_tools={"todo"},
             registry=registry,
             mcp_registry={},
-            config=AMCPConfig(servers={}, chat=None),
+            config=AnkaloopConfig(servers={}, chat=None),
         )
 
     first = todo_executor("first")
@@ -297,7 +297,7 @@ async def test_thread_backed_tool_settles_before_cancellation_returns(tmp_path):
         exposed_tools={"slow_write"},
         registry=registry,
         mcp_registry={},
-        config=AMCPConfig(servers={}, chat=None),
+        config=AnkaloopConfig(servers={}, chat=None),
     )
 
     task = asyncio.create_task(executor.execute("slow_write", {}))
@@ -330,7 +330,7 @@ class _ToolCallingLLM:
 
 @pytest.mark.asyncio
 async def test_hidden_tool_call_is_denied_without_execution(tmp_path):
-    with patch("amcp.agent.Path.home", return_value=tmp_path):
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         agent = Agent(_spec(tools=None), session_id="hidden")
     llm = _ToolCallingLLM(
         {
@@ -378,7 +378,7 @@ async def test_empty_allowlist_and_disabled_delegation_cannot_execute(tmp_path):
         ),
     ]
     for index, (spec, tool_spec, call) in enumerate(cases):
-        with patch("amcp.agent.Path.home", return_value=tmp_path):
+        with patch("ankaloop.agent.Path.home", return_value=tmp_path):
             agent = Agent(spec, session_id=f"denied-{index}")
         llm = _ToolCallingLLM(call)
         assert (
@@ -399,8 +399,11 @@ async def test_empty_allowlist_and_disabled_delegation_cannot_execute(tmp_path):
 
 @pytest.mark.asyncio
 async def test_invalid_arguments_are_repairable_but_missing_id_is_protocol_error(tmp_path):
-    cfg = AMCPConfig(servers={}, chat=None, context=ContextConfig())
-    with patch("amcp.agent.Path.home", return_value=tmp_path), patch("amcp.agent.load_config", return_value=cfg):
+    cfg = AnkaloopConfig(servers={}, chat=None, context=ContextConfig())
+    with (
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=cfg),
+    ):
         agent = Agent(_spec(tools=None), session_id="malformed")
     bash_spec = create_default_tool_registry(enable_task=False).get_tool("bash").get_spec()
     llm = _ToolCallingLLM({"id": "call-1", "name": "bash", "arguments": "[]"})

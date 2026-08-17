@@ -35,7 +35,7 @@ jobs:
         run: ruff format --check src/
 
       - name: Type check with mypy
-        run: mypy src/amcp --ignore-missing-imports
+        run: mypy src/ankaloop --ignore-missing-imports
         continue-on-error: true
 
   test:

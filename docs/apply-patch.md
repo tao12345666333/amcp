@@ -241,7 +241,7 @@ The `apply_patch` tool is enabled by default. To disable it, modify your config:
 ### Python API
 
 ```python
-from amcp.apply_patch import apply_patch_text, PatchParser, PatchApplier
+from ankaloop.apply_patch import apply_patch_text, PatchParser, PatchApplier
 
 # Simple usage
 changes = apply_patch_text(patch_text)

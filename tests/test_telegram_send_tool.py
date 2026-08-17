@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from amcp.telegram.tools import TelegramSendTool
-from amcp.tools import ToolResult
+from ankaloop.telegram.tools import TelegramSendTool
+from ankaloop.tools import ToolResult
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ class TestTelegramSendToolValidation:
 
 
 class TestTelegramSendAction:
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_send_success(self, mock_httpx, tool):
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -87,7 +87,7 @@ class TestTelegramSendAction:
         assert payload["chat_id"] == "12345"
         assert payload["text"]  # text is present (possibly converted)
 
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_send_with_reply(self, mock_httpx, tool):
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -109,7 +109,7 @@ class TestTelegramSendAction:
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
         assert payload["reply_to_message_id"] == 42
 
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_send_http_error(self, mock_httpx, tool):
         import httpx
 
@@ -132,7 +132,7 @@ class TestTelegramSendAction:
 
 
 class TestTelegramEditAction:
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_edit_success(self, mock_httpx, tool):
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -157,7 +157,7 @@ class TestTelegramEditAction:
 
 
 class TestTelegramNotifyAction:
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_notify_success(self, mock_httpx, tool):
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -170,7 +170,7 @@ class TestTelegramNotifyAction:
         mock_config = MagicMock()
         mock_config.telegram.allowed_users = [111, 222]
 
-        with patch("amcp.telegram.tools.load_config", return_value=mock_config):
+        with patch("ankaloop.telegram.tools.load_config", return_value=mock_config):
             result = tool.execute(action="notify", text="Deploy done")
 
         assert result.success
@@ -181,13 +181,13 @@ class TestTelegramNotifyAction:
         mock_config = MagicMock()
         mock_config.telegram = None
 
-        with patch("amcp.telegram.tools.load_config", return_value=mock_config):
+        with patch("ankaloop.telegram.tools.load_config", return_value=mock_config):
             result = tool.execute(action="notify", text="test")
 
         assert not result.success
         assert "No allowed users" in result.error
 
-    @patch("amcp.telegram.tools.httpx")
+    @patch("ankaloop.telegram.tools.httpx")
     def test_notify_partial_failure(self, mock_httpx, tool):
         import httpx
 
@@ -214,7 +214,7 @@ class TestTelegramNotifyAction:
         mock_config = MagicMock()
         mock_config.telegram.allowed_users = [111, 222]
 
-        with patch("amcp.telegram.tools.load_config", return_value=mock_config):
+        with patch("ankaloop.telegram.tools.load_config", return_value=mock_config):
             result = tool.execute(action="notify", text="test")
 
         assert result.success  # partial success
@@ -223,7 +223,7 @@ class TestTelegramNotifyAction:
 
 class TestToolRegistration:
     def test_tool_registry_integration(self):
-        from amcp.tools import ToolRegistry
+        from ankaloop.tools import ToolRegistry
 
         registry = ToolRegistry()
         tool = TelegramSendTool(bot_token="test")

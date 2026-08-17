@@ -14,7 +14,7 @@
 [Unit]
 Description=AMCP - AI Multi-agent Coding Platform
 After=network.target
-Documentation=https://github.com/tao12345666333/amcp
+Documentation=https://github.com/tao12345666333/ankaloop
 
 [Service]
 Type=simple
@@ -22,7 +22,7 @@ User=amcp
 Group=amcp
 
 # Adjust paths to your installation
-ExecStart=/usr/local/bin/amcp serve --host 0.0.0.0 --port 4096
+ExecStart=/usr/local/bin/anka serve --host 0.0.0.0 --port 4096
 WorkingDirectory=/home/amcp
 
 # Restart policy
@@ -36,7 +36,7 @@ SyslogIdentifier=amcp
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
-# Environment=AMCP_MODEL_API_KEY=sk-xxxx
+# Environment=ANKA_MODEL_API_KEY=sk-xxxx
 
 # Security hardening
 NoNewPrivileges=yes

@@ -10,8 +10,8 @@ import pytest
 
 pytest.importorskip("croniter")
 
-from amcp.skills import SkillManager, SkillMetadata, SkillTrigger
-from amcp.telegram.scheduler import AssistantScheduler
+from ankaloop.skills import SkillManager, SkillMetadata, SkillTrigger
+from ankaloop.telegram.scheduler import AssistantScheduler
 
 
 def _make_skill(

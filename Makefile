@@ -16,7 +16,7 @@ format:
 	ruff format src/ tests/
 
 type-check:
-	mypy src/amcp --ignore-missing-imports
+	mypy src/ankaloop --ignore-missing-imports
 
 clean:
 	rm -rf build/ dist/ *.egg-info .pytest_cache .coverage htmlcov/

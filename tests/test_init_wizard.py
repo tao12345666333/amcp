@@ -1,6 +1,6 @@
 """Tests for interactive initialization configuration choices."""
 
-from amcp.init_wizard import _resolve_api_type
+from ankaloop.init_wizard import _resolve_api_type
 
 
 def test_resolve_api_type_uses_supported_any_llm_provider():

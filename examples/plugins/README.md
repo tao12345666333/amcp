@@ -35,7 +35,7 @@ Plugins can be shared across projects and teams, providing consistent tooling an
 
 3. **Use the plugin commands:**
    ```bash
-   amcp
+   anka
    AMCP> /feature-dev Add user authentication
    ```
 
@@ -90,7 +90,7 @@ Create commands, agents, skills, or hooks as needed.
 ### 4. Test your plugin
 
 ```bash
-amcp --plugin .amcp/plugins/my-plugin
+anka --plugin .amcp/plugins/my-plugin
 ```
 
 ## Plugin Configuration

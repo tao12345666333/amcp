@@ -26,7 +26,7 @@ command_exists() {
 }
 
 # Get the project root directory
-PROJECT_ROOT="${AMCP_PROJECT_DIR:-$(pwd)}"
+PROJECT_ROOT="${ANKA_PROJECT_DIR:-$(pwd)}"
 cd "$PROJECT_ROOT"
 
 print_status $YELLOW "🔍 Running code quality checks..."

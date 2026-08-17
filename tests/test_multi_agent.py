@@ -2,7 +2,7 @@
 
 import pytest
 
-from amcp.multi_agent import (
+from ankaloop.multi_agent import (
     BUILTIN_AGENTS,
     PRIMARY_SYSTEM_PROMPT,
     AgentConfig,

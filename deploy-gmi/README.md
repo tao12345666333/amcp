@@ -55,7 +55,7 @@ curl -fsS http://localhost:8080/api/v1/info
 
 ### Step 1: Basics & Template
 
-- Project name: `amcp-agent`
+- Project name: `ankaloop`
 - Template/path: choose a custom container image.
 
 ### Step 2: Infrastructure
@@ -63,7 +63,7 @@ curl -fsS http://localhost:8080/api/v1/info
 - Deployment path: `GMI CE Deployment`
 - Docker image source:
   - Upload a local image, or
-  - Registry URL: `ghcr.io/tao12345666333/amcp:gmi-0.11.1`
+  - Registry URL: `ghcr.io/tao12345666333/ankaloop:gmi-0.11.1`
 - Compute tier: `Container, 2 vCPU, 4 GB RAM`
 - Region: `IOWA IDC-1`
 - MaaS integration: enabled

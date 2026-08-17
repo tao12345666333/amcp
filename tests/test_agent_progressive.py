@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from amcp.agent import Agent
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig, Server
-from amcp.mcp_naming import is_mcp_tool_name, is_valid_function_name
+from ankaloop.agent import Agent
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig, Server
+from ankaloop.mcp_naming import is_mcp_tool_name, is_valid_function_name
 
 
 @pytest.mark.asyncio
 async def test_build_tools_progressive_filters_non_relevant(monkeypatch):
-    cfg = AMCPConfig(
+    cfg = AnkaloopConfig(
         servers={},
         chat=ChatConfig(model="unknown-model", mcp_tools_enabled=False),
         context=ContextConfig(
@@ -20,7 +20,7 @@ async def test_build_tools_progressive_filters_non_relevant(monkeypatch):
             min_prompt_budget=1800,
         ),
     )
-    monkeypatch.setattr("amcp.agent.load_config", lambda: cfg)
+    monkeypatch.setattr("ankaloop.agent.load_config", lambda: cfg)
 
     agent = Agent()
     tools, registry = await agent._build_tools_and_registry(
@@ -37,14 +37,14 @@ async def test_build_tools_progressive_filters_non_relevant(monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_tools_are_exposed_under_provider_safe_names(monkeypatch):
     """MCP aliases must satisfy the strictest provider naming rule and stay reversible."""
-    cfg = AMCPConfig(
+    cfg = AnkaloopConfig(
         servers={"tavily": Server(url="https://mcp.example.com/mcp")},
         chat=ChatConfig(model="unknown-model", mcp_tools_enabled=True),
         context=ContextConfig(progressive_tools=False),
     )
-    monkeypatch.setattr("amcp.agent.load_config", lambda: cfg)
+    monkeypatch.setattr("ankaloop.agent.load_config", lambda: cfg)
     monkeypatch.setattr(
-        "amcp.agent.list_mcp_tools",
+        "ankaloop.agent.list_mcp_tools",
         AsyncMock(
             return_value=[
                 {"name": "tavily_search", "description": "search", "inputSchema": {"type": "object"}},

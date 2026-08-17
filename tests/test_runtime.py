@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from amcp.message_queue import MessagePriority
-from amcp.runtime import (
+from ankaloop.message_queue import MessagePriority
+from ankaloop.runtime import (
     RuntimeClosedError,
     SessionRuntime,
     SessionRuntimeStatus,
     TurnCancelledError,
     TurnStatus,
 )
-from amcp.server.turn_stream import turn_frames
+from ankaloop.server.turn_stream import turn_frames
 
 
 @pytest.mark.asyncio

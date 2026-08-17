@@ -1,4 +1,4 @@
-"""Tests for AMCP Server module."""
+"""Tests for AnkaLoop Server module."""
 
 import asyncio
 import json
@@ -8,10 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from amcp.server import ServerConfig, create_app
-from amcp.server.config import AuthConfig, is_loopback_host
-from amcp.server.models import SessionStatus
-from amcp.server.session_manager import (
+from ankaloop.server import ServerConfig, create_app
+from ankaloop.server.config import AuthConfig, is_loopback_host
+from ankaloop.server.models import SessionStatus
+from ankaloop.server.session_manager import (
     ManagedSession,
     MaxSessionsReachedError,
     SessionAlreadyExistsError,
@@ -19,7 +19,7 @@ from amcp.server.session_manager import (
     SessionNotFoundError,
     get_session_manager,
 )
-from amcp.session_store import SessionTimelineStore
+from ankaloop.session_store import SessionTimelineStore
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ class TestHealthEndpoints:
         response = client.get("/")
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == "amcp-server"
+        assert data["name"] == "ankaloop-server"
         assert "version" in data
         assert data["api"] == "/api/v1"
 
@@ -76,7 +76,7 @@ class TestHealthEndpoints:
         response = client.get("/api/v1/info")
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == "amcp-server"
+        assert data["name"] == "ankaloop-server"
         assert "capabilities" in data
         assert "sessions" in data["capabilities"]
 
@@ -498,7 +498,7 @@ class TestEventBridge:
     @pytest.mark.asyncio
     async def test_event_bridge_creation(self):
         """Test event bridge can be created."""
-        from amcp.server.event_bridge import EventBridge, get_event_bridge
+        from ankaloop.server.event_bridge import EventBridge, get_event_bridge
 
         bridge = get_event_bridge()
         assert bridge is not None
@@ -507,7 +507,7 @@ class TestEventBridge:
     @pytest.mark.asyncio
     async def test_emit_tool_event(self):
         """Test emitting tool events."""
-        from amcp.server.event_bridge import emit_tool_event
+        from ankaloop.server.event_bridge import emit_tool_event
 
         # Should not raise
         await emit_tool_event(
@@ -538,7 +538,7 @@ class TestConnectionManager:
 
     def test_connection_stats_initial(self):
         """Test initial connection stats are empty."""
-        from amcp.server.websocket import ConnectionManager
+        from ankaloop.server.websocket import ConnectionManager
 
         manager = ConnectionManager()
         stats = manager.get_connection_stats()
@@ -550,7 +550,7 @@ class TestConnectionManager:
 
     def test_session_connection_count(self):
         """Test getting connection count for specific session."""
-        from amcp.server.websocket import ConnectionManager
+        from ankaloop.server.websocket import ConnectionManager
 
         manager = ConnectionManager()
         count = manager.get_session_connection_count("nonexistent-session")
@@ -558,7 +558,7 @@ class TestConnectionManager:
 
     @pytest.mark.asyncio
     async def test_writes_to_one_connection_are_serialized(self):
-        from amcp.server.websocket import ConnectionManager
+        from ankaloop.server.websocket import ConnectionManager
 
         class FakeWebSocket:
             def __init__(self):
@@ -594,7 +594,7 @@ class TestConnectionManager:
 
     @pytest.mark.asyncio
     async def test_slow_connection_closes_when_outbound_queue_is_full(self):
-        from amcp.server.websocket import ConnectionManager
+        from ankaloop.server.websocket import ConnectionManager
 
         class SlowWebSocket:
             def __init__(self):
@@ -635,7 +635,7 @@ class TestCollaborationEvents:
     @pytest.mark.asyncio
     async def test_emit_prompt_received(self):
         """Test emitting prompt received event."""
-        from amcp.server.event_bridge import get_event_bridge
+        from ankaloop.server.event_bridge import get_event_bridge
 
         bridge = get_event_bridge()
 
@@ -650,7 +650,7 @@ class TestCollaborationEvents:
     @pytest.mark.asyncio
     async def test_emit_prompt_received_truncates_long_content(self):
         """Test that long content is truncated in prompt received event."""
-        from amcp.server.event_bridge import get_event_bridge
+        from ankaloop.server.event_bridge import get_event_bridge
 
         bridge = get_event_bridge()
 
@@ -664,7 +664,7 @@ class TestCollaborationEvents:
     @pytest.mark.asyncio
     async def test_emit_prompt_started(self):
         """Test emitting prompt started event."""
-        from amcp.server.event_bridge import get_event_bridge
+        from ankaloop.server.event_bridge import get_event_bridge
 
         bridge = get_event_bridge()
 
@@ -676,7 +676,7 @@ class TestCollaborationEvents:
     @pytest.mark.asyncio
     async def test_emit_prompt_queued(self):
         """Test emitting prompt queued event."""
-        from amcp.server.event_bridge import get_event_bridge
+        from ankaloop.server.event_bridge import get_event_bridge
 
         bridge = get_event_bridge()
 
@@ -689,7 +689,7 @@ class TestCollaborationEvents:
     @pytest.mark.asyncio
     async def test_emit_prompt_rejected(self):
         """Test emitting prompt rejected event."""
-        from amcp.server.event_bridge import get_event_bridge
+        from ankaloop.server.event_bridge import get_event_bridge
 
         bridge = get_event_bridge()
 
@@ -705,14 +705,14 @@ class TestConflictStrategy:
 
     def test_conflict_strategy_enum(self):
         """Test ConflictStrategy enum values."""
-        from amcp.server.models import ConflictStrategy
+        from ankaloop.server.models import ConflictStrategy
 
         assert ConflictStrategy.QUEUE.value == "queue"
         assert ConflictStrategy.REJECT.value == "reject"
 
     def test_prompt_request_has_conflict_strategy(self):
         """Test PromptRequest includes conflict_strategy field."""
-        from amcp.server.models import ConflictStrategy, PromptRequest
+        from ankaloop.server.models import ConflictStrategy, PromptRequest
 
         # Default is QUEUE
         req = PromptRequest(content="test")
@@ -724,7 +724,7 @@ class TestConflictStrategy:
 
     def test_new_event_types_exist(self):
         """Test that new collaboration event types exist."""
-        from amcp.server.models import EventType
+        from ankaloop.server.models import EventType
 
         # Verify new event types are available
         assert EventType.PROMPT_RECEIVED.value == "prompt.received"
@@ -774,22 +774,22 @@ class TestServeEnvVars:
     """Test serve command env-var and flag handling for host/port/api-key."""
 
     def test_env_vars_recognized_in_help(self):
-        """Typer exposes AMCP_HOST/AMCP_PORT/AMCP_API_KEY as envvar options."""
+        """Typer exposes ANKA_HOST/ANKA_PORT/ANKA_API_KEY as envvar options."""
         from typer.testing import CliRunner
 
-        from amcp.cli import app
+        from ankaloop.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["serve", "--help"])
         assert result.exit_code == 0
-        assert "AMCP_HOST" in result.output
-        assert "AMCP_PORT" in result.output
-        assert "AMCP_API_KEY" in result.output
+        assert "ANKA_HOST" in result.output
+        assert "ANKA_PORT" in result.output
+        assert "ANKA_API_KEY" in result.output
 
     def test_api_key_flag_enables_auth(self):
         """--api-key CLI flag builds ServerConfig with auth enabled."""
-        from amcp.cli import serve_command
-        from amcp.server.config import AuthConfig
+        from ankaloop.cli import serve_command
+        from ankaloop.server.config import AuthConfig
 
         original_run = None
 
@@ -798,10 +798,10 @@ class TestServeEnvVars:
         def fake_run_server(**kwargs):
             captured.update(kwargs)
 
-        import amcp.server
+        import ankaloop.server
 
-        original_run = amcp.server.run_server
-        amcp.server.run_server = fake_run_server
+        original_run = ankaloop.server.run_server
+        ankaloop.server.run_server = fake_run_server
         try:
             serve_command(
                 host="0.0.0.0",
@@ -812,7 +812,7 @@ class TestServeEnvVars:
                 telegram_enabled=False,
             )
         finally:
-            amcp.server.run_server = original_run
+            ankaloop.server.run_server = original_run
 
         auth = captured.get("auth")
         assert auth is not None

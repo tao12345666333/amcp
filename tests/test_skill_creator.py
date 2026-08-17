@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.skills import SkillManager, SkillMetadata, reset_skill_manager
+from ankaloop.skills import SkillManager, SkillMetadata, reset_skill_manager
 
 # --- Fixtures ---
 
@@ -196,7 +196,7 @@ class TestInitSkillScript:
         return (
             Path(__file__).resolve().parent.parent
             / "src"
-            / "amcp"
+            / "ankaloop"
             / "builtin_skills"
             / "skill-creator"
             / "scripts"
@@ -264,7 +264,7 @@ class TestValidateSkillScript:
         return (
             Path(__file__).resolve().parent.parent
             / "src"
-            / "amcp"
+            / "ankaloop"
             / "builtin_skills"
             / "skill-creator"
             / "scripts"
@@ -325,7 +325,9 @@ class TestValidateSkillScript:
 
     def test_validates_builtin_skill_creator(self, validate_script: Path):
         """The bundled skill-creator itself passes validation."""
-        builtin_skill_dir = Path(__file__).resolve().parent.parent / "src" / "amcp" / "builtin_skills" / "skill-creator"
+        builtin_skill_dir = (
+            Path(__file__).resolve().parent.parent / "src" / "ankaloop" / "builtin_skills" / "skill-creator"
+        )
         result = subprocess.run(
             [sys.executable, str(validate_script), str(builtin_skill_dir)],
             capture_output=True,

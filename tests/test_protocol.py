@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from amcp.protocol import (
+from ankaloop.protocol import (
     ErrorCode,
     ProtocolAdapter,
     ProtocolError,
@@ -14,13 +14,13 @@ from amcp.protocol import (
     server_event_to_ws_message,
     ws_message_to_server_event,
 )
-from amcp.protocol.error_codes import (
+from ankaloop.protocol.error_codes import (
     SessionBusyError,
     SessionNotFoundError,
     ToolNotFoundError,
     ValidationError,
 )
-from amcp.server.models import EventType, ServerEvent
+from ankaloop.server.models import EventType, ServerEvent
 
 
 class TestErrorCodes:

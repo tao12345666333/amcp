@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.readfile import (
+from ankaloop.readfile import (
     IndentationOptions,
     _collect_file_lines,
     _compute_effective_indents,
@@ -313,7 +313,7 @@ class TestReadFileToolIntegration:
     """Integration tests for ReadFileTool."""
 
     def test_slice_mode(self, tmp_path):
-        from amcp.tools import ReadFileTool
+        from ankaloop.tools import ReadFileTool
 
         file = tmp_path / "test.py"
         file.write_text("line1\nline2\nline3\n")
@@ -327,7 +327,7 @@ class TestReadFileToolIntegration:
         assert result.metadata["mode"] == "slice"
 
     def test_indentation_mode(self, tmp_path):
-        from amcp.tools import ReadFileTool
+        from ankaloop.tools import ReadFileTool
 
         file = tmp_path / "test.py"
         file.write_text("""def hello():

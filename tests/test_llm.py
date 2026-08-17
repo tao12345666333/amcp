@@ -7,8 +7,8 @@ import httpx
 import pytest
 from any_llm.types.completion import Reasoning
 
-from amcp.config import ChatConfig, ModelConfig
-from amcp.llm import (
+from ankaloop.config import ChatConfig, ModelConfig
+from ankaloop.llm import (
     AnthropicClient,
     AnyLLMClient,
     ContextOverflowError,
@@ -136,7 +136,7 @@ class TestCreateLLMClient:
 
     def test_none_config_uses_defaults(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-        monkeypatch.delenv("AMCP_API_TYPE", raising=False)
+        monkeypatch.delenv("ANKA_API_TYPE", raising=False)
 
         client = create_llm_client(None)
         assert isinstance(client, OpenAIClient)
@@ -225,8 +225,8 @@ class TestOpenAIClient:
         client.client.completion = lambda **_kwargs: pytest.fail("provider must not be called")
 
         with (
-            patch("amcp.llm.get_model_context_window", return_value=100),
-            patch("amcp.llm.get_model_output_limit", return_value=20),
+            patch("ankaloop.llm.get_model_context_window", return_value=100),
+            patch("ankaloop.llm.get_model_output_limit", return_value=20),
             pytest.raises(ContextOverflowError) as error,
         ):
             client.chat(

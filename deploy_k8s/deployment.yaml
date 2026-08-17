@@ -1,0 +1,82 @@
+# AMCP single-replica deployment.
+#
+# Notes:
+# - No resources.requests/limits by requirement.
+# - replicas: 1 is required for the Telegram polling bot and keeps session
+#   state simple.
+# - strategy: Recreate to keep the single writer on /workspace simple.
+# - The container command replaces the image entrypoint with a supervisor
+#   (from the amcp-k8s-scripts ConfigMap) that runs the stock gmi-entrypoint
+#   as a child. This gives e2b-style in-place self-restart: /k8s:restart (or
+#   /scripts/restart-amcp.sh) restarts the AMCP process WITHOUT stopping the
+#   container, so the pod keeps running and container-local state survives.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amcp
+  namespace: amcp
+  labels:
+    app: amcp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: amcp
+  template:
+    metadata:
+      labels:
+        app: amcp
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: amcp
+          image: ghcr.io/tao12345666333/amcp:gmi-latest
+          # Track the moving gmi-latest tag; pin to gmi-<version> for stability.
+          imagePullPolicy: Always
+          command: ["/usr/bin/tini", "--", "/scripts/supervisor.sh"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: amcp-env
+          # Optional plain env overrides (examples):
+          # env:
+          #   - name: AMCP_K8S_REINSTALL_ON_RESTART
+          #     value: "1"
+          #   - name: AMCP_GMI_REWRITE_CONFIG
+          #     value: "1"
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            # Tolerant on purpose: an in-place self-restart briefly drops the
+            # health endpoint; only a real hang should make Kubernetes kill
+            # the container.
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: scripts
+          configMap:
+            name: amcp-k8s-scripts
+            defaultMode: 0755
+        - name: workspace
+          # No persistence by design: sessions, memory, config, and logs under
+          # /workspace live only as long as the pod.
+          emptyDir: {}

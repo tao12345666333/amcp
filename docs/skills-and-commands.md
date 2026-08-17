@@ -77,7 +77,7 @@ Active skills are indicated with a ⭐ in the listing.
 ### Programmatic Usage
 
 ```python
-from amcp import get_skill_manager
+from ankaloop import get_skill_manager
 
 # Get the skill manager
 sm = get_skill_manager()
@@ -211,7 +211,7 @@ AMCP provides several built-in commands:
 ### Programmatic Usage
 
 ```python
-from amcp import get_command_manager
+from ankaloop import get_command_manager
 
 # Get the command manager
 cm = get_command_manager()

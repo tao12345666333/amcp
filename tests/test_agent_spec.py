@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.agent_spec import (
+from ankaloop.agent_spec import (
     AgentSpec,
     AgentSpecError,
     ResolvedAgentSpec,
@@ -12,7 +12,7 @@ from amcp.agent_spec import (
     list_available_agents,
     load_agent_spec,
 )
-from amcp.multi_agent import AgentMode
+from ankaloop.multi_agent import AgentMode
 
 
 class TestGetDefaultAgentSpec:
@@ -31,7 +31,7 @@ class TestGetDefaultAgentSpec:
     def test_default_description(self):
         """Test default agent description."""
         spec = get_default_agent_spec()
-        assert "Default AMCP agent" in spec.description
+        assert "Default AnkaLoop agent" in spec.description
 
     def test_default_mode_is_primary(self):
         """Test that default agent is PRIMARY mode."""
@@ -48,7 +48,7 @@ class TestGetDefaultAgentSpec:
         spec = get_default_agent_spec()
         assert len(spec.system_prompt) > 0
         # Should have critical rules section from template
-        assert "critical_rules" in spec.system_prompt or "AMCP" in spec.system_prompt
+        assert "critical_rules" in spec.system_prompt or "AnkaLoop" in spec.system_prompt
 
     def test_default_max_steps(self):
         """Test default max_steps value."""

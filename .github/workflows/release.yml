@@ -53,9 +53,9 @@ jobs:
           GIT_HASH=$(git rev-parse --short HEAD)
           echo "Injecting git commit hash: $GIT_HASH"
           # Update _version.py with the commit hash
-          sed -i "s/^__git_commit__: str | None = None$/__git_commit__: str | None = \"$GIT_HASH\"/" src/amcp/_version.py
+          sed -i "s/^__git_commit__: str | None = None$/__git_commit__: str | None = \"$GIT_HASH\"/" src/ankaloop/_version.py
           # Verify the change
-          cat src/amcp/_version.py
+          cat src/ankaloop/_version.py
 
       - name: Build package
         run: uv build
@@ -74,7 +74,7 @@ jobs:
     needs: build
     environment:
       name: pypi
-      url: https://pypi.org/project/amcp-agent/
+      url: https://pypi.org/project/ankaloop/
     permissions:
       id-token: write  # Required for Trusted Publishing
     steps:
@@ -111,19 +111,30 @@ jobs:
         id: release_notes
         run: |
           TAG=${{ steps.get_tag.outputs.TAG }}
+          VERSION=${TAG#v}
           echo "## What's Changed in ${TAG}" > release_notes.md
           echo "" >> release_notes.md
           echo "### Installation" >> release_notes.md
           echo "" >> release_notes.md
           echo '```bash' >> release_notes.md
-          echo "pip install amcp-agent==${TAG#v}" >> release_notes.md
+          echo "pip install ankaloop==${VERSION}" >> release_notes.md
           echo "" >> release_notes.md
           echo "# Or run directly without installation" >> release_notes.md
-          echo "uvx amcp-agent" >> release_notes.md
+          echo "uvx ankaloop==${VERSION}" >> release_notes.md
           echo '```' >> release_notes.md
           echo "" >> release_notes.md
           echo "### Links" >> release_notes.md
-          echo "- [PyPI Package](https://pypi.org/project/amcp-agent/${TAG#v}/)" >> release_notes.md
+          echo "- [PyPI Package](https://pypi.org/project/ankaloop/${VERSION}/)" >> release_notes.md
+
+      - name: Mark release as prerelease
+        id: prerelease
+        run: |
+          TAG=${{ steps.get_tag.outputs.TAG }}
+          if [[ "$TAG" =~ ^v?[0-9.]+[-.]?(rc|beta|alpha|a|b)[0-9.]*$ ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -132,5 +143,6 @@ jobs:
           name: ${{ steps.get_tag.outputs.TAG }}
           body_path: release_notes.md
           files: dist/*
+          prerelease: ${{ steps.prerelease.outputs.PRERELEASE }}
           generate_release_notes: true
           append_body: true

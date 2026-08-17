@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from amcp.config import ContextConfig
-from amcp.progressive.context_budget import ContextBudgetManager
-from amcp.progressive.relevance import RelevanceScorer
-from amcp.progressive.skill_view import ProgressiveSkillView
-from amcp.progressive.tool_view import ProgressiveToolView
-from amcp.progressive.usage_tracker import ToolUsageTracker
-from amcp.skills import SkillMetadata
+from ankaloop.config import ContextConfig
+from ankaloop.progressive.context_budget import ContextBudgetManager
+from ankaloop.progressive.relevance import RelevanceScorer
+from ankaloop.progressive.skill_view import ProgressiveSkillView
+from ankaloop.progressive.tool_view import ProgressiveToolView
+from ankaloop.progressive.usage_tracker import ToolUsageTracker
+from ankaloop.skills import SkillMetadata
 
 
 def _tool_spec(name: str, description: str) -> dict:

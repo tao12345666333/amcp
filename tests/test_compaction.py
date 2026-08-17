@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from amcp.compaction import (
+from ankaloop.compaction import (
     COMPACT_PROMPT,
     CompactionConfig,
     CompactionResult,
@@ -77,7 +77,7 @@ class TestGetModelContextWindow:
 
     def test_model_config_context_window_override(self):
         """Test that model_config.context_window takes highest priority."""
-        from amcp.config import ModelConfig
+        from ankaloop.config import ModelConfig
 
         mc = ModelConfig(context_window=1048576)
         result = get_model_context_window("some-unknown-model-xyz", model_config=mc)
@@ -85,7 +85,7 @@ class TestGetModelContextWindow:
 
     def test_model_config_provider_id_forwarded(self):
         """Test that model_config.provider_id is forwarded to DB lookup."""
-        from amcp.config import ModelConfig
+        from ankaloop.config import ModelConfig
 
         mc = ModelConfig(provider_id="test-provider")
         # Even with provider_id, unknown model should still return default
@@ -210,7 +210,7 @@ class TestSmartCompactor:
 
     @pytest.fixture
     def mock_client(self):
-        """Create a mock AMCP LLM client."""
+        """Create a mock AnkaLoop LLM client."""
         client = MagicMock()
         # Mock successful completion response
         mock_response = MagicMock()
@@ -418,7 +418,7 @@ class TestCreateCompactor:
 
     def test_create_with_defaults(self):
         """Test creating compactor with defaults."""
-        from amcp.compaction import create_compactor
+        from ankaloop.compaction import create_compactor
 
         client = MagicMock()
         compactor = create_compactor(client, "gpt-5.5")
@@ -428,7 +428,7 @@ class TestCreateCompactor:
 
     def test_create_with_custom_strategy(self):
         """Test creating compactor with custom strategy."""
-        from amcp.compaction import create_compactor
+        from ankaloop.compaction import create_compactor
 
         client = MagicMock()
         compactor = create_compactor(

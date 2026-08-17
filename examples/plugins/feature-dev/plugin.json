@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Comprehensive feature development workflow with a structured 7-phase approach",
   "author": "AMCP Team",
-  "homepage": "https://github.com/tao12345666333/amcp",
+  "homepage": "https://github.com/tao12345666333/ankaloop",
   "components": {
     "commands": ["commands/*.md"],
     "agents": ["agents/*.yaml"],

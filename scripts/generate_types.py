@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate TypeScript types from OpenAPI specification.
 
-This script fetches the OpenAPI spec from a running AMCP server
+This script fetches the OpenAPI spec from a running AnkaLoop server
 and generates TypeScript type definitions using openapi-typescript.
 """
 
@@ -20,7 +20,7 @@ def fetch_openapi_spec(server_url: str) -> dict:
     """Fetch OpenAPI spec from server.
 
     Args:
-        server_url: The AMCP server URL.
+        server_url: The AnkaLoop server URL.
 
     Returns:
         OpenAPI specification dictionary.
@@ -107,7 +107,7 @@ def generate_manual_types(spec: dict, output_path: Path) -> None:
 
     lines = [
         "/**",
-        " * AMCP API Type Definitions",
+        " * AnkaLoop API Type Definitions",
         " * ",
         " * Auto-generated from OpenAPI specification.",
         f" * Generated: {spec.get('info', {}).get('version', 'unknown')}",
@@ -240,13 +240,13 @@ def _json_schema_to_ts(schema: dict) -> str:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Generate TypeScript types from AMCP OpenAPI spec"
+        description="Generate TypeScript types from AnkaLoop OpenAPI spec"
     )
     parser.add_argument(
         "--server",
         "-s",
         default="http://localhost:8080",
-        help="AMCP server URL (default: http://localhost:8080)",
+        help="AnkaLoop server URL (default: http://localhost:8080)",
     )
     parser.add_argument(
         "--output",
@@ -289,7 +289,7 @@ def main() -> int:
 
     except httpx.HTTPError as e:
         print(f"Error fetching OpenAPI spec: {e}")
-        print("Make sure the AMCP server is running: amcp serve")
+        print("Make sure the AnkaLoop server is running: anka serve")
         return 1
     except Exception as e:
         print(f"Error: {e}")

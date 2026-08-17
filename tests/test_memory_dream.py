@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from amcp.memory import get_memory_manager, reset_memory_manager
-from amcp.memory_dream import MemoryDreamer
+from ankaloop.memory import get_memory_manager, reset_memory_manager
+from ankaloop.memory_dream import MemoryDreamer
 
 
 class _FakeClient:

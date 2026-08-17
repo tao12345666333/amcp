@@ -82,9 +82,9 @@ if [ -n "${AMCP_TELEGRAM_BOT_TOKEN:-}" ]; then
         echo "AMCP_TELEGRAM_ALLOWED_USERS is required when Telegram is enabled" >&2
         exit 1
     fi
-    amcp "$@" &
+    anka "$@" &
     server_pid=$!
-    amcp telegram start --work-dir "$WORK_DIR" &
+    anka telegram start --work-dir "$WORK_DIR" &
     telegram_pid=$!
 
     stop_children() {
@@ -110,4 +110,4 @@ if [ -n "${AMCP_TELEGRAM_BOT_TOKEN:-}" ]; then
     exit "$status"
 fi
 
-exec amcp "$@"
+exec anka "$@"

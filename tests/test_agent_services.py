@@ -4,16 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent, create_agent_by_name
-from amcp.application_services import ApplicationServices
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig
-from amcp.context_builder import ContextBuilder
-from amcp.multi_agent import AgentRegistry
-from amcp.server.config import ServerConfig
-from amcp.server.session_manager import SessionManager
-from amcp.tool_loop import ToolLoop
-from amcp.tools import ToolRegistry
-from amcp.turn_service import TurnService
+from ankaloop.agent import Agent, create_agent_by_name
+from ankaloop.application_services import ApplicationServices
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig
+from ankaloop.context_builder import ContextBuilder
+from ankaloop.multi_agent import AgentRegistry
+from ankaloop.server.config import ServerConfig
+from ankaloop.server.session_manager import SessionManager
+from ankaloop.tool_loop import ToolLoop
+from ankaloop.tools import ToolRegistry
+from ankaloop.turn_service import TurnService
 
 
 def _services() -> ApplicationServices:
@@ -28,7 +28,7 @@ def _services() -> ApplicationServices:
 
 def test_agent_composes_stage_one_services(tmp_path):
     services = _services()
-    with patch("amcp.agent.Path.home", return_value=tmp_path):
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         agent = Agent(services=services)
 
     assert isinstance(agent.context_builder, ContextBuilder)
@@ -39,7 +39,7 @@ def test_agent_composes_stage_one_services(tmp_path):
 
 @pytest.mark.asyncio
 async def test_process_message_compatibility_entry_delegates(tmp_path):
-    with patch("amcp.agent.Path.home", return_value=tmp_path):
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         agent = Agent(services=_services())
     agent.turn_service.process_message = AsyncMock(return_value="done")  # type: ignore[method-assign]
 
@@ -49,7 +49,7 @@ async def test_process_message_compatibility_entry_delegates(tmp_path):
 
 @pytest.mark.asyncio
 async def test_context_and_tool_loop_compatibility_entries_delegate(tmp_path):
-    with patch("amcp.agent.Path.home", return_value=tmp_path):
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         agent = Agent(services=_services())
     agent.context_builder.build_tools_and_registry = AsyncMock(  # type: ignore[method-assign]
         return_value=([], {})
@@ -85,14 +85,14 @@ async def test_context_builder_uses_injected_tool_registry(tmp_path):
             },
         }
     )
-    config = AMCPConfig(
+    config = AnkaloopConfig(
         servers={},
         chat=ChatConfig(mcp_tools_enabled=False),
         context=ContextConfig(progressive_tools=False),
     )
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=config),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=config),
     ):
         agent = Agent(services=services)
         tools, _ = await agent._build_tools_and_registry()
@@ -103,8 +103,8 @@ async def test_context_builder_uses_injected_tool_registry(tmp_path):
 def test_named_factory_uses_injected_agent_registry(tmp_path):
     services = _services()
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.get_agent_registry", side_effect=AssertionError("global registry used")),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.get_agent_registry", side_effect=AssertionError("global registry used")),
     ):
         agent = create_agent_by_name("coder", services=services)
 
@@ -115,7 +115,7 @@ def test_named_factory_uses_injected_agent_registry(tmp_path):
 async def test_session_manager_propagates_application_services(tmp_path):
     services = _services()
     manager = SessionManager(ServerConfig(work_dir=tmp_path), services)
-    with patch("amcp.agent.Path.home", return_value=tmp_path):
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         session = await manager.create_session(cwd=str(tmp_path))
 
     assert session.agent.services is services

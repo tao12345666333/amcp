@@ -7,27 +7,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amcp.agent import Agent, AgentExecutionError
-from amcp.compaction import CompactionResult, CompactionStrategy
-from amcp.config import AMCPConfig, ChatConfig, ContextConfig
-from amcp.hooks import HookOutput
-from amcp.runtime import TurnStatus
-from amcp.session_state import SessionState
-from amcp.session_store import SessionSaveError
-from amcp.tools import create_default_tool_registry
+from ankaloop.agent import Agent, AgentExecutionError
+from ankaloop.compaction import CompactionResult, CompactionStrategy
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig
+from ankaloop.hooks import HookOutput
+from ankaloop.runtime import TurnStatus
+from ankaloop.session_state import SessionState
+from ankaloop.session_store import SessionSaveError
+from ankaloop.tools import create_default_tool_registry
 
 
 @pytest.fixture(autouse=True)
 def _disable_best_effort_projections():
     with (
-        patch("amcp.agent.get_memory_manager"),
-        patch("amcp.agent.get_transcript_store"),
+        patch("ankaloop.agent.get_memory_manager"),
+        patch("ankaloop.agent.get_transcript_store"),
     ):
         yield
 
 
-def _config() -> AMCPConfig:
-    return AMCPConfig(
+def _config() -> AnkaloopConfig:
+    return AnkaloopConfig(
         servers={},
         chat=ChatConfig(model="glm-4.7"),
         context=ContextConfig(),
@@ -95,8 +95,8 @@ async def test_tool_loop_returns_ordered_canonical_message_delta(tmp_path):
             return SimpleNamespace(content="done", tool_calls=None, usage=None)
 
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=_config()),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=_config()),
     ):
         agent = Agent(session_id="tool-delta")
         think = create_default_tool_registry(enable_task=False).get_tool("think")
@@ -124,13 +124,13 @@ async def test_tool_loop_returns_ordered_canonical_message_delta(tmp_path):
 @pytest.mark.asyncio
 async def test_completed_turn_persists_full_tool_evidence_and_restarts(tmp_path):
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=_config()),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=_config()),
         patch(
-            "amcp.agent.run_user_prompt_hooks",
+            "ankaloop.agent.run_user_prompt_hooks",
             new=AsyncMock(return_value=HookOutput()),
         ),
-        patch("amcp.llm.create_llm_client"),
+        patch("ankaloop.llm.create_llm_client"),
     ):
         agent = Agent(session_id="canonical")
         with (
@@ -164,13 +164,13 @@ async def test_completed_turn_persists_full_tool_evidence_and_restarts(tmp_path)
 @pytest.mark.asyncio
 async def test_failed_and_cancelled_turns_leave_committed_state_unchanged(tmp_path):
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=_config()),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=_config()),
         patch(
-            "amcp.agent.run_user_prompt_hooks",
+            "ankaloop.agent.run_user_prompt_hooks",
             new=AsyncMock(return_value=HookOutput()),
         ),
-        patch("amcp.llm.create_llm_client"),
+        patch("ankaloop.llm.create_llm_client"),
     ):
         agent = Agent(session_id="rollback")
         agent._session_state.commit_turn(
@@ -202,7 +202,7 @@ async def test_failed_and_cancelled_turns_leave_committed_state_unchanged(tmp_pa
 
         with (
             patch(
-                "amcp.agent.run_user_prompt_hooks",
+                "ankaloop.agent.run_user_prompt_hooks",
                 new=AsyncMock(side_effect=RuntimeError("hook failed")),
             ),
             pytest.raises(RuntimeError, match="hook failed"),
@@ -237,13 +237,13 @@ async def test_failed_and_cancelled_turns_leave_committed_state_unchanged(tmp_pa
 @pytest.mark.asyncio
 async def test_save_failure_fails_turn_handle_without_advancing_memory(tmp_path):
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=_config()),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=_config()),
         patch(
-            "amcp.agent.run_user_prompt_hooks",
+            "ankaloop.agent.run_user_prompt_hooks",
             new=AsyncMock(return_value=HookOutput()),
         ),
-        patch("amcp.llm.create_llm_client"),
+        patch("ankaloop.llm.create_llm_client"),
     ):
         agent = Agent(session_id="commit-failure")
         with (
@@ -299,16 +299,16 @@ async def test_checkpoint_restart_only_compacts_new_committed_prefix(tmp_path):
             )
 
     with (
-        patch("amcp.agent.Path.home", return_value=tmp_path),
-        patch("amcp.agent.load_config", return_value=_config()),
+        patch("ankaloop.agent.Path.home", return_value=tmp_path),
+        patch("ankaloop.agent.load_config", return_value=_config()),
         patch(
-            "amcp.agent.run_user_prompt_hooks",
+            "ankaloop.agent.run_user_prompt_hooks",
             new=AsyncMock(return_value=HookOutput()),
         ),
-        patch("amcp.agent.SmartCompactor", FakeCompactor),
-        patch("amcp.agent.estimate_request_tokens", return_value=100),
-        patch("amcp.agent.estimate_tokens", return_value=100),
-        patch("amcp.llm.create_llm_client"),
+        patch("ankaloop.agent.SmartCompactor", FakeCompactor),
+        patch("ankaloop.agent.estimate_request_tokens", return_value=100),
+        patch("ankaloop.agent.estimate_tokens", return_value=100),
+        patch("ankaloop.llm.create_llm_client"),
     ):
         agent = Agent(session_id="checkpoint-restart")
         for index in range(4):

@@ -6,9 +6,9 @@ AMCP follows Python best practices with a clear separation of concerns:
 
 ```
 AMCP/
-├── src/amcp/              # Main package source code
+├── src/ankaloop/              # Main package source code
 │   ├── __init__.py        # Package initialization
-│   ├── __main__.py        # Entry point for python -m amcp
+│   ├── __main__.py        # Entry point for python -m ankaloop
 │   ├── cli.py             # CLI interface (Typer)
 │   ├── agent.py           # Agent orchestration logic
 │   ├── agent_spec.py      # Agent specification handling

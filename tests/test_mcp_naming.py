@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from amcp.mcp_naming import (
+from ankaloop.mcp_naming import (
     MAX_FUNCTION_NAME_LENGTH,
     MCP_TOOL_PREFIX,
     is_mcp_tool_name,

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from amcp.project_rules import (
+from ankaloop.project_rules import (
     AGENTS_FILE_NAMES,
     ProjectRulesLoader,
     discover_project_agents_files,

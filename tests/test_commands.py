@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from amcp.commands import (
+from ankaloop.commands import (
     CommandContext,
     CommandKind,
     CommandManager,
@@ -355,8 +355,8 @@ class TestBuiltinCommands:
 
     def test_soul_command_set_and_show(self, manager: CommandManager, tmp_path: Path, monkeypatch):
         """Test the /soul command manages durable soul."""
-        from amcp import memory
-        from amcp.memory import MemoryManager, MemoryStore
+        from ankaloop import memory
+        from ankaloop.memory import MemoryManager, MemoryStore
 
         mgr = MemoryManager(project_root=tmp_path / "project")
         mgr.user_store = MemoryStore(tmp_path / "user-memory")
@@ -376,15 +376,15 @@ class TestBuiltinCommands:
 
     def test_identity_command_set_and_show(self, manager: CommandManager, tmp_path: Path, monkeypatch):
         """Test the /identity command manages durable identity."""
-        from amcp import memory
-        from amcp.memory import MemoryManager, MemoryStore
+        from ankaloop import memory
+        from ankaloop.memory import MemoryManager, MemoryStore
 
         mgr = MemoryManager(project_root=tmp_path / "project")
         mgr.user_store = MemoryStore(tmp_path / "user-memory")
         monkeypatch.setattr(memory, "_memory_manager", mgr)
         monkeypatch.setattr(memory, "_memory_manager_project_root", (tmp_path / "project").resolve())
 
-        cmd, args = manager.parse_input("/identity set Name: AMCP Atlas")
+        cmd, args = manager.parse_input("/identity set Name: AnkaLoop Atlas")
         assert cmd is not None
         result = manager.execute_command(cmd, args, project_root=tmp_path / "project")
         assert result.message_type == "success"
@@ -392,7 +392,7 @@ class TestBuiltinCommands:
         cmd, args = manager.parse_input("/identity show")
         assert cmd is not None
         result = manager.execute_command(cmd, args, project_root=tmp_path / "project")
-        assert "AMCP Atlas" in result.content
+        assert "AnkaLoop Atlas" in result.content
 
     def test_profile_commands_reject_project_scope(
         self,
@@ -401,8 +401,8 @@ class TestBuiltinCommands:
         monkeypatch,
     ):
         """Soul and identity commands are global-only."""
-        from amcp import memory
-        from amcp.memory import MemoryManager, MemoryStore
+        from ankaloop import memory
+        from ankaloop.memory import MemoryManager, MemoryStore
 
         mgr = MemoryManager(project_root=tmp_path / "project")
         mgr.user_store = MemoryStore(tmp_path / "user-memory")
