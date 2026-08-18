@@ -170,38 +170,6 @@ class _StreamingDeliveryManager:
             await self._bot.send_markdown(self._chat_id, chunk)
 
 
-def _utf16_len(text: str) -> int:
-    """Length of text in UTF-16 code units (Telegram's message limit unit)."""
-    return len(text) + sum(1 for ch in text if ord(ch) > 0xFFFF)
-
-
-def _split_plain_text(text: str, max_length: int) -> list[str]:
-    """Split plain text into chunks within a UTF-16 length limit, preferring newlines."""
-    if _utf16_len(text) <= max_length:
-        return [text]
-    parts: list[str] = []
-    remaining = text
-    limit = max(1, max_length)
-    while remaining:
-        # Longest prefix of remaining that fits in `limit` UTF-16 units.
-        units = 0
-        cut = 0
-        for i, ch in enumerate(remaining):
-            units += 2 if ord(ch) > 0xFFFF else 1
-            if units > limit:
-                break
-            cut = i + 1
-        if cut < len(remaining):
-            newline = remaining.rfind("\n", 0, cut)
-            if newline > 0:
-                cut = newline
-        parts.append(remaining[:cut].rstrip("\n"))
-        remaining = remaining[cut:].lstrip("\n")
-        if not parts[-1]:
-            break
-    return parts
-
-
 class TelegramBot:
     """Telegram bot that connects chat messages to an AnkaLoop agent."""
 
@@ -799,16 +767,7 @@ class TelegramBot:
         return int(message_id) if message_id is not None else None
 
     async def send_text(self, chat_id: int, text: str, *, reply_markup: Any = None) -> Any:
-        if _utf16_len(text) > self._formatter.max_length:
-            last_message: Any = None
-            text_parts = _split_plain_text(text, self._formatter.max_length)
-            for part in text_parts:
-                kwargs: dict[str, Any] = {"chat_id": chat_id, "text": part}
-                if reply_markup is not None and part is text_parts[-1]:
-                    kwargs["reply_markup"] = reply_markup
-                last_message = await self._application.bot.send_message(**kwargs)
-            return last_message
-        kwargs = {"chat_id": chat_id, "text": text}
+        kwargs: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         return await self._application.bot.send_message(**kwargs)

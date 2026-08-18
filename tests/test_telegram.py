@@ -173,33 +173,6 @@ def test_formatter_uses_utf16_length_for_emoji():
     assert chunks == ["😀😀😀", "😀😀😀", "😀😀😀", "😀"]
 
 
-def test_split_plain_text_splits_on_utf16_limit():
-    from ankaloop.telegram.bot import _split_plain_text
-
-    # Each emoji is 2 UTF-16 units; limit 6 units = 3 emoji per chunk.
-    assert _split_plain_text("a" * 3, 10) == ["aaa"]
-    chunks = _split_plain_text("😀" * 7, 6)
-    assert chunks == ["😀😀😀", "😀😀😀", "😀"]
-    # Prefer splitting on newlines.
-    text = "\n".join(["line" + str(i) for i in range(200)])
-    parts = _split_plain_text(text, 100)
-    assert all(len(p) <= 100 for p in parts)
-    assert "\n".join(parts) == text or "\n".join(parts).replace("\n\n", "\n") == text
-
-
-def test_send_text_chunks_oversized_command_output(capsys):
-    from ankaloop.telegram.bot import _split_plain_text, _utf16_len
-
-    assert _utf16_len("abc") == 3
-    assert _utf16_len("😀") == 2
-    long_output = "skill-🔴😀\n" * 800
-    parts = _split_plain_text(long_output, 4096)
-    assert all(_utf16_len(p) <= 4096 for p in parts)
-    # Content preserved across chunks (modulo stripped blank lines).
-    rejoined = "".join(p + "\n" for p in parts).replace("\n\n", "\n")
-    assert rejoined.startswith("skill-🔴😀\n")
-
-
 def test_session_manager_creates_sessions():
     async def _run():
         manager = SessionManager(agent_factory=_FakeAgent, session_timeout=60)

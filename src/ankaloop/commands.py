@@ -567,7 +567,12 @@ def _make_skills_command(skill_manager) -> SlashCommand:
                 status = "🔴 (disabled)" if skill.disabled else "🟢"
                 active = " ⭐" if sm.is_skill_active(skill.name) else ""
                 auto_trigger = " 🤖" if skill.auto_trigger else " 🚫"
-                lines.append(f"- {status} **{skill.name}**{active}{auto_trigger}")
+                lines.append(f"- {status} **{skill.name}**{active}{auto_trigger}: {skill.description}")
+                if skill.parameters:
+                    for param in skill.parameters:
+                        req = " (required)" if param.required else ""
+                        default = f" [default: {param.default}]" if param.default else ""
+                        lines.append(f"    - param `{param.name}`{req}{default}: {param.description}")
 
             lines.append("\nLegend: ⭐ = active, 🤖 = auto-trigger, 🚫 = explicit-only")
             return CommandResult(type="message", content="\n".join(lines))
