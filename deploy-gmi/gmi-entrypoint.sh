@@ -3,7 +3,7 @@ set -eu
 
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8080}"
-WORK_DIR="${AMCP_WORK_DIR:-/workspace}"
+WORK_DIR="${ANKA_WORK_DIR:-/workspace}"
 GMI_BASE="${GMI_MAAS_BASE_URL:-https://api.gmi-serving.com}"
 
 case "$GMI_BASE" in
@@ -11,7 +11,7 @@ case "$GMI_BASE" in
     *) OPENAI_BASE="${GMI_BASE%/}/v1" ;;
 esac
 
-export AMCP_OPENAI_BASE="${AMCP_OPENAI_BASE:-$OPENAI_BASE}"
+export ANKA_OPENAI_BASE="${ANKA_OPENAI_BASE:-$OPENAI_BASE}"
 
 if [ -n "${GMI_MAAS_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     export OPENAI_API_KEY="$GMI_MAAS_API_KEY"
@@ -22,23 +22,23 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
     exit 1
 fi
 
-RAW_MODEL="${AMCP_CHAT_MODEL:-${GMI_MODELS:-}}"
+RAW_MODEL="${ANKA_CHAT_MODEL:-${GMI_MODELS:-}}"
 if [ -z "$RAW_MODEL" ]; then
-    echo "GMI_MODELS or AMCP_CHAT_MODEL is required" >&2
+    echo "GMI_MODELS or ANKA_CHAT_MODEL is required" >&2
     exit 1
 fi
 case "$RAW_MODEL" in
     *,*) MODEL="${RAW_MODEL%%,*}" ;;
     *) MODEL="$RAW_MODEL" ;;
 esac
-export AMCP_CHAT_MODEL="$MODEL"
+export ANKA_CHAT_MODEL="$MODEL"
 
 CONFIG_ROOT="${XDG_CONFIG_HOME:-/root/.config}"
 CONFIG_DIR="$CONFIG_ROOT/amcp"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 mkdir -p "$CONFIG_DIR" "$WORK_DIR"
 
-if [ ! -f "$CONFIG_FILE" ] || [ "${AMCP_GMI_REWRITE_CONFIG:-1}" = "1" ]; then
+if [ ! -f "$CONFIG_FILE" ] || [ "${ANKA_GMI_REWRITE_CONFIG:-1}" = "1" ]; then
     cat > "$CONFIG_FILE" <<EOF
 [server]
 host = "$HOST"
@@ -60,7 +60,7 @@ allow_credentials = false
 
 [chat]
 api_type = "openai"
-base_url = "$AMCP_OPENAI_BASE"
+base_url = "$ANKA_OPENAI_BASE"
 model = "$MODEL"
 mcp_tools_enabled = true
 write_tool_enabled = true
@@ -77,9 +77,9 @@ fi
 
 set -- serve --host "$HOST" --port "$PORT" --work-dir "$WORK_DIR"
 
-if [ -n "${AMCP_TELEGRAM_BOT_TOKEN:-}" ]; then
-    if [ -z "${AMCP_TELEGRAM_ALLOWED_USERS:-}" ]; then
-        echo "AMCP_TELEGRAM_ALLOWED_USERS is required when Telegram is enabled" >&2
+if [ -n "${ANKA_TELEGRAM_BOT_TOKEN:-}" ]; then
+    if [ -z "${ANKA_TELEGRAM_ALLOWED_USERS:-}" ]; then
+        echo "ANKA_TELEGRAM_ALLOWED_USERS is required when Telegram is enabled" >&2
         exit 1
     fi
     anka "$@" &

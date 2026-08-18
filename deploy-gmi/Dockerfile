@@ -1,4 +1,4 @@
-# AMCP image prepared for GMI Cloud AgentBox.
+# AnkaLoop image prepared for GMI Cloud AgentBox.
 #
 # Build from the repository root:
 #   docker build -f deploy-gmi/Dockerfile -t amcp-gmi:latest .
@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/workspace \
     XDG_CONFIG_HOME=/workspace/.config \
     PORT=8080 \
-    AMCP_WORK_DIR=/workspace
+    ANKA_WORK_DIR=/workspace
 
 WORKDIR /app
 

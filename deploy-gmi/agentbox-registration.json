@@ -31,32 +31,32 @@
   ],
   "custom_env": [
     {
-      "name": "AMCP_WORK_DIR",
+      "name": "ANKA_WORK_DIR",
       "type": "TEXT",
       "value": "/workspace"
     },
     {
-      "name": "AMCP_GMI_REWRITE_CONFIG",
+      "name": "ANKA_GMI_REWRITE_CONFIG",
       "type": "TEXT",
       "value": "1"
     },
     {
-      "name": "AMCP_CHAT_MODEL",
+      "name": "ANKA_CHAT_MODEL",
       "type": "TEXT",
       "value": "<optional primary GMI MaaS model>"
     },
     {
-      "name": "AMCP_TELEGRAM_BOT_TOKEN",
+      "name": "ANKA_TELEGRAM_BOT_TOKEN",
       "type": "SECRET",
       "value": "<token from BotFather>"
     },
     {
-      "name": "AMCP_TELEGRAM_ALLOWED_USERS",
+      "name": "ANKA_TELEGRAM_ALLOWED_USERS",
       "type": "TEXT",
       "value": "<comma-separated Telegram numeric user IDs>"
     },
     {
-      "name": "AMCP_TELEGRAM_ADMIN_USERS",
+      "name": "ANKA_TELEGRAM_ADMIN_USERS",
       "type": "TEXT",
       "value": "<optional comma-separated Telegram numeric user IDs>"
     }
