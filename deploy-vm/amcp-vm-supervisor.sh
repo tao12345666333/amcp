@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # amcp-vm-supervisor: run AMCP as a supervised child so it can be restarted
 # in place (same machine, same service, no systemd restart) — mirrors the
-# e2b/start-sandbox.sh and deploy_k8s supervisor designs.
+# e2b/start-sandbox.sh and deploy-k8s supervisor designs.
 #
 # Restart triggers:
 #   1. /usr/local/bin/amcp-vm-restart touches $MARKER and SIGTERMs the child.

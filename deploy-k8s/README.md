@@ -45,12 +45,12 @@ tini (PID 1)
 
 ```bash
 # 1. Create the Secret with real values (never commit it)
-cp deploy_k8s/secret.example.yaml deploy_k8s/secret.yaml
-$EDITOR deploy_k8s/secret.yaml
+cp deploy-k8s/secret.example.yaml deploy-k8s/secret.yaml
+$EDITOR deploy-k8s/secret.yaml
 
 # 2. Apply everything
-kubectl apply -k deploy_k8s/
-kubectl apply -f deploy_k8s/secret.yaml
+kubectl apply -k deploy-k8s/
+kubectl apply -f deploy-k8s/secret.yaml
 
 # 3. Watch it come up
 kubectl -n amcp rollout status deployment/amcp

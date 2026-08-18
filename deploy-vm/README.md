@@ -2,7 +2,7 @@
 
 Deploy AMCP from the public repo (`https://github.com/tao12345666333/amcp`)
 directly onto a Linux server, running on a uv-managed venv with the same
-in-place self-restart ability as the `deploy_k8s` setup.
+in-place self-restart ability as the `deploy-k8s` setup.
 
 ## Layout on the server
 
@@ -19,7 +19,7 @@ in-place self-restart ability as the `deploy_k8s` setup.
 
 ## Self-restart without stopping the service
 
-Mirrors the K8s (`deploy_k8s`) and e2b designs:
+Mirrors the K8s (`deploy-k8s`) and e2b designs:
 
 ```text
 systemd (Restart=always)          <- only acts when the supervisor exits
@@ -49,7 +49,7 @@ to the server.
 ```bash
 # 1. Create the env file locally from your existing config (never commit it)
 cp deploy_vm/amcp.env.example deploy_vm/amcp.env
-#    or reuse values from deploy_k8s/secret.yaml (same keys)
+#    or reuse values from deploy-k8s/secret.yaml (same keys)
 $EDITOR deploy_vm/amcp.env
 
 # 2. Copy the deploy_vm payload + your env to the server

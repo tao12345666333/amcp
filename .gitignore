@@ -155,7 +155,7 @@ e2b/
 e2b.toml
 
 # Secrets and deploy env files (never commit)
-deploy_k8s/secret.yaml
+deploy-k8s/secret.yaml
 deploy-vm/amcp.env
 deploy-vm/*.local.env
 
