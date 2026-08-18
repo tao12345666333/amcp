@@ -153,5 +153,17 @@ Thumbs.db
 .amcp/memory/
 e2b/
 e2b.toml
+
+# Secrets and deploy env files (never commit)
 deploy_k8s/secret.yaml
-deploy_vm/amcp.env
+deploy-vm/amcp.env
+deploy-vm/*.local.env
+
+# Test / local config guard (NEVER commit real secrets or test configs)
+# Test AMCP configs live under /opt/amcp/data/amcp-test (outside this repo),
+# but guard against accidental local copies here too.
+amcp-test*.toml
+anka-test*.toml
+*.local.toml
+*.local.env
+local_config.toml
