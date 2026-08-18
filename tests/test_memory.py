@@ -70,6 +70,26 @@ class TestMemoryStore:
         assert "Second entry" in content
         assert "test" in content
 
+    def test_append_history_string_tags_normalized(self, store: MemoryStore):
+        """A bare string passed as tags must not be split into characters."""
+        store.append_history("Entry with string tags", session_id="s1", tags="research")
+        store.append_history("Entry with None tags", session_id="s1", tags=None)
+        store.append_history("Entry with list tags", session_id="s1", tags=["research", "discovery"])
+
+        history = store.read_history()
+        assert "[research]" in history
+        assert "[r, e, s, e, a, r, c, h]" not in history
+        assert "[research, discovery]" in history
+        # None tags must render no bracket section at all
+        assert "(session: s1)\n\nEntry with None tags" in history
+
+    def test_memory_entry_normalizes_tags(self):
+        from ankaloop.memory import MemoryEntry
+
+        entry = MemoryEntry(timestamp="t", session_id="s", content="c", tags="discovery")
+        assert "[discovery]" in entry.to_markdown()
+        assert "[d, i, s, c, o, v, e, r, y]" not in entry.to_markdown()
+
     def test_history_append_only(self, store: MemoryStore):
         """History entries accumulate, not replace."""
         store.append_history("Entry 1", session_id="s1")
