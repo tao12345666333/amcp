@@ -43,9 +43,24 @@ class MemoryEntry:
     content: str
     tags: list[str] = field(default_factory=list)
 
+    @staticmethod
+    def _normalize_tags(tags: list[str] | str | None) -> list[str]:
+        """Coerce tags to a list of strings.
+
+        Callers (notably LLM tool invocations) may pass a bare string or
+        None instead of a list. Iterating a bare string would otherwise
+        split it into individual characters when joined.
+        """
+        if not tags:
+            return []
+        if isinstance(tags, str):
+            return [tags]
+        return [str(t) for t in tags]
+
     def to_markdown(self) -> str:
         """Convert entry to markdown format for appending to HISTORY.md."""
-        tags_str = f" [{', '.join(self.tags)}]" if self.tags else ""
+        tags_list = self._normalize_tags(self.tags)
+        tags_str = f" [{', '.join(tags_list)}]" if tags_list else ""
         return f"### [{self.timestamp}] (session: {self.session_id}){tags_str}\n\n{self.content}\n"
 
 
@@ -226,7 +241,7 @@ class MemoryStore:
             timestamp=datetime.now().isoformat(timespec="seconds"),
             session_id=session_id,
             content=content.strip(),
-            tags=tags or [],
+            tags=MemoryEntry._normalize_tags(tags),
         )
         try:
             with open(self.history_file, "a", encoding="utf-8") as f:
@@ -240,7 +255,7 @@ class MemoryStore:
             self._sqlite.append_event(
                 content=content.strip(),
                 session_id=session_id,
-                tags=tags or [],
+                tags=MemoryEntry._normalize_tags(tags),
                 source="history",
             )
         except Exception as e:
@@ -658,7 +673,7 @@ class MemoryManager:
             scope: "user" or "project"
         """
         store = self._store_for_scope(scope)
-        store.append_history(content, session_id, tags)
+        store.append_history(content, session_id, MemoryEntry._normalize_tags(tags))
 
     def search(self, query: str, max_results: int = 20) -> list[MemorySearchResult]:
         """Search across both memory stores.

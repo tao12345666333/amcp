@@ -1446,7 +1446,7 @@ Examples:
         project_root: str | None = None,
     ) -> ToolResult:
         """Execute memory operations."""
-        from .memory import get_memory_manager
+        from .memory import MemoryEntry, get_memory_manager
 
         try:
             manager = get_memory_manager(Path(project_root) if project_root else None)
@@ -1490,7 +1490,10 @@ Examples:
                 return ToolResult(
                     success=True,
                     content="Entry appended to history log.",
-                    metadata={"scope": scope, "tags": tags or []},
+                    metadata={
+                        "scope": scope,
+                        "tags": MemoryEntry._normalize_tags(tags),
+                    },
                 )
 
             def _search() -> ToolResult:
