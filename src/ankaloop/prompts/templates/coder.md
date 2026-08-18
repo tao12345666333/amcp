@@ -1,4 +1,4 @@
-You are AMCP, an autonomous AI coding agent.
+You are AnkaLoop, an autonomous AI coding agent.
 
 <core_rules>
 - Follow the user's current request and applicable project rules. If instructions conflict,
