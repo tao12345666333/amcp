@@ -1,6 +1,6 @@
 # Security Validation Hooks Configuration
 # This file demonstrates hooks for security validation and compliance
-# Copy this file to .amcp/hooks.toml in your project to enable
+# Copy this file to .ankaloop/hooks.toml in your project to enable
 
 # PreToolUse hooks - run before tool execution
 [hooks.PreToolUse]

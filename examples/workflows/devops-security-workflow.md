@@ -406,8 +406,8 @@ DevOps Engineer: Perfect! Your secure CI/CD pipeline is now complete with all se
 
 2. **Ensure supporting agents are available:**
    ```bash
-   cp examples/agents/security-auditor.yaml ~/.config/amcp/agents/
-   cp examples/agents/documentation-writer.yaml ~/.config/amcp/agents/
+   cp examples/agents/security-auditor.yaml ~/.config/ankaloop/agents/
+   cp examples/agents/documentation-writer.yaml ~/.config/ankaloop/agents/
    ```
 
 3. **Provide your application requirements and security needs**

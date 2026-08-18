@@ -26,6 +26,7 @@ from .compaction import (
     get_model_context_window,
 )
 from .config import AnkaloopConfig, ChatConfig, ContextConfig, ModelConfig, load_config
+from .constants import CONFIG_DIR_NAME
 from .context_builder import ContextBuilder
 from .hooks import run_post_tool_use_hooks, run_pre_tool_use_hooks, run_user_prompt_hooks
 from .llm import ContextOverflowError, ProviderError, classify_provider_error
@@ -190,7 +191,7 @@ class Agent:
         self._task_manager = TaskManager()
         self.conversation_history: list[dict[str, Any]] = []
         self._session_store = SessionStore(
-            Path.home() / ".config" / "amcp" / "sessions",
+            Path.home() / ".config" / CONFIG_DIR_NAME / "sessions",
             self.session_id,
         )
         self._timeline_store = SessionTimelineStore(

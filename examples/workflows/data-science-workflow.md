@@ -281,7 +281,7 @@ Data Scientist: Perfect! Your customer churn prediction system is now complete w
 
 2. **Ensure supporting agents are available:**
    ```bash
-   cp examples/agents/documentation-writer.yaml ~/.config/amcp/agents/
+   cp examples/agents/documentation-writer.yaml ~/.config/ankaloop/agents/
    ```
 
 3. **Provide your dataset and requirements**

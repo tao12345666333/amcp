@@ -31,7 +31,7 @@ RUN uv sync --frozen --no-dev --no-editable --extra telegram
 
 COPY deploy-gmi/gmi-entrypoint.sh /usr/local/bin/gmi-entrypoint
 RUN chmod +x /usr/local/bin/gmi-entrypoint \
-    && mkdir -p /workspace/.config/amcp
+    && mkdir -p /workspace/.config/ankaloop
 
 WORKDIR /workspace
 

@@ -6,8 +6,8 @@ Provides persistent cross-session memory for the agent using a two-layer approac
 - HISTORY.md: Append-only searchable log of past activities and learnings
 
 Memory is stored at:
-- User-level: ~/.config/amcp/memory/
-- Project-level: .amcp/memory/ (project-specific knowledge)
+- User-level: ~/.config/ankaloop/memory/
+- Project-level: .ankaloop/memory/ (project-specific knowledge)
 
 This enables the agent to remember important context across sessions,
 supporting self-evolution by accumulating knowledge over time.
@@ -22,10 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from .constants import CONFIG_DIR_NAME, PROJECT_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
-# Default config directory
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME
 
 DEFAULT_SOUL = """You are AnkaLoop, a long-running autonomous coding agent.
 
@@ -118,7 +120,7 @@ class MemoryStore:
     def get_project_memory_dir(project_root: Path | None = None) -> Path:
         """Get project-level memory directory."""
         root = project_root or Path.cwd()
-        return root / ".amcp" / "memory"
+        return root / PROJECT_DIR_NAME / "memory"
 
     def _ensure_dir(self) -> None:
         """Ensure memory directory exists."""

@@ -176,8 +176,8 @@ Web Developer: Perfect! I've now integrated the security improvements and docume
 
 2. **Make sure other agents are available:**
    ```bash
-   cp examples/agents/security-auditor.yaml ~/.config/amcp/agents/
-   cp examples/agents/documentation-writer.yaml ~/.config/amcp/agents/
+   cp examples/agents/security-auditor.yaml ~/.config/ankaloop/agents/
+   cp examples/agents/documentation-writer.yaml ~/.config/ankaloop/agents/
    ```
 
 3. **Submit your request and let the agents collaborate!**

@@ -10,9 +10,9 @@ markdown files with YAML frontmatter containing:
 
 Skills are discovered from (in order of increasing precedence):
 - Built-in skills: Bundled with AnkaLoop (e.g., skill-creator)
-- User skills: ~/.config/amcp/skills/<skill-name>/SKILL.md
+- User skills: ~/.config/ankaloop/skills/<skill-name>/SKILL.md
 - Home agent skills: ~/.agents/skills/<skill-name>/SKILL.md
-- Project skills: .amcp/skills/<skill-name>/SKILL.md (highest precedence)
+- Project skills: .ankaloop/skills/<skill-name>/SKILL.md (highest precedence)
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from .constants import CONFIG_DIR_NAME, PROJECT_DIR_NAME
 
 try:
     import yaml
@@ -39,8 +41,8 @@ logger = logging.getLogger(__name__)
 # Regex to parse YAML frontmatter
 FRONTMATTER_REGEX = re.compile(r"^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)", re.MULTILINE)
 
-# Default config directory
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME
 
 
 @dataclass
@@ -94,7 +96,7 @@ class SkillManager:
 
     Skills are discovered from three sources (lowest to highest precedence):
     - Built-in skills: Bundled with AnkaLoop
-    - User-level skills: ~/.config/amcp/skills/
+    - User-level skills: ~/.config/ankaloop/skills/
     - Home agent skills: ~/.agents/skills/
     - Project-level skills: .amcp/skills/
     """
@@ -112,7 +114,7 @@ class SkillManager:
     def get_project_skills_dir(project_root: Path | None = None) -> Path:
         """Get the project-level skills directory."""
         root = project_root or Path.cwd()
-        return root / ".amcp" / "skills"
+        return root / PROJECT_DIR_NAME / "skills"
 
     @staticmethod
     def get_agents_skills_dir(project_root: Path | None = None) -> Path:
@@ -136,9 +138,9 @@ class SkillManager:
 
         Discovery order (lowest to highest precedence):
         1. Built-in skills (bundled with AnkaLoop)
-        2. User skills (~/.config/amcp/skills/)
+        2. User skills (~/.config/ankaloop/skills/)
         3. Home agent skills (~/.agents/skills/)
-        4. Project skills (.amcp/skills/) — highest precedence
+        4. Project skills (.ankaloop/skills/) — highest precedence
 
         Args:
             project_root: The project root directory (defaults to cwd)

@@ -150,6 +150,7 @@ Thumbs.db
 *.pid
 *.seed
 *.pid.lock
+.ankaloop/memory/
 .amcp/memory/
 e2b/
 e2b.toml

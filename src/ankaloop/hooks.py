@@ -6,8 +6,8 @@ allowing users to extend and customize agent behavior through external commands
 or Python scripts.
 
 Configuration:
-- Project-level: .amcp/hooks.toml
-- User-level: ~/.config/amcp/hooks.toml
+- Project-level: .ankaloop/hooks.toml
+- User-level: ~/.config/ankaloop/hooks.toml
 
 Hook Events:
 - PreToolUse: Before tool execution (can modify input or deny execution)
@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from .constants import CONFIG_DIR_NAME, PROJECT_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -360,7 +362,7 @@ class HooksManager:
             return
 
         # Load user-level config
-        user_config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+        user_config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME
         user_hooks_file = user_config_dir / "hooks.toml"
         if user_hooks_file.exists():
             self._load_config_file(user_hooks_file)
@@ -371,17 +373,17 @@ class HooksManager:
             self._load_markdown_hooks_dir(user_hooks_dir)
 
         # Load project-level config (overrides user config)
-        project_hooks_file = self.project_dir / ".amcp" / "hooks.toml"
+        project_hooks_file = self.project_dir / PROJECT_DIR_NAME / "hooks.toml"
         if project_hooks_file.exists():
             self._load_config_file(project_hooks_file)
 
         # Also check for hooks.json for flexibility
-        project_hooks_json = self.project_dir / ".amcp" / "hooks.json"
+        project_hooks_json = self.project_dir / PROJECT_DIR_NAME / "hooks.json"
         if project_hooks_json.exists():
             self._load_json_config_file(project_hooks_json)
 
         # Load project-level markdown hooks
-        project_hooks_dir = self.project_dir / ".amcp" / "hooks"
+        project_hooks_dir = self.project_dir / PROJECT_DIR_NAME / "hooks"
         if project_hooks_dir.exists():
             self._load_markdown_hooks_dir(project_hooks_dir)
 
@@ -556,8 +558,8 @@ class HooksManager:
     def _load_plugin_hooks(self) -> None:
         """Load hooks from plugin directories."""
         plugin_dirs = [
-            self.project_dir / ".amcp" / "plugins",
-            Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp" / "plugins",
+            self.project_dir / PROJECT_DIR_NAME / "plugins",
+            Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME / "plugins",
         ]
 
         for plugin_base in plugin_dirs:

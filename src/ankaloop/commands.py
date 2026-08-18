@@ -7,12 +7,12 @@ the `/command` syntax. They are defined as TOML files containing:
 - description: (optional) A brief description of the command
 
 Commands are discovered from:
-- User commands: ~/.config/amcp/commands/*.toml
-- Project commands: .amcp/commands/*.toml (takes precedence)
+- User commands: ~/.config/ankaloop/commands/*.toml
+- Project commands: .ankaloop/commands/*.toml (takes precedence)
 
 Naming convention:
 - Subdirectories create namespaced commands separated by ':'
-- Example: .amcp/commands/git/commit.toml -> /git:commit
+- Example: .ankaloop/commands/git/commit.toml -> /git:commit
 """
 
 from __future__ import annotations
@@ -35,7 +35,9 @@ if TYPE_CHECKING:
     pass
 
 # Default config directory
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+from .constants import CONFIG_DIR_NAME, PROJECT_DIR_NAME
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME
 
 # Placeholder patterns
 ARGS_PLACEHOLDER = re.compile(r"\{\{args\}\}")
@@ -114,7 +116,7 @@ class CommandManager:
     def get_project_commands_dir(project_root: Path | None = None) -> Path:
         """Get the project-level commands directory."""
         root = project_root or Path.cwd()
-        return root / ".amcp" / "commands"
+        return root / PROJECT_DIR_NAME / "commands"
 
     def register_builtin(self, command: SlashCommand) -> None:
         """Register a built-in command."""

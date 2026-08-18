@@ -117,7 +117,7 @@ class TestPrecedenceOrder:
         sm = SkillManager()
 
         # Create project-level skill
-        project_skill_dir = tmp_path / ".amcp" / "skills" / "skill-creator"
+        project_skill_dir = tmp_path / ".ankaloop" / "skills" / "skill-creator"
         project_skill_dir.mkdir(parents=True)
         (project_skill_dir / "SKILL.md").write_text(
             "---\nname: skill-creator\ndescription: Project override\n---\n\nProject body."

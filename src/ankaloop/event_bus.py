@@ -48,6 +48,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from .constants import CONFIG_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -653,7 +655,7 @@ async def emit_task_event(
             from .session_store import SessionTimelineStore
 
             SessionTimelineStore(
-                Path.home() / ".config" / "amcp" / "sessions",
+                Path.home() / ".config" / CONFIG_DIR_NAME / "sessions",
                 session_id,
             ).append(event_type.value, event.data, timestamp=event.timestamp.isoformat())
         except Exception as exc:

@@ -5,8 +5,8 @@ Usage:
     python init_skill.py <skill-name> --path <output-directory> [--resources scripts,references,assets]
 
 Examples:
-    python init_skill.py my-skill --path .amcp/skills
-    python init_skill.py my-skill --path ~/.config/amcp/skills --resources scripts,references
+    python init_skill.py my-skill --path .ankaloop/skills
+    python init_skill.py my-skill --path ~/.config/ankaloop/skills --resources scripts,references
 """
 
 from __future__ import annotations

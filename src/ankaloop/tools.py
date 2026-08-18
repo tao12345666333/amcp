@@ -1407,8 +1407,8 @@ Actions:
 - delete_fact: Delete a fact by key
 
 Scopes:
-- user: Global memory (~/.config/amcp/memory/)
-- project: Project-specific memory (.amcp/memory/)
+- user: Global memory (~/.config/ankaloop/memory/)
+- project: Project-specific memory (.ankaloop/memory/)
 
 Identity and soul are global-only for prompt injection. Use scope="user" for
 identify, write_identity, and write_soul; project scope is for project facts and

@@ -25,12 +25,12 @@ Plugins can be shared across projects and teams, providing consistent tooling an
 
 1. **Copy plugin to your project:**
    ```bash
-   cp -r examples/plugins/feature-dev .amcp/plugins/
+   cp -r examples/plugins/feature-dev .ankaloop/plugins/
    ```
 
 2. **Or copy to user-level config:**
    ```bash
-   cp -r examples/plugins/feature-dev ~/.config/amcp/plugins/
+   cp -r examples/plugins/feature-dev ~/.config/ankaloop/plugins/
    ```
 
 3. **Use the plugin commands:**
@@ -63,7 +63,7 @@ plugin-name/
 ### 1. Create plugin directory
 
 ```bash
-mkdir -p .amcp/plugins/my-plugin/{commands,agents,skills,hooks}
+mkdir -p .ankaloop/plugins/my-plugin/{commands,agents,skills,hooks}
 ```
 
 ### 2. Add plugin.json
@@ -90,12 +90,12 @@ Create commands, agents, skills, or hooks as needed.
 ### 4. Test your plugin
 
 ```bash
-anka --plugin .amcp/plugins/my-plugin
+anka --plugin .ankaloop/plugins/my-plugin
 ```
 
 ## Plugin Configuration
 
-Plugins can be configured in your project's `.amcp/settings.json`:
+Plugins can be configured in your project's `.ankaloop/settings.json`:
 
 ```json
 {
@@ -103,8 +103,8 @@ Plugins can be configured in your project's `.amcp/settings.json`:
     "enabled": ["feature-dev", "code-review"],
     "disabled": ["security-guidance"],
     "paths": [
-      ".amcp/plugins",
-      "~/.config/amcp/plugins"
+      ".ankaloop/plugins",
+      "~/.config/ankaloop/plugins"
     ]
   }
 }

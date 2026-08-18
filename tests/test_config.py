@@ -2,8 +2,26 @@ import ankaloop.config as config_module
 
 
 def test_config_dir_default():
-    assert config_module.CONFIG_DIR.name == "amcp"
+    assert config_module.CONFIG_DIR.name == "ankaloop"
     assert "config" in str(config_module.CONFIG_DIR).lower()
+
+
+def test_config_dir_name_override(monkeypatch, tmp_path):
+    """Legacy deployments can keep the old config dir via ANKA_CONFIG_DIR_NAME."""
+    import importlib
+
+    import ankaloop.config as cfg_mod
+    import ankaloop.constants as constants_mod
+
+    monkeypatch.setenv("ANKA_CONFIG_DIR_NAME", "amcp")
+    importlib.reload(constants_mod)
+    importlib.reload(cfg_mod)
+    assert cfg_mod.CONFIG_DIR.name == "amcp"
+
+    monkeypatch.setenv("ANKA_CONFIG_DIR_NAME", "ankaloop")
+    importlib.reload(constants_mod)
+    importlib.reload(cfg_mod)
+    assert cfg_mod.CONFIG_DIR.name == "ankaloop"
 
 
 def test_load_config():
@@ -187,7 +205,7 @@ def test_decode_encode_server_config_roundtrip():
         },
         "session_timeout_minutes": 30,
         "max_sessions": 10,
-        "work_dir": "/tmp/amcp",
+        "work_dir": "/tmp/ankaloop",
         "default_agent": "coder",
     }
 
