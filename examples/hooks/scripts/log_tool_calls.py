@@ -13,7 +13,7 @@ from pathlib import Path
 
 def log_tool_call(hook_data: dict):
     """Log tool call information."""
-    log_dir = Path.home() / ".amcp" / "logs"
+    log_dir = Path.home() / ".ankaloop" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / f"tool_calls_{datetime.now().strftime('%Y-%m-%d')}.jsonl"

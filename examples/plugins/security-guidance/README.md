@@ -82,17 +82,17 @@ Why this is dangerous and what to do instead.
 
 1. Copy to your project:
    ```bash
-   cp -r examples/plugins/security-guidance .amcp/plugins/
+   cp -r examples/plugins/security-guidance .ankaloop/plugins/
    ```
 
 2. Or copy to user config:
    ```bash
-   cp -r examples/plugins/security-guidance ~/.config/amcp/plugins/
+   cp -r examples/plugins/security-guidance ~/.config/ankaloop/plugins/
    ```
 
 ## Customization
 
-Create your own hooks in `.amcp/hooks/` or `.amcp/plugins/*/hooks/`:
+Create your own hooks in `.ankaloop/hooks/` or `.ankaloop/plugins/*/hooks/`:
 
 ```markdown
 ---

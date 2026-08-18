@@ -1,6 +1,6 @@
-# AMCP Hooks Configuration Example
-# This file should be placed at .amcp/hooks.toml in your project directory
-# or ~/.config/amcp/hooks.toml for user-level hooks
+# AnkaLoop Hooks Configuration Example
+# This file should be placed at .ankaloop/hooks.toml in your project directory
+# or ~/.config/ankaloop/hooks.toml for user-level hooks
 
 # PreToolUse hooks - run before tool execution
 [hooks.PreToolUse]

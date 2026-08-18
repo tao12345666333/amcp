@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 import tomli_w  # type: ignore
 
+from .constants import CONFIG_DIR_NAME
 from .telegram.config import (
     TelegramConfig,
     TelegramGroupConfig,
@@ -28,7 +29,7 @@ from .telegram.config import (
     parse_user_ids,
 )
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "amcp"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / CONFIG_DIR_NAME
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 

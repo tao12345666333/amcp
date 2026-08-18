@@ -45,7 +45,7 @@ def test_example_hook_toml_configs_load(tmp_path: Path) -> None:
 
     for hook_file in hook_files:
         project = tmp_path / hook_file.stem
-        hooks_dir = project / ".amcp"
+        hooks_dir = project / ".ankaloop"
         hooks_dir.mkdir(parents=True)
         (hooks_dir / "hooks.toml").write_text(hook_file.read_text(), encoding="utf-8")
 
@@ -57,7 +57,7 @@ def test_example_hook_toml_configs_load(tmp_path: Path) -> None:
 
 def test_example_command_toml_configs_load(tmp_path: Path) -> None:
     """Every example TOML command should load through CommandManager."""
-    commands_dir = tmp_path / ".amcp" / "commands"
+    commands_dir = tmp_path / ".ankaloop" / "commands"
     commands_dir.mkdir(parents=True)
     for command_file in (EXAMPLES / "commands").rglob("*.toml"):
         destination = commands_dir / command_file.relative_to(EXAMPLES / "commands")

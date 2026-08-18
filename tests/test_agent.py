@@ -99,7 +99,7 @@ class TestAgentInit:
         assert pinned.chat.base_url == "https://pinned.example/v1"
 
     def test_loads_existing_history(self, tmp_path):
-        sessions_dir = tmp_path / ".config" / "amcp" / "sessions"
+        sessions_dir = tmp_path / ".config" / "ankaloop" / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         session_file = sessions_dir / "test-session.json"
         state = SessionState(session_id="test-session", agent_name="default")
@@ -123,7 +123,7 @@ class TestAgentInit:
                 assert agent.total_llm_calls == 1
 
     def test_load_history_handles_corrupted_file(self, tmp_path):
-        session_file = tmp_path / ".config" / "amcp" / "sessions" / "test-session.json"
+        session_file = tmp_path / ".config" / "ankaloop" / "sessions" / "test-session.json"
         session_file.parent.mkdir(parents=True)
         session_file.write_text("not json")
 

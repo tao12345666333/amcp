@@ -29,6 +29,7 @@ from .config import (
     save_config,
     save_default_config,
 )
+from .constants import CONFIG_DIR_NAME
 from .mcp_client import call_mcp_tool, list_mcp_tools
 from .multi_agent import get_agent_registry
 from .skills import get_skill_manager
@@ -489,7 +490,7 @@ def _attach_sync(
     console.print()
 
     # Setup prompt
-    history_file = Path.home() / ".config" / "amcp" / "attach_history.txt"
+    history_file = Path.home() / ".config" / CONFIG_DIR_NAME / "attach_history.txt"
     history_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_session: PromptSession[str] = PromptSession(history=FileHistory(str(history_file)))
 
@@ -782,7 +783,7 @@ def main(
 
     # Handle session listing
     if list_sessions:
-        sessions_dir = Path.home() / ".config" / "amcp" / "sessions"
+        sessions_dir = Path.home() / ".config" / CONFIG_DIR_NAME / "sessions"
         if not sessions_dir.exists():
             console.print("[yellow]No sessions directory found[/yellow]")
             return
@@ -811,7 +812,7 @@ def main(
 
     if list_agents:
         # Check both global config dir and local agents dir
-        agents_dir = Path(os.path.expanduser("~/.config/amcp/agents"))
+        agents_dir = Path(os.path.expanduser(f"~/.config/{CONFIG_DIR_NAME}/agents"))
         local_agents_dir = Path("agents")
 
         agent_files_list = list_available_agents(agents_dir)
@@ -822,7 +823,7 @@ def main(
 
         if not all_agent_files:
             console.print(
-                "[yellow]No agent specifications found. Create one in ~/.config/amcp/agents/ or local agents/[/yellow]"
+                "[yellow]No agent specifications found. Create one in ~/.config/ankaloop/agents/ or local agents/[/yellow]"
             )
             return
 
@@ -936,7 +937,7 @@ def main(
             console.print()
 
             # Setup prompt_toolkit with history
-            history_file = Path.home() / ".config" / "amcp" / "history.txt"
+            history_file = Path.home() / ".config" / CONFIG_DIR_NAME / "history.txt"
             history_file.parent.mkdir(parents=True, exist_ok=True)
             session: PromptSession[str] = PromptSession(history=FileHistory(str(history_file)))
 

@@ -299,7 +299,7 @@ Agent skill body""")
         assert skill.description == "Skill from agents dir"
 
     def test_skills_precedence(self, skill_manager: SkillManager, temp_skills_dir: Path, monkeypatch):
-        """Test precedence: .amcp > ~/.agents > user"""
+        """Test precedence: .ankaloop > user"""
 
         # Setup user skills dir
         user_config_dir = temp_skills_dir / "user_config"
@@ -311,8 +311,8 @@ Agent skill body""")
         monkeypatch.setattr(Path, "home", lambda: home_dir)
         agents_skills_dir = home_dir / ".agents" / "skills"
 
-        # Setup .amcp/skills dir
-        project_skills_dir = temp_skills_dir / ".amcp" / "skills"
+        # Setup .ankaloop/skills dir
+        project_skills_dir = temp_skills_dir / ".ankaloop" / "skills"
 
         # Create directories
         for d in [user_skills_dir, agents_skills_dir, project_skills_dir]:

@@ -175,7 +175,7 @@ class TestHooksManager:
         """Test loading hooks from TOML config."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             # Create hooks.toml
@@ -202,7 +202,7 @@ enabled = true
         """Test loading hooks from JSON config."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             # Create hooks.json
@@ -233,7 +233,7 @@ enabled = true
         """Test that disabled handlers are not returned."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             hooks_config = """
@@ -264,7 +264,7 @@ class TestHookExecution:
         """Test executing a command hook that succeeds."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             # Use JSON config for complex commands with embedded JSON output
@@ -300,7 +300,7 @@ class TestHookExecution:
         """Test executing a hook that denies tool execution."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             # Create a hook that denies writes
@@ -365,7 +365,7 @@ enabled = true
         """Test UserPromptSubmit hooks."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             # Use JSON config for complex commands with embedded JSON output
@@ -406,7 +406,7 @@ class TestEnvironmentVariables:
         """Test $ANKA_PROJECT_DIR substitution in commands."""
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            amcp_dir = project_dir / ".amcp"
+            amcp_dir = project_dir / ".ankaloop"
             amcp_dir.mkdir()
 
             hooks_config = """

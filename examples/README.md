@@ -33,7 +33,7 @@ Agent specifications define the behavior, capabilities, and system prompts for d
 
 1. **Copy an agent spec to your project:**
    ```bash
-   cp examples/agents/web-developer.yaml ~/.config/amcp/agents/
+   cp examples/agents/web-developer.yaml ~/.config/ankaloop/agents/
    ```
 
 2. **Use the agent with AnkaLoop:**
@@ -80,11 +80,11 @@ Slash commands provide quick shortcuts for common tasks. These examples demonstr
 1. **Copy commands to your configuration:**
    ```bash
    # User-level commands
-   cp examples/commands/*.toml ~/.config/amcp/commands/
+   cp examples/commands/*.toml ~/.config/ankaloop/commands/
 
    # Project-level commands
-   mkdir -p .amcp/commands
-   cp examples/commands/*.toml .amcp/commands/
+   mkdir -p .ankaloop/commands
+   cp examples/commands/*.toml .ankaloop/commands/
    ```
 
 2. **Use commands in AnkaLoop:**
@@ -127,11 +127,11 @@ Skills provide specialized knowledge and behavior patterns to agents. These exam
 1. **Copy skills to your configuration:**
    ```bash
    # User-level skills
-   cp -r examples/skills/* ~/.config/amcp/skills/
+   cp -r examples/skills/* ~/.config/ankaloop/skills/
 
    # Project-level skills
-   mkdir -p .amcp/skills
-   cp -r examples/skills/* .amcp/skills/
+   mkdir -p .ankaloop/skills
+   cp -r examples/skills/* .ankaloop/skills/
    ```
 
 2. **Activate skills in your agent or during conversation:**
@@ -184,9 +184,9 @@ Hooks provide automation and validation capabilities that run at various points 
 
 1. **Copy hook configuration:**
    ```bash
-   cp examples/hooks/automated-testing.toml ~/.config/amcp/hooks.toml
+   cp examples/hooks/automated-testing.toml ~/.config/ankaloop/hooks.toml
    # or for project-specific hooks
-   cp examples/hooks/automated-testing.toml .amcp/hooks.toml
+   cp examples/hooks/automated-testing.toml .ankaloop/hooks.toml
    ```
 
 2. **Make hook scripts executable:**
@@ -253,10 +253,10 @@ AnkaLoop> "Set up a CI/CD pipeline and ensure it meets security standards"
 2. **Copy examples to your configuration:**
    ```bash
    # Copy all examples
-   cp -r examples/agents/* ~/.config/amcp/agents/
-   cp -r examples/commands/* ~/.config/amcp/commands/
-   cp -r examples/skills/* ~/.config/amcp/skills/
-   cp examples/hooks/*.toml ~/.config/amcp/
+   cp -r examples/agents/* ~/.config/ankaloop/agents/
+   cp -r examples/commands/* ~/.config/ankaloop/commands/
+   cp -r examples/skills/* ~/.config/ankaloop/skills/
+   cp examples/hooks/*.toml ~/.config/ankaloop/
    ```
 
 3. **Start using AnkaLoop with examples:**
@@ -266,14 +266,14 @@ AnkaLoop> "Set up a CI/CD pipeline and ensure it meets security standards"
 
 ### Project-Specific Configuration
 
-For project-specific configurations, create a `.amcp` directory in your project root:
+For project-specific configurations, create a `.ankaloop` directory in your project root:
 
 ```bash
-mkdir -p .amcp/{agents,commands,skills}
-cp -r examples/agents/* .amcp/agents/
-cp -r examples/commands/* .amcp/commands/
-cp -r examples/skills/* .amcp/skills/
-cp examples/hooks.toml .amcp/
+mkdir -p .ankaloop/{agents,commands,skills}
+cp -r examples/agents/* .ankaloop/agents/
+cp -r examples/commands/* .ankaloop/commands/
+cp -r examples/skills/* .ankaloop/skills/
+cp examples/hooks.toml .ankaloop/
 ```
 
 ## 📚 Best Practices

@@ -146,8 +146,9 @@ Run `anka --help` or `anka <command> --help` for the complete command reference.
 
 ## Configuration
 
-Run `anka init` for the interactive provider wizard. AnkaLoop currently keeps configuration in
-`~/.config/amcp/config.toml`; this legacy path is retained for compatibility during the rebrand.
+Run `anka init` for the interactive provider wizard. Configuration lives in
+`~/.config/ankaloop/config.toml`. Set `ANKA_CONFIG_DIR_NAME=amcp` to keep the legacy
+`~/.config/amcp/` path from pre-rebrand deployments.
 
 ### OpenAI-compatible endpoint
 
@@ -236,10 +237,10 @@ independent work to subagents.
   and file references.
 - **Hooks** validate, modify, block, or audit tool calls before and after execution.
 
-Project extensions currently live under `.amcp/` for compatibility:
+Project extensions live under `.ankaloop/`:
 
 ```text
-.amcp/
+.ankaloop/
 ├── commands/       # TOML slash commands
 ├── hooks.toml      # pre/post tool hooks
 ├── memory/         # project knowledge

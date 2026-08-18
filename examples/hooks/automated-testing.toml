@@ -1,6 +1,6 @@
 # Automated Testing Hooks Configuration
 # This file demonstrates hooks for automated testing and quality assurance
-# Copy this file to .amcp/hooks.toml in your project to enable
+# Copy this file to .ankaloop/hooks.toml in your project to enable
 
 # PreToolUse hooks - run before tool execution
 [hooks.PreToolUse]

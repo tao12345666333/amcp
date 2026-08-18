@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from ..agent import Agent, BusyError, create_agent_by_name
 from ..agent_spec import get_default_agent_spec
 from ..config import load_config, save_config
+from ..constants import CONFIG_DIR_NAME
 from ..event_bus import EventType, get_event_bus
 from ..memory import CONFIG_DIR
 from ..memory_dream import MemoryDreamer
@@ -807,7 +808,7 @@ class TelegramBot:
         await self._send_notification_inner(text)
 
     def tail_logs(self, lines: int) -> str:
-        log_path = Path.home() / ".config" / "amcp" / "logs" / "amcp.log"
+        log_path = Path.home() / ".config" / CONFIG_DIR_NAME / "logs" / "ankaloop.log"
         if not log_path.exists():
             return "No log file found."
         content = log_path.read_text(encoding="utf-8").splitlines()
