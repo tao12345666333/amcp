@@ -1,396 +1,206 @@
 <p align="center">
-  <img src="assets/brand/ankaloop-wordmark.svg" alt="AnkaLoop — persistent coding-agent runtime" width="700">
+  <img src="assets/brand/ankaloop-wordmark.svg" alt="AnkaLoop" width="700">
 </p>
 
-<h1 align="center">AnkaLoop</h1>
+<p align="center">
+  <strong>A batteries-included coding-agent runtime that keeps working across terminals,
+  servers, and Telegram.</strong>
+</p>
 
 <p align="center">
-  <a href="https://pypi.org/project/ankaloop/"><img src="https://badge.fury.io/py/ankaloop.svg" alt="PyPI version"></a>
-AnkaLoop is built for developers who want a useful agent immediately, not a framework they must
+  <a href="https://pypi.org/project/ankaloop/"><img src="https://img.shields.io/pypi/v/ankaloop?include_prereleases&label=PyPI&color=1488ff" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/ankaloop/"><img src="https://img.shields.io/pypi/pyversions/ankaloop?color=0957f5" alt="Supported Python versions"></a>
+  <a href="https://github.com/tao12345666333/ankaloop/actions/workflows/ci.yml"><img src="https://github.com/tao12345666333/ankaloop/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/license-Apache--2.0-22dff3" alt="Apache-2.0 license"></a>
+  <a href="https://github.com/tao12345666333/ankaloop/stargazers"><img src="https://img.shields.io/github/stars/tao12345666333/ankaloop?style=flat&color=1488ff" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#why-ankaloop">Why AnkaLoop</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="docs/QUICK_START.md">Docs</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+---
+
+AnkaLoop is for developers who want a useful coding agent now—not another framework to assemble.
+It combines a capable tool loop, persistent context, multi-agent delegation, skills, memory, MCP,
+hooks, and automation in one Python package that you can run locally or self-host.
+
+```bash
+python -m pip install --pre ankaloop
+anka init
+anka
+```
+
+> **Release status:** AnkaLoop is currently available as a release candidate. APIs and
+> configuration may still change before the next stable release.
+
 ## Why AnkaLoop
-  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
-python -m pip install ankaloop
 
-<p align="center"><strong>A batteries-included, self-hostable, persistent coding-agent runtime
-anka init
-anka
-AnkaLoop is built for developers who want a useful agent immediately, not a framework they must
-assemble first. It ships with file editing, shell execution, web access, memory, skills,
-anka --once "summarize this repository and suggest the next test to run"
-automation as first-class capabilities.
+- **Useful on the first run** — read, search, edit, patch, and execute code with built-in tools.
+- **Persistent by design** — sessions, searchable history, project rules, and long-term memory
+  survive beyond a single prompt.
+- **One runtime, multiple surfaces** — use the same agent from the CLI, an HTTP/WebSocket server,
+  or Telegram.
+- **Built for real tasks** — context compaction, progress events, cancellation, bounded tool use,
+  and provider retries make long-running work observable and controllable.
+- **Multi-agent without plumbing** — delegate focused work to built-in explorer, planner, and coder
+  agents.
+- **Open and extensible** — add MCP servers, reusable skills, slash commands, hooks, and custom
+  agent specifications without replacing the built-in experience.
+- **Provider-flexible** — connect to OpenAI, Anthropic, GMI, or any OpenAI-compatible endpoint.
 
-The package is named `ankaloop`. It installs the recommended `anka` command and the
-`ankaloop` command. For a no-install run, use `uvx ankaloop`.
+## Quick start
 
-uvx ankaloop init
+AnkaLoop requires **Python 3.11+** and credentials for a supported model provider.
 
-- **Ready on the first run**: read/search/edit files, apply patches, run commands, browse the web,
-uvx ankaloop
-pip install ankaloop
-  cron/systemd/Kubernetes jobs. Each surface supports persistent sessions; session discovery and
-  management are not yet identical across every surface.
-pip install ankaloop[telegram]
-  compaction, progress events, and cancellation support make long-running work easier to trust.
-- **Extensible when you need it**: add MCP servers, skills, slash commands, hooks, and custom agent
-  specs without giving up the built-in experience.
-
-## 30-second start
-
-Requires **Python 3.11+** and credentials for a supported model provider (or an
-OpenAI-compatible endpoint). `init` writes the provider configuration to
-`~/.config/amcp/config.toml`.
+### Install from PyPI
 
 ```bash
-# Install the PyPI package
-python -m pip install ankaloop
+# Include pre-releases while AnkaLoop is in RC
+python -m pip install --pre ankaloop
 
-# Configure your model provider, then start in the current project
+# Configure a provider, then start in the current project
 anka init
 anka
 
-# Or run a single task
+# Or run one task and exit
 anka --once "summarize this repository and suggest the next test to run"
 ```
 
-The package is named `ankaloop`. It installs the recommended `anka` command and the
-`ankaloop` command. For a no-install run, use `uvx ankaloop`.
+The package installs both `anka` (recommended) and `ankaloop` commands.
 
-## What you get
-
-| Area | Built-in capabilities |
-|------|-----------------------|
-| **Coding loop** | `read_file`, `grep`, `apply_patch`, `write_file`, `bash`, `think`, `todo`, `task` |
-| **Research** | Web search/fetch tools plus MCP server integration over stdio or HTTP/SSE |
-| **Agent orchestration** | Primary/subagent architecture with `coder`, `explorer`, `planner`, and `focused_coder` types |
-| **Context & memory** | Persistent sessions, AGENTS.md rules, smart compaction, progressive loading, searchable memory and session history |
-| **Interfaces** | CLI, FastAPI HTTP/WebSocket server, Telegram bot |
-| **Customization** | TOML config, YAML agent specs, slash commands, reusable skills, hooks, event bus |
-| **Model support** | OpenAI Chat Completions, OpenAI Responses API, Anthropic Claude, and OpenAI-compatible endpoints |
-
-## Installation
-
-### Quick Run with uvx (no install needed)
+### Run without installing
 
 ```bash
-# Initialize config first (model and runtime settings)
-uvx ankaloop init
-
-# Run the agent
-uvx ankaloop
+uvx --prerelease allow ankaloop init
+uvx --prerelease allow ankaloop
 ```
 
-### From PyPI
+### Install optional Telegram support
 
 ```bash
-pip install ankaloop
-
-# With Telegram bot support
-pip install ankaloop[telegram]
+python -m pip install --pre "ankaloop[telegram]"
+anka telegram setup
 ```
 
-### From Source (development)
+## What is included
 
-```bash
-git clone https://github.com/tao12345666333/ankaloop.git
-cd anka
+| Area | Capabilities |
+| --- | --- |
+| **Coding loop** | File reading and search, patching and writing, shell execution, planning, todos, and subagent tasks |
+| **Context** | Persistent sessions, `AGENTS.md` rules, progressive loading, and smart compaction |
+| **Memory** | Durable facts, episodic history, persona files, and full-text session search |
+| **Agents** | Built-in `coder`, `explorer`, `planner`, and `focused_coder` roles |
+| **Interfaces** | Rich terminal UI, FastAPI HTTP/WebSocket server, and Telegram bot |
+| **Research** | Built-in web search/fetch plus MCP integration over stdio and HTTP/SSE |
+| **Extensions** | Skills, slash commands, hooks, custom YAML agent specs, and an event bus |
+| **Automation** | Cron-compatible jobs for systemd, Kubernetes, and external schedulers |
 
-# Using uv (recommended); includes dependencies needed by the full test suite
-uv sync --extra dev --extra telegram
-source .venv/bin/activate
+## How it fits together
 
-# Or with pip in an activated virtual environment
-python -m venv .venv && source .venv/bin/activate
-python -m pip install -e ".[dev,telegram]"
+```text
+ CLI ───────────────┐
+ HTTP / WebSocket ──┼──▶ Agent runtime ──▶ Tools / MCP ──▶ Your project
+ Telegram ──────────┘         │
+                              ├── Sessions & memory
+                              ├── Skills & project rules
+                              └── Subagents
 ```
+
+All interfaces use the same core runtime. Conversation state is persistent, while project rules,
+skills, and memory provide context across requests.
 
 ## Usage
 
 ```bash
-# Initialize config
-anka init              # interactive wizard
-anka init --quick      # default config without prompts
+# Chat and one-shot tasks
+anka
+anka --once "create a hello.py file"
+anka -t explorer --once "find all TODO comments"
+anka --agent path/to/agent.yaml
 
-# Agent chat (default command)
-anka                                    # interactive mode with conversation history
-anka --once "create a hello.py file"    # single message
-anka -t explorer --once "find all TODOs"  # use built-in agent type
-anka --agent path/to/agent.yaml         # use custom agent spec
-anka --session my-session               # use specific session ID
-anka --clear                            # clear conversation history
-anka --list                             # list available agent specifications
-anka --list-types                       # list built-in agent types
-anka --list-sessions                    # list saved sessions
+# Sessions and agents
+anka --session my-session
+anka --list-sessions
+anka --list-types
+anka --clear
 
-# MCP server management
+# MCP
 anka mcp tools --server custom
 anka mcp call --server custom --tool example_tool --args '{"query":"rust async"}'
 
-# HTTP/WebSocket server
-anka serve                              # start on localhost:8080
-anka serve --port 8080 --host 0.0.0.0   # requires [server.auth] configuration
-anka serve --telegram                   # start Telegram bot alongside
-anka attach http://localhost:8080       # connect to a running server
-anka attach https://server.example --api-key "$ANKA_SERVER_API_KEY"
+# Server and remote client
+anka serve
+anka attach http://localhost:8080
 
-# Telegram bot
-anka telegram start                     # start polling
-anka telegram status                    # show config status
-anka telegram setup                     # interactive setup
-
+# Telegram
+anka telegram setup
+anka telegram start
 ```
 
-## Built-in Tools
+Run `anka --help` or `anka <command> --help` for the complete command reference.
 
-| Tool | Description |
-|------|-------------|
-| **read_file** | Read text files with slice mode (line ranges) or indentation mode (anchor-based context) |
-| **grep** | Search for patterns in files using ripgrep |
-| **bash** | Execute shell commands from the request working directory; large output is truncated |
-| **think** | Internal reasoning and planning |
-| **todo** | Manage a todo list to track tasks during complex operations |
-| **apply_patch** | Apply diff-based patches to files (see [docs/apply-patch.md](docs/apply-patch.md)) |
-| **write_file** | Write content to files (for creating new small files) |
-| **task** | Spawn sub-agents for parallel task execution |
-| **web_search** | Search the web for information without configuring a search API key |
-| **web_fetch** | Fetch and extract content from web pages without configuring a search API key |
-| **memory** | Store and retrieve persistent cross-session memories |
-| **session_search** | Search persisted conversation history across sessions |
+## Configuration
 
-## Multi-Agent System
+Run `anka init` for the interactive provider wizard. AnkaLoop currently keeps configuration in
+`~/.config/amcp/config.toml`; this legacy path is retained for compatibility during the rebrand.
 
-AnkaLoop supports a Primary/Subagent architecture with built-in agent types:
-
-| Agent Type | Mode | Description |
-|------------|------|-------------|
-| **coder** | Primary | Full-capability coding agent with write access |
-| **explorer** | Subagent | Read-only fast codebase exploration |
-| **planner** | Subagent | Read-only planning and analysis |
-| **focused_coder** | Subagent | Focused implementation of specific changes |
-
-Primary agents can delegate to subagents for complex tasks. Use `-t <type>` to select an agent type.
-
-## Skills System
-
-Skills are reusable knowledge or behavior definitions (markdown with YAML frontmatter) that inject specialized capabilities into the agent's system prompt. See [docs/skills-and-commands.md](docs/skills-and-commands.md) for full documentation.
-
-**Built-in skills:**
-- `skill-creator` - Generate new skills interactively
-- `session-cleanup` - Clean up old session files
-- `heartbeat` - Periodic health check and status reporting
-- `networked-research` - Multi-source web research with synthesis
-- `telegram-sender` - Send messages via Telegram
-
-**Discovery locations (increasing precedence):**
-1. Built-in skills (bundled with AnkaLoop)
-2. User skills: `~/.config/amcp/skills/<name>/SKILL.md`
-3. Home agent skills: `~/.agents/skills/<name>/SKILL.md`
-4. Project skills: `.amcp/skills/<name>/SKILL.md`
-
-Skills support scheduled (cron) and event-based auto-triggers for autonomous execution. Hot reload is enabled when running the HTTP server.
-
-## Slash Commands
-
-Custom command shortcuts defined as TOML files, invoked with `/command` syntax. Features include:
-- `{{args}}` placeholder for command arguments
-- `!{shell command}` for shell output injection (auto-escaped args)
-- `@{file path}` for file content injection
-- Namespaced commands via subdirectories (e.g., `git/commit.toml` -> `/git:commit`)
-
-**Discovery locations:**
-1. User commands: `~/.config/amcp/commands/*.toml`
-2. Project commands: `.amcp/commands/*.toml` (takes precedence)
-
-See [docs/skills-and-commands.md](docs/skills-and-commands.md) for details and [examples/commands/](examples/commands/) for samples.
-
-## HTTP/WebSocket Server
-
-AnkaLoop can run as an HTTP/WebSocket server for remote access:
-
-```bash
-anka serve                    # start on localhost:8080
-anka serve --port 8080        # custom port
-anka serve -w /path/to/project  # set working directory
-anka attach http://localhost:8080  # connect from another terminal
-```
-
-**API endpoints** (visit `/docs` for interactive Swagger UI):
-- `GET /api/v1/health` - health check
-- `POST /api/v1/sessions` - create sessions
-- `POST /api/v1/sessions/{id}/prompt` - submit a prompt and return request status
-- `POST /api/v1/sessions/{id}/prompt/stream` - submit a prompt and stream JSON-line events
-- `GET /api/v1/sessions/{id}/turns/{turn_id}` - query queued, running, or retained terminal turn state
-- `POST /api/v1/sessions/{id}/cancel` - cancel current session work
-- `GET /api/v1/sessions/{id}/timeline` - read durable metadata-only execution events
-- `DELETE /api/v1/sessions/{id}` - delete a session
-- `GET /api/v1/tools` - list available tools
-- `GET /api/v1/agents` - list agent types
-- `WS /ws` - WebSocket for live events
-
-### Server authentication
-
-API authentication uses one configured API key, sent as `Authorization: Bearer <api-key>`.
-Unauthenticated operation is permitted only when the server binds to a loopback address. A
-non-loopback bind (for example `0.0.0.0`) requires authentication; configure an API key before
-exposing the service. This is transport authentication, so use TLS or a trusted reverse proxy for
-traffic that leaves the machine.
-
-Authenticated CLI clients can pass `--api-key` or set `ANKA_SERVER_API_KEY`. HTTP clients send
-`Authorization: Bearer <api-key>`; WebSocket clients may use the same header. The health endpoint
-remains public for probes.
-
-### Docker
-
-The default Docker command starts the server on loopback — safe without authentication:
-
-```bash
-docker build -t ankaloop .
-docker run -it ankaloop serve          # loopback:8080, no auth needed
-```
-
-To expose the server on the host network, provide an API key via environment variables:
-
-```bash
-docker run -p 8080:8080 \
-    -e ANKA_HOST=0.0.0.0 -e ANKA_API_KEY=your-secret \
-    ankaloop serve
-```
-
-Alternatively, mount a `config.toml` with `[server.auth]` enabled:
-
-```bash
-docker run -p 8080:8080 -v ./config.toml:/root/.config/amcp/config.toml \
-    ankaloop serve --host 0.0.0.0
-```
-
-The health check (`GET /api/v1/health`) always remains public for container orchestration probes.
-For interactive CLI usage inside a container without starting the server:
-
-```bash
-docker run -it ankaloop --once "explain this codebase"
-```
-
-### Durable execution timeline
-
-AnkaLoop stores a bounded per-session timeline beside each session snapshot. It records turn, tool,
-subagent task, context-compaction, provider retry/error, and token-usage metadata so interrupted
-sessions remain inspectable. Prompt content, tool arguments, tool output, and raw
-provider exception text are deliberately excluded. The newest 2,000 events are retained by
-default and can be queried with `GET /api/v1/sessions/{id}/timeline`.
-
-## Telegram Integration
-
-AnkaLoop provides a Telegram Bot interface for remote interaction with agents. Install with `pip install ankaloop[telegram]`.
-
-**Features:**
-- DM and group chat support with configurable policies (allowlist, mention, open, disabled)
-- Pairing via one-time codes
-- Topic/thread support in group chats
-- Notification system (CI failures, PR reviews, task completions, error alerts)
-- Webhook and polling modes
-- Rate limiting, session timeout, typing indicators, and bounded per-session queues
-- Shared slash commands including `/new`, `/session list`, `/session switch <id>`, `/clear`, and `/cancel`
-- `/new` creates a fresh session and abandons the previous Telegram session's active work and queued messages
-
-Configure via `anka telegram setup` or in `config.toml` under `[telegram]`.
-
-## Memory System
-
-AnkaLoop maintains persistent cross-session context using complementary memory layers:
-- **MEMORY.md**: Curated long-term facts, preferences, and knowledge
-- **HISTORY.md**: Append-only activity and decision history
-- **memory.db**: Durable facts and episodic events with SQLite FTS5 search
-- **SOUL.md / IDENTITY.md**: Optional global persona and identity guidance
-
-Memory is stored at:
-- User-level: `~/.config/amcp/memory/`
-- Project-level: `.amcp/memory/` (project-specific knowledge)
-- Global persona: `~/.config/amcp/SOUL.md` and `~/.config/amcp/IDENTITY.md`
-
-The `memory` tool manages durable knowledge, while `session_search` searches persisted
-conversation history. User and project memory are merged for context; persona files remain
-global so the agent keeps one identity across interfaces and projects.
-
-## Hooks System
-
-AnkaLoop provides a flexible hooks system to extend and customize agent behavior. Hooks can:
-- Validate and modify tool inputs before execution
-- Process tool outputs after execution
-- Block dangerous operations
-- Log and audit agent activities
-
-Create `.amcp/hooks.toml` in your project:
-
-```toml
-[hooks.PreToolUse]
-[[hooks.PreToolUse.handlers]]
-matcher = "write_file|apply_patch"
-type = "python"
-script = "./scripts/validate-writes.py"
-timeout = 30
-
-[[hooks.PostToolUse.handlers]]
-matcher = "*"
-type = "command"
-command = "echo 'Tool executed' >> /tmp/tool_log.txt"
-```
-
-See [docs/hooks.md](docs/hooks.md) for full documentation.
-
-## Config
-
-The CLI loads configuration from `~/.config/amcp/config.toml`. Generate a starter config:
-
-```bash
-anka init
-```
-
-### Chat Configuration
+### OpenAI-compatible endpoint
 
 ```toml
 [chat]
-active_provider = "primary"    # optional: selected [chat.providers.<name>] profile
-request_timeout_seconds = 120
-max_retries = 2                 # transient connection, timeout, 429, and 5xx failures only
-retry_base_delay_seconds = 0.5  # exponential backoff with jitter
-mcp_tools_enabled = true
-write_tool_enabled = true
-edit_tool_enabled = true
-tool_loop_limit = 300
-bash_tool_limit = 100
-default_max_lines = 400
-read_roots = ["."]                # optional: restrict read_file to these roots
-default_agent = "coder"        # optional: coder, explorer, planner, focused_coder
-max_queue_size = 100
+active_provider = "primary"
 
 [chat.providers.primary]
 api_type = "openai"
-base_url = "https://example.com/v1"
+base_url = "https://api.example.com/v1"
 model = "provider/model-name"
-
-[chat.providers.backup]
-api_type = "anthropic"
-model = "claude-model-name"
 ```
 
-Telegram can switch configured providers without calling the LLM:
+Keep credentials out of version control and provide the key through the environment:
 
-- `/models` lists configured provider profiles.
-- `/model use backup` switches `active_provider` and persists it to `config.toml` (admin only).
+```bash
+export OPENAI_API_KEY="your-api-key"
+anka --once "explain the architecture of this repository"
+```
 
-**Anthropic Claude:**
+You can define multiple `[chat.providers.<name>]` profiles. Telegram administrators can list them
+with `/models` and switch the active profile with `/model use <name>`.
+
+<details>
+<summary><strong>Runtime and tool settings</strong></summary>
+
 ```toml
 [chat]
-api_type = "anthropic"
-model = "claude-model-name"
+request_timeout_seconds = 120
+max_retries = 2
+retry_base_delay_seconds = 0.5
+tool_loop_limit = 300
+bash_tool_limit = 100
+default_max_lines = 400
+mcp_tools_enabled = true
+write_tool_enabled = true
+edit_tool_enabled = true
+default_agent = "coder"
+
+[context]
+progressive_tools = true
+progressive_skills = true
+response_ratio = 0.30
 ```
 
-Anthropic support is included in the base `ankaloop` package; no separate extra is required.
+</details>
 
-### MCP Servers
+<details>
+<summary><strong>MCP servers</strong></summary>
 
 ```toml
 # HTTP/SSE transport
-[servers.custom]
+[servers.remote]
 url = "https://example.com/mcp"
 
 # stdio transport
@@ -399,110 +209,131 @@ command = "npx"
 args = ["-y", "@some/mcp-server"]
 ```
 
-Configured MCP servers are exposed as `mcp__<server>__<tool>` tools. Server and
-tool names are sanitized into `[A-Za-z][A-Za-z0-9_-]*`, because some providers
-(for example Kimi/Moonshot) reject any other function name with HTTP 400. The
-built-in `web_search` and `web_fetch` tools are available separately and work
-out of the box without adding a search MCP server.
+Configured tools are exposed as `mcp__<server>__<tool>`. Tool names are normalized for providers
+with strict function-name requirements.
 
-### Context Optimization
+</details>
 
-```toml
-[context]
-progressive_tools = true       # dynamically load tools based on relevance
-progressive_skills = true      # dynamically load skills based on relevance
-response_ratio = 0.30          # reserve 30% of context for response
+See the [quick-start guide](docs/QUICK_START.md), [skills and commands guide](docs/skills-and-commands.md),
+and [hooks guide](docs/hooks.md) for more configuration examples.
+
+## Multi-agent runtime
+
+| Agent | Mode | Purpose |
+| --- | --- | --- |
+| `coder` | Primary | General coding agent with write access and delegation |
+| `explorer` | Subagent | Fast, read-only codebase exploration |
+| `planner` | Subagent | Read-only analysis and implementation planning |
+| `focused_coder` | Subagent | Bounded implementation of a specific change |
+
+Select an agent with `anka -t <name>`. Primary agents can use the `task` tool to delegate
+independent work to subagents.
+
+## Skills, commands, and hooks
+
+- **Skills** inject reusable instructions and resources only when relevant.
+- **Slash commands** turn repeatable prompts into `/command` shortcuts with arguments, shell output,
+  and file references.
+- **Hooks** validate, modify, block, or audit tool calls before and after execution.
+
+Project extensions currently live under `.amcp/` for compatibility:
+
+```text
+.amcp/
+├── commands/       # TOML slash commands
+├── hooks.toml      # pre/post tool hooks
+├── memory/         # project knowledge
+└── skills/         # reusable SKILL.md packages
 ```
 
-### Server Configuration
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8080
-
-[server.auth]
-enabled = false              # valid without a key only for loopback binds
-# api_key = "replace-with-a-secret"
-```
-
-For a non-loopback host, set `enabled = true` and `api_key`, then send the key as a Bearer token.
-
-### Provider and deployment options
-
-[Deploy AnkaLoop on GMI Cloud](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/ankaloop).
-New GMI Cloud users can optionally sign up with the maintainer's
-[referral link](https://console.gmicloud.ai/ref/KP3NWZV4) (a referral, not a requirement).
-
-### Telegram Configuration
-
-```toml
-[telegram]
-enabled = false
-allowed_users = [123456789]
-admin_users = [123456789]
-dm_policy = "allowlist"        # "allowlist", "pairing", "open", "disabled"
-group_policy = "mention"       # "mention", "open", "allowlist", "disabled"
-max_queue_size = 20
-typing_indicator = true
-
-[telegram.pairing]
-enabled = true
-code_ttl_seconds = 1800
-```
-
-The Telegram runtime also supports group-specific and topic-specific policy overrides under
-`[telegram.groups."<chat_id>"]` and `[telegram.groups."<chat_id>".topics."<topic_id>"]`.
-
-## Development
-
-### Setup
+## Self-hosted server
 
 ```bash
+anka serve                         # loopback only, http://localhost:8080
+anka serve --host 0.0.0.0          # requires authentication
+anka attach https://agent.example  # connect from another terminal
+```
+
+The server exposes session, prompt, streaming, cancellation, timeline, tool, and agent APIs. Visit
+`/docs` on a running server for its OpenAPI interface.
+
+Non-loopback binds require a server API key. Configure `[server.auth]` or pass `--api-key`; deploy
+behind TLS or a trusted reverse proxy.
+
+<details>
+<summary><strong>Docker</strong></summary>
+
+```bash
+docker build -t ankaloop .
+
+# Safe loopback-only default
+docker run -it ankaloop serve
+
+# Expose with authentication
+docker run -p 8080:8080 \
+  -e ANKA_HOST=0.0.0.0 \
+  -e ANKA_API_KEY=replace-with-a-secret \
+  ankaloop serve
+```
+
+</details>
+
+For protocol details, see the [client/server architecture](docs/architecture/client-server.md) and
+[API compatibility notes](docs/api/protocol-compatibility.md).
+
+## Telegram
+
+The optional Telegram integration supports direct messages, groups and topics, allowlists,
+pairing, streaming responses, bounded queues, cancellation, and session switching.
+
+```bash
+python -m pip install --pre "ankaloop[telegram]"
+anka telegram setup
+anka telegram start
+```
+
+Shared commands include `/new`, `/clear`, `/cancel`, `/session list`, and
+`/session switch <id>`.
+
+## Install from source
+
+```bash
+git clone https://github.com/tao12345666333/ankaloop.git
+cd ankaloop
+
 uv sync --extra dev --extra telegram
 source .venv/bin/activate
-uv tool install pre-commit
-pre-commit install
-
-# Or use pip in an activated virtual environment
-python -m pip install -e ".[dev,telegram]"
-python -m pip install pre-commit
-pre-commit install
 ```
 
-### Running Tests
+Run the local quality suite:
 
 ```bash
-make test          # run all tests
-make test-cov      # run with coverage
-python -m pytest -q -m "not llm"  # CI-equivalent suite without live provider calls
-python -m pytest tests/test_tools.py -v  # specific test
+ruff format --check src tests
+ruff check src tests
+mypy src/ankaloop --ignore-missing-imports
+python -m pytest -q -m "not llm"
 ```
 
-### Code Quality
+Tests marked `llm` make live provider calls and require credentials. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-```bash
-make lint          # ruff check
-make format        # ruff format
-make type-check    # mypy
-```
+## Deployment
 
-CI runs Ruff and the non-`llm` test suite on Python 3.11, 3.12, and 3.13. Tests marked `llm`
-call live model providers and require credentials.
+- Run the FastAPI server directly or package it with the included Dockerfile.
+- Use the provided examples for [Kubernetes](deploy_k8s/), [VM deployments](deploy-vm/), and
+  [GMI Cloud](deploy-gmi/).
+- [Deploy AnkaLoop on GMI Cloud](https://console.gmicloud.ai/user-console/ie/agentbox/browse-agents/ankaloop)
+  or use the maintainer's optional [referral link](https://console.gmicloud.ai/ref/KP3NWZV4).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
+## Project status
 
-## Notes
+AnkaLoop is under active development and currently published as a release candidate. Feedback,
+bug reports, documentation improvements, and focused pull requests are welcome.
 
-- `rg` (ripgrep) must be installed and on PATH for the grep tool.
-- MCP servers must be installed separately and runnable (stdio transport).
-- Foreground tool-loop model calls classify provider failures and retry transient connection,
-  timeout, rate-limit, and server errors with bounded exponential backoff. Authentication,
-  invalid-request, protocol, and streaming failures after output has started are not retried.
-  Compaction and memory-maintenance model calls currently retain their existing provider behavior.
-- Tool-call guardrails include per-request `bash` limits, output truncation for `bash`, and
-  per-conversation plus per-session `read_file` limits.
+- [Open an issue](https://github.com/tao12345666333/ankaloop/issues)
+- [Read the contributing guide](CONTRIBUTING.md)
+- If AnkaLoop is useful to you, consider starring the repository so more developers can find it.
 
 ## License
 
-Apache-2.0
+Licensed under the [Apache License 2.0](LICENSE).
