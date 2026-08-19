@@ -98,7 +98,7 @@ class SkillManager:
     - Built-in skills: Bundled with AnkaLoop
     - User-level skills: ~/.config/ankaloop/skills/
     - Home agent skills: ~/.agents/skills/
-    - Project-level skills: .amcp/skills/
+    - Project-level skills: .ankaloop/skills/
     """
 
     _skills: list[SkillMetadata] = field(default_factory=list)
