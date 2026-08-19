@@ -1,11 +1,41 @@
 # Changelog
 
-All notable changes to AMCP are documented in this file.
+All notable changes to AnkaLoop are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+
+- **Skill directory paths in docs**: stale pre-rename `.amcp` paths in the skill-creator and session-cleanup SKILL.md examples and a `SkillManager` docstring aligned with the current `.ankaloop` layout (`#41`).
+
+---
+
+## [0.14.0-rc.1] — 2026-08-17
+
+First release under the **AnkaLoop** name (formerly AMCP).
+
+### Added
+
+- **AMCP → AnkaLoop rebrand**: PyPI package renamed `amcp-agent` → `ankaloop`; CLI entry points are now `anka` (recommended) and `ankaloop` (`amcp`/`amcp-agent` removed); module path migrated `src/amcp` → `src/ankaloop`; public classes renamed `AMCPConfig` → `AnkaloopConfig`, `AMCPClient` → `AnkaloopClient`, `AMCPClientError` → `AnkaloopClientError`; environment variables renamed `AMCP_*` → `ANKA_*` (no legacy fallback); hook exports expose `ANKA_*` env vars and the `$ANKA_PROJECT_DIR` placeholder.
+- **Config and project directories renamed** (`#39`): user config dir `~/.config/amcp` → `~/.config/ankaloop`, project dir `.amcp/` → `.ankaloop/`, Telegram log `amcp.log` → `ankaloop.log`. New `src/ankaloop/constants.py` is the single source of truth (`CONFIG_DIR_NAME`, `PROJECT_DIR_NAME`); `ANKA_CONFIG_DIR_NAME=amcp` keeps legacy deployments on the old path for gradual migration.
+- **AnkaLoop brand assets**: logo, mark, wordmark, and favicon SVG/PNG assets under `assets/brand/`.
+- **VM and Kubernetes deployment recipes**: `deploy-vm/` (systemd service, supervisor and restart scripts, install script, env templates) and `deploy-k8s/` (kustomize manifests) for running AnkaLoop on a VM or in-cluster.
+- **Release workflow prerelease handling**: rc/beta/alpha tags are now marked as GitHub prereleases.
+
+### Fixed
+
+- **Memory tags passed as a bare string** (`#38`): `"tags": "research"` no longer serializes character-by-character into `HISTORY.md` headers (`[r, e, s, e, a, r, c, h]`) or the SQLite events table; tags are normalized at every `append_history` entry point.
+- **Prompt templates rebranded** (`#38`): `coder.md`, `coder_anthropic.md`, `explorer.md`, and `planner.md` open with the AnkaLoop identity instead of AMCP; the rendered prompt no longer depends on the git log block for the name.
+- **Telegram `/skills` output** (`#40`): the listing now shows only skill names and status (full details via `/skills show <name>`), and oversized plain-text messages are split at newline boundaries using UTF-16 length so long command output no longer fails with `BadRequest: Message is too long`.
+- **AgentBox deploy files rebranded**: `deploy-gmi/gmi-entrypoint.sh` reads `ANKA_*` env vars (previously failed on first boot against `ANKA_*`-only code); Dockerfile and registration manifest aligned.
+
+### Changed
+
+- **README refreshed for the AnkaLoop launch**: rewritten quick start, configuration, and deployment docs.
+- **Deploy directory naming unified**: `deploy_k8s` → `deploy-k8s`, matching `deploy-vm`/`deploy-gmi`; local secret/env files untracked with example templates kept.
 
 ---
 
@@ -200,16 +230,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release: core agent engine, built-in tools (`read_file`, `grep`, `bash`, `write_file`), TOML configuration, CLI interface, and Dockerfile.
 
-[Unreleased]: https://github.com/tao12345666333/amcp/compare/v0.13.0...HEAD
-[0.13.0]: https://github.com/tao12345666333/amcp/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/tao12345666333/amcp/compare/v0.11.1...v0.12.0
-[0.11.1]: https://github.com/tao12345666333/amcp/compare/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/tao12345666333/amcp/compare/v0.10.1...v0.11.0
-[0.10.1]: https://github.com/tao12345666333/amcp/compare/v0.10.0...v0.10.1
-[0.10.0]: https://github.com/tao12345666333/amcp/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/tao12345666333/amcp/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/tao12345666333/amcp/compare/v0.7.3...v0.8.0
-[0.7.0]: https://github.com/tao12345666333/amcp/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/tao12345666333/amcp/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/tao12345666333/amcp/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/tao12345666333/amcp/releases/tag/v0.4.0
+[Unreleased]: https://github.com/tao12345666333/ankaloop/compare/v0.14.0-rc.1...HEAD
+[0.14.0-rc.1]: https://github.com/tao12345666333/ankaloop/compare/v0.13.0...v0.14.0-rc.1
+[0.13.0]: https://github.com/tao12345666333/ankaloop/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/tao12345666333/ankaloop/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/tao12345666333/ankaloop/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/tao12345666333/ankaloop/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/tao12345666333/ankaloop/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/tao12345666333/ankaloop/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/tao12345666333/ankaloop/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/tao12345666333/ankaloop/compare/v0.7.3...v0.8.0
+[0.7.0]: https://github.com/tao12345666333/ankaloop/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/tao12345666333/ankaloop/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/tao12345666333/ankaloop/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/tao12345666333/ankaloop/releases/tag/v0.4.0
