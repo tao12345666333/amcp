@@ -14,15 +14,15 @@ Backup old AnkaLoop sessions by renaming with execution date, then clean and com
 
 ## What to Clean
 
-1. **Session files backup**: Rename session JSON files in `~/.config/amcp/sessions/` that haven't been modified in 30+ days to `YYYY-MM-DD_<original_name>.json.bak`
+1. **Session files backup**: Rename session JSON files in `~/.config/ankaloop/sessions/` that haven't been modified in 30+ days to `YYYY-MM-DD_<original_name>.json.bak`
 2. **Active sessions keep**: Keep the most recent 10 session files (by modification time) as active
-3. **Memory compaction**: Compact `~/.config/amcp/memory/HISTORY.md` to keep only the last 50 entries
+3. **Memory compaction**: Compact `~/.config/ankaloop/memory/HISTORY.md` to keep only the last 50 entries
 
 ## Procedure
 
 ### Step 1: Backup Old Sessions
 
-1. List all `.json` files in `~/.config/amcp/sessions/` directory
+1. List all `.json` files in `~/.config/ankaloop/sessions/` directory
 2. Get modification time of each file
 3. Sort by modification time (oldest first)
 4. Keep the 10 most recent files as active
@@ -37,7 +37,7 @@ Backup old AnkaLoop sessions by renaming with execution date, then clean and com
 
 ### Step 3: Compact Memory
 
-1. Read `~/.config/amcp/memory/HISTORY.md`
+1. Read `~/.config/ankaloop/memory/HISTORY.md`
 2. Count the number of entries (each `-` bullet is an entry)
 3. If more than 50 entries, keep only the last 50 entries
 4. Add a summary entry at the top: "Compacted from X entries to 50 entries on YYYY-MM-DD"

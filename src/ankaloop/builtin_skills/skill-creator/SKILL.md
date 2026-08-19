@@ -18,9 +18,9 @@ equipped with procedural knowledge that no model can fully possess.
 
 When creating a skill, place it in one of these roots:
 
-1. Project-local: `$workspace/.amcp/skills/<skill-name>`
+1. Project-local: `$workspace/.ankaloop/skills/<skill-name>`
 2. Home agent-level: `~/.agents/skills/<skill-name>` (shared across agent tools)
-3. User-level: `~/.config/amcp/skills/<skill-name>` (shared across AnkaLoop workspaces)
+3. User-level: `~/.config/ankaloop/skills/<skill-name>` (shared across AnkaLoop workspaces)
 
 Prefer project-local by default. Use home agent-level or user-level only when the user explicitly wants the skill available across multiple workspaces.
 
@@ -169,16 +169,16 @@ Examples:
 
 ```bash
 # Project-local skill
-python <path>/scripts/init_skill.py my-skill --path .amcp/skills
+python <path>/scripts/init_skill.py my-skill --path .ankaloop/skills
 
 # User-level skill
-python <path>/scripts/init_skill.py my-skill --path ~/.config/amcp/skills
+python <path>/scripts/init_skill.py my-skill --path ~/.config/ankaloop/skills
 
 # Home agent-level skill
 python <path>/scripts/init_skill.py my-skill --path ~/.agents/skills
 
 # With specific resources
-python <path>/scripts/init_skill.py my-skill --path .amcp/skills --resources scripts,references
+python <path>/scripts/init_skill.py my-skill --path .ankaloop/skills --resources scripts,references
 ```
 
 The script creates the skill directory with a SKILL.md template and optional resource directories.
