@@ -83,21 +83,50 @@ class MemoryDreamer:
         if len(new_events) < self.min_new_events:
             return DreamRunResult(ran=False, updated=False, reason="not_enough_new_events")
 
-        last_run_at = float(state.get("last_run_at", 0))
-        if time.time() - last_run_at < self.min_interval_seconds:
+        last_attempt_at = max(
+            float(state.get("last_run_at", 0)),
+            float(state.get("last_attempt_at", 0)),
+        )
+        if time.time() - last_attempt_at < self.min_interval_seconds:
             return DreamRunResult(ran=False, updated=False, reason="too_soon")
 
         if not self._acquire_lock():
             return DreamRunResult(ran=False, updated=False, reason="locked")
 
         try:
+            pending_memory = state.get("pending_memory")
+            if isinstance(pending_memory, str) and pending_memory:
+                pending_event_id = int(state.get("pending_event_id", last_event_id))
+                manager = get_memory_manager(self.project_root)
+                if not manager.write_long_term(pending_memory, scope="project"):
+                    state["last_attempt_at"] = time.time()
+                    self._save_state(state)
+                    return DreamRunResult(ran=True, updated=False, reason="write_failed")
+                self._save_state(
+                    {
+                        "last_run_at": time.time(),
+                        "last_event_id": pending_event_id,
+                    }
+                )
+                return DreamRunResult(ran=True, updated=True, reason="updated")
+
             updated_memory = self._consolidate(events)
-            self._save_state({"last_run_at": time.time(), "last_event_id": latest_event_id})
             if not updated_memory:
+                self._save_state({"last_run_at": time.time(), "last_event_id": latest_event_id})
                 return DreamRunResult(ran=True, updated=False, reason="no_reply")
 
             manager = get_memory_manager(self.project_root)
-            manager.write_long_term(updated_memory, scope="project")
+            if not manager.write_long_term(updated_memory, scope="project"):
+                self._save_state(
+                    {
+                        **state,
+                        "last_attempt_at": time.time(),
+                        "pending_memory": updated_memory,
+                        "pending_event_id": latest_event_id,
+                    }
+                )
+                return DreamRunResult(ran=True, updated=False, reason="write_failed")
+            self._save_state({"last_run_at": time.time(), "last_event_id": latest_event_id})
             return DreamRunResult(ran=True, updated=True, reason="updated")
         except Exception as e:
             logger.debug(f"Memory dream failed (non-critical): {e}")

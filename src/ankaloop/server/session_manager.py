@@ -16,6 +16,8 @@ from typing import Any
 from ..agent import Agent
 from ..agent_spec import get_default_agent_spec
 from ..application_services import ApplicationServices
+from ..application_session import ApplicationSessionService
+from ..runtime import TurnEvent, TurnStatus
 from .config import ServerConfig, get_server_config
 from .models import Session, SessionStatus, TokenUsage
 
@@ -61,43 +63,73 @@ class ManagedSession:
         agent: Agent,
         cwd: str,
         agent_name: str,
+        session_service: ApplicationSessionService,
     ):
         self.id = session_id
         self.agent = agent
         self.cwd = cwd
         self.agent_name = agent_name
+        self.session_service = session_service
         self.created_at = datetime.now()
-        self.updated_at = datetime.now()
+        self.metrics = session_service.metrics_for(agent)
         self.status = SessionStatus.IDLE
-        self.message_count = 0
-        self.token_usage = TokenUsage()
 
     def to_session(self) -> Session:
         """Convert to Session model."""
-        self.status = SessionStatus(self.agent.get_queue_status()["status"])
+        runtime_status = self.agent.get_queue_status()["status"]
+        self.status = SessionStatus(runtime_status)
+        metrics = self.session_service.metrics_for(self.agent)
         return Session(
             id=self.id,
             created_at=self.created_at,
-            updated_at=self.updated_at,
+            updated_at=metrics.updated_at or self.created_at,
             cwd=self.cwd,
             agent_name=self.agent_name,
             status=self.status,
-            message_count=self.message_count,
-            token_usage=self.token_usage,
+            message_count=metrics.message_count,
+            token_usage=TokenUsage(
+                prompt_tokens=metrics.prompt_tokens,
+                completion_tokens=metrics.completion_tokens,
+                total_tokens=metrics.total_tokens,
+            ),
             queued_count=self.agent.queued_count(),
         )
 
     def update_status(self, status: SessionStatus) -> None:
         """Update session status."""
         self.status = status
-        self.updated_at = datetime.now()
+        self.metrics.status = status.value
+        self.metrics.updated_at = datetime.now()
 
     def add_token_usage(self, prompt_tokens: int, completion_tokens: int) -> None:
         """Add token usage."""
-        self.token_usage.prompt_tokens += prompt_tokens
-        self.token_usage.completion_tokens += completion_tokens
-        self.token_usage.total_tokens = self.token_usage.prompt_tokens + self.token_usage.completion_tokens
-        self.updated_at = datetime.now()
+        self.metrics.prompt_tokens += prompt_tokens
+        self.metrics.completion_tokens += completion_tokens
+        self.metrics.total_tokens = self.metrics.prompt_tokens + self.metrics.completion_tokens
+        self.metrics.updated_at = datetime.now()
+
+    @property
+    def updated_at(self) -> datetime:
+        """Return the application-managed update time."""
+        return self.metrics.updated_at or self.created_at
+
+    @property
+    def message_count(self) -> int:
+        """Return the number of successfully completed turns."""
+        return self.metrics.message_count
+
+    @message_count.setter
+    def message_count(self, value: int) -> None:
+        self.metrics.message_count = value
+
+    @property
+    def token_usage(self) -> TokenUsage:
+        """Return current token usage in the server response model."""
+        return TokenUsage(
+            prompt_tokens=self.metrics.prompt_tokens,
+            completion_tokens=self.metrics.completion_tokens,
+            total_tokens=self.metrics.total_tokens,
+        )
 
 
 class SessionManager:
@@ -114,6 +146,7 @@ class SessionManager:
     ):
         self.config = config or get_server_config()
         self.services = services or ApplicationServices.default()
+        self.session_service = self.services.session_service
         self._sessions: dict[str, ManagedSession] = {}
         self._lock = asyncio.Lock()
         self._event_listeners: list[Callable[[str, Any], None]] = []
@@ -173,6 +206,7 @@ class SessionManager:
                 agent=agent,
                 cwd=cwd,
                 agent_name=agent_name,
+                session_service=self.session_service,
             )
 
             # Connect Agent events to EventBridge
@@ -277,6 +311,7 @@ class SessionManager:
             session = self._sessions.pop(session_id)
             await session.agent.close()
             session.agent.delete_persisted_session()
+            self.session_service.forget(session_id)
             self._emit_event("session.deleted", {"session_id": session_id})
 
     async def submit_prompt(
@@ -291,21 +326,45 @@ class SessionManager:
     ):
         """Submit a prompt through the session's sole runtime owner."""
         session = await self.get_session(session_id)
-        from ..message_queue import MessagePriority as QueuePriority
-
-        priority_map = {
-            "low": QueuePriority.LOW,
-            "normal": QueuePriority.NORMAL,
-            "high": QueuePriority.HIGH,
-            "urgent": QueuePriority.URGENT,
-        }
-        return await session.agent.submit(
+        return await self.session_service.submit(
+            session.agent,
             content,
             work_dir=work_dir or Path(session.cwd),
             stream=stream,
             show_progress=False,
-            priority=priority_map.get(priority, QueuePriority.NORMAL),
+            priority=priority,
             reject_if_busy=reject_if_busy,
+            on_event=lambda event: self._on_turn_event(session, event),
+        )
+
+    def _on_turn_event(self, session: ManagedSession, event: TurnEvent) -> None:
+        """Project canonical turn lifecycle into server session events."""
+        if event.status == TurnStatus.RUNNING:
+            status = SessionStatus.BUSY
+        elif event.status in {
+            TurnStatus.COMPLETED,
+            TurnStatus.CANCELLED,
+            TurnStatus.FAILED,
+        }:
+            handle = session.agent.get_turn(event.turn_id)
+            if session.agent.has_pending_work(excluding=handle):
+                status = SessionStatus.BUSY
+            elif event.status == TurnStatus.COMPLETED:
+                status = SessionStatus.IDLE
+            elif event.status == TurnStatus.CANCELLED:
+                status = SessionStatus.CANCELLED
+            else:
+                status = SessionStatus.ERROR
+        else:
+            return
+        session.update_status(status)
+        self._emit_event(
+            "session.status_changed",
+            {
+                "session_id": session.id,
+                "status": status.value,
+                "turn_id": event.turn_id,
+            },
         )
 
     async def prompt_session(
@@ -331,7 +390,6 @@ class SessionManager:
         Raises:
             SessionNotFoundError: If session is not found.
         """
-        session = await self.get_session(session_id)
         handle = await self.submit_prompt(
             session_id,
             content,
@@ -339,30 +397,11 @@ class SessionManager:
             stream=stream,
             priority=priority,
         )
-        session.update_status(SessionStatus.BUSY)
-        self._emit_event(
-            "session.status_changed",
-            {"session_id": session_id, "status": SessionStatus.BUSY.value},
-        )
         try:
             yield await handle.wait()
-            session.message_count += 1
-            session.update_status(SessionStatus.IDLE)
-        except asyncio.CancelledError:
-            session.update_status(SessionStatus.CANCELLED)
-            raise
         except Exception as e:
-            session.update_status(SessionStatus.ERROR)
-            self._emit_event(
-                "session.error",
-                {"session_id": session_id, "error": str(e)},
-            )
+            self._emit_event("session.error", {"session_id": session_id, "error": str(e)})
             raise
-        finally:
-            self._emit_event(
-                "session.status_changed",
-                {"session_id": session_id, "status": session.status.value},
-            )
 
     async def cancel_session(self, session_id: str, force: bool = False) -> None:
         """Cancel the current operation in a session.

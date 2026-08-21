@@ -1923,7 +1923,10 @@ _default_registry: ToolRegistry | None = None
 _registry_lock: threading.Lock = threading.Lock()
 
 
-def get_tool_registry(enable_write: bool | None = None) -> ToolRegistry:
+def get_tool_registry(
+    enable_write: bool | None = None,
+    enable_apply_patch: bool | None = None,
+) -> ToolRegistry:
     """Get the global tool registry instance."""
     global _default_registry
     if _default_registry is None:
@@ -1941,8 +1944,15 @@ def get_tool_registry(enable_write: bool | None = None) -> ToolRegistry:
                     enable_write = (
                         chat_cfg.write_tool_enabled if chat_cfg and chat_cfg.write_tool_enabled is not None else True
                     )
+                if enable_apply_patch is None:
+                    enable_apply_patch = (
+                        chat_cfg.edit_tool_enabled if chat_cfg and chat_cfg.edit_tool_enabled is not None else True
+                    )
 
-                _default_registry = create_default_tool_registry(enable_write=enable_write)
+                _default_registry = create_default_tool_registry(
+                    enable_write=enable_write,
+                    enable_apply_patch=enable_apply_patch,
+                )
     return _default_registry
 
 

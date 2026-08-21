@@ -76,3 +76,15 @@ class TelegramClient(BaseClient):
             stream=stream,
             priority=priority,
         )
+
+    async def cancel(self, session_id: str, *, force: bool = False) -> None:
+        """Cancel work in an embedded Telegram client session."""
+        await self._embedded.cancel(session_id, force=force)
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """List tools exposed by the embedded client."""
+        return await self._embedded.list_tools()
+
+    async def list_agents(self) -> list[dict[str, Any]]:
+        """List agents exposed by the embedded client."""
+        return await self._embedded.list_agents()

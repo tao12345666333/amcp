@@ -63,17 +63,20 @@ def test_decode_encode_chat_tool_limits_roundtrip():
         "tool_loop_limit": 300,
         "bash_tool_limit": 100,
         "default_max_lines": 400,
+        "sync_tool_settle_timeout_seconds": 0.75,
     }
 
     cfg = config_module._decode_chat(raw)
     assert cfg is not None
     assert cfg.tool_loop_limit == 300
     assert cfg.bash_tool_limit == 100
+    assert cfg.sync_tool_settle_timeout_seconds == 0.75
 
     encoded = config_module._encode_chat(cfg)
     assert encoded is not None
     assert encoded["tool_loop_limit"] == 300
     assert encoded["bash_tool_limit"] == 100
+    assert encoded["sync_tool_settle_timeout_seconds"] == 0.75
 
 
 def test_decode_encode_provider_reliability_policy_roundtrip():

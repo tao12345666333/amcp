@@ -5,16 +5,26 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import heapq
+import logging
 import uuid
 from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from .message_queue import MessagePriority
+logger = logging.getLogger(__name__)
+
+
+class MessagePriority(IntEnum):
+    """Priority used by the canonical session runtime."""
+
+    LOW = 0
+    NORMAL = 1
+    HIGH = 2
+    URGENT = 3
 
 
 class TurnStatus(StrEnum):
@@ -68,31 +78,116 @@ class TurnRequest:
 
 
 @dataclass(frozen=True)
+class ErrorEnvelope:
+    """Transport-neutral description of a turn failure."""
+
+    code: str
+    message: str
+    retryable: bool = False
+    details: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_exception(cls, error: BaseException) -> ErrorEnvelope:
+        """Build a stable error envelope without depending on provider modules."""
+        kind = getattr(error, "kind", None)
+        kind_value = getattr(kind, "value", None)
+        code = f"PROVIDER_{str(kind_value).upper()}" if kind_value else "AGENT_ERROR"
+        details: dict[str, Any] = {"exception_type": type(error).__name__}
+        status_code = getattr(error, "status_code", None)
+        if status_code is not None:
+            details["status_code"] = status_code
+        return cls(
+            code=code,
+            message=str(error),
+            retryable=bool(getattr(error, "retryable", False)),
+            details=details,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible representation."""
+        return {
+            "code": self.code,
+            "message": self.message,
+            "retryable": self.retryable,
+            "details": dict(self.details),
+        }
+
+
+@dataclass(frozen=True)
 class TurnResult:
     """Terminal result stored for every turn."""
 
     status: TurnStatus
     value: str | None = None
     error: BaseException | None = None
+    error_envelope: ErrorEnvelope | None = None
+
+    @classmethod
+    def failed(cls, error: BaseException) -> TurnResult:
+        """Create a failed result with its stable public error representation."""
+        return cls(
+            status=TurnStatus.FAILED,
+            error=error,
+            error_envelope=ErrorEnvelope.from_exception(error),
+        )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class TurnEvent:
-    """One observable turn state transition."""
-
-    turn_id: str
-    status: TurnStatus
-    timestamp: datetime = field(default_factory=datetime.now)
-
-
-@dataclass(frozen=True)
-class TurnStreamEvent:
-    """One output or lifecycle event produced by a turn."""
+    """One transport-neutral lifecycle or output event."""
 
     turn_id: str
     type: str
     data: dict[str, Any] = field(default_factory=dict)
+    status: TurnStatus | None = None
     timestamp: datetime = field(default_factory=datetime.now)
+
+    def __init__(
+        self,
+        turn_id: str,
+        event_type: str | TurnStatus | None = None,
+        value: dict[str, Any] | datetime | None = None,
+        *,
+        data: dict[str, Any] | None = None,
+        status: TurnStatus | None = None,
+        timestamp: datetime | None = None,
+        type: str | TurnStatus | None = None,
+    ) -> None:
+        """Accept both legacy lifecycle and stream event constructor shapes."""
+        if event_type is None:
+            event_type = type
+        if event_type is None:
+            raise TypeError("TurnEvent requires an event type or status")
+        if isinstance(event_type, TurnStatus):
+            status = event_type
+            resolved_type = f"turn.{event_type.value}"
+            if isinstance(value, datetime):
+                timestamp = value
+        else:
+            resolved_type = event_type
+            if isinstance(value, dict):
+                data = value
+            elif isinstance(value, datetime):
+                timestamp = value
+        object.__setattr__(self, "turn_id", turn_id)
+        object.__setattr__(self, "type", resolved_type)
+        object.__setattr__(self, "data", dict(data or {}))
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "timestamp", timestamp or datetime.now())
+
+    @classmethod
+    def transition(cls, turn_id: str, status: TurnStatus) -> TurnEvent:
+        """Create a canonical lifecycle transition event."""
+        return cls(
+            turn_id=turn_id,
+            type=f"turn.{status.value}",
+            status=status,
+            data={"turn_status": status.value},
+        )
+
+
+# Compatibility alias for integrations that imported the previous stream-only name.
+TurnStreamEvent = TurnEvent
 
 
 class TurnHandle:
@@ -106,8 +201,10 @@ class TurnHandle:
         self.finished_at: datetime | None = None
         self._completion: asyncio.Future[TurnResult] = asyncio.get_running_loop().create_future()
         self.events: asyncio.Queue[TurnEvent] = asyncio.Queue()
-        self.events.put_nowait(TurnEvent(self.id, TurnStatus.QUEUED))
-        self._stream_subscribers: set[asyncio.Queue[TurnStreamEvent]] = set()
+        self.events.put_nowait(TurnEvent.transition(self.id, TurnStatus.QUEUED))
+        self._stream_subscribers: set[asyncio.Queue[TurnEvent]] = set()
+        self._done_callbacks: list[Callable[[TurnHandle], None]] = []
+        self._event_callbacks: list[Callable[[TurnEvent], None]] = []
 
     @property
     def id(self) -> str:
@@ -138,20 +235,31 @@ class TurnHandle:
         """Cancel this queued or active turn."""
         return await self._runtime.cancel_turn(self.id)
 
-    def subscribe(self, *, max_queue_size: int = 256) -> asyncio.Queue[TurnStreamEvent]:
+    def add_done_callback(self, callback: Callable[[TurnHandle], None]) -> None:
+        """Register a callback invoked once after the terminal result is stored."""
+        if self.done:
+            callback(self)
+            return
+        self._done_callbacks.append(callback)
+
+    def add_event_callback(self, callback: Callable[[TurnEvent], None]) -> None:
+        """Observe future lifecycle transitions without consuming the event queue."""
+        self._event_callbacks.append(callback)
+
+    def subscribe(self, *, max_queue_size: int = 256) -> asyncio.Queue[TurnEvent]:
         """Subscribe to output produced after this call."""
         if max_queue_size < 1:
             raise ValueError("max_queue_size must be positive")
-        queue: asyncio.Queue[TurnStreamEvent] = asyncio.Queue(maxsize=max_queue_size)
+        queue: asyncio.Queue[TurnEvent] = asyncio.Queue(maxsize=max_queue_size)
         self._stream_subscribers.add(queue)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue[TurnStreamEvent]) -> None:
+    def unsubscribe(self, queue: asyncio.Queue[TurnEvent]) -> None:
         """Stop an output subscription without affecting turn execution."""
         self._stream_subscribers.discard(queue)
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
-        event = TurnStreamEvent(self.id, event_type, data or {})
+        event = TurnEvent(self.id, event_type, data=data or {})
         for queue in tuple(self._stream_subscribers):
             try:
                 queue.put_nowait(event)
@@ -160,10 +268,10 @@ class TurnHandle:
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait(
-                    TurnStreamEvent(
+                    TurnEvent(
                         self.id,
                         "stream.overflow",
-                        {"error": "Turn stream consumer is too slow"},
+                        data={"error": "Turn stream consumer is too slow"},
                     )
                 )
 
@@ -173,10 +281,18 @@ class TurnHandle:
         self._transition(result.status)
         self.finished_at = datetime.now()
         self._completion.set_result(result)
+        callbacks, self._done_callbacks = self._done_callbacks, []
+        for callback in callbacks:
+            with contextlib.suppress(Exception):
+                callback(self)
 
     def _transition(self, status: TurnStatus) -> None:
         self.status = status
-        self.events.put_nowait(TurnEvent(self.id, status))
+        event = TurnEvent.transition(self.id, status)
+        self.events.put_nowait(event)
+        for callback in tuple(self._event_callbacks):
+            with contextlib.suppress(Exception):
+                callback(event)
 
 
 RuntimeProcessor = Callable[[TurnRequest], Coroutine[Any, Any, str]]
@@ -237,6 +353,14 @@ class SessionRuntime:
     def is_closed(self) -> bool:
         """Return whether this runtime permanently stopped accepting work."""
         return self._closed
+
+    def has_pending_work(self, *, excluding: TurnHandle | None = None) -> bool:
+        """Return whether active or queued work remains besides one handle."""
+        active_pending = (
+            self._active_handle is not None and self._active_handle is not excluding and not self._active_handle.done
+        )
+        queued_pending = any(handle is not excluding and not handle.done for _, _, handle in self._queue)
+        return active_pending or queued_pending
 
     def get_turn(self, turn_id: str) -> TurnHandle | None:
         """Return a previously submitted turn."""
@@ -397,7 +521,7 @@ class SessionRuntime:
                 self.status = SessionRuntimeStatus.CANCELLED
                 self._emit("turn.cancelled", handle)
             except BaseException as exc:
-                handle._finish(TurnResult(TurnStatus.FAILED, error=exc))
+                handle._finish(TurnResult.failed(exc))
                 self.status = SessionRuntimeStatus.ERROR
                 self._emit("turn.failed", handle)
             else:
@@ -423,9 +547,18 @@ class SessionRuntime:
             data["response"] = outcome.value
             if outcome.error is not None:
                 data["error"] = str(outcome.error)
+            if outcome.error_envelope is not None:
+                data["error_envelope"] = outcome.error_envelope.to_dict()
         handle._publish(event, data)
         if self._event_callback is not None:
-            self._event_callback(event, handle)
+            try:
+                self._event_callback(event, handle)
+            except Exception:
+                logger.exception(
+                    "Session runtime observer failed for %s on turn %s",
+                    event,
+                    handle.id,
+                )
 
     def publish_turn_event(self, turn_id: str, event_type: str, data: dict[str, Any]) -> None:
         """Publish agent output to subscribers of the active turn."""

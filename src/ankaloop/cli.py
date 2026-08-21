@@ -911,7 +911,13 @@ def main(
             # Single message mode
             console.print(f"[bold]🤖 Agent {agent.name}[/bold] - Processing...")
             response = asyncio.run(
-                agent.run(user_input=message, work_dir=work_dir, stream=False, show_progress=not no_progress)
+                agent.services.session_service.run(
+                    agent,
+                    message,
+                    work_dir=work_dir,
+                    stream=False,
+                    show_progress=not no_progress,
+                )
             )
 
             console.print(Panel(Markdown(response), title=f"Agent {agent.name}", border_style="cyan"))
@@ -1040,7 +1046,13 @@ def main(
 
                     console.print(f"[bold]🤖 Agent {agent.name}[/bold] - Processing...")
                     response = asyncio.run(
-                        agent.run(user_input=user_input, work_dir=work_dir, stream=False, show_progress=not no_progress)
+                        agent.services.session_service.run(
+                            agent,
+                            user_input,
+                            work_dir=work_dir,
+                            stream=False,
+                            show_progress=not no_progress,
+                        )
                     )
 
                     console.print(Panel(Markdown(response), title=f"Agent {agent.name}", border_style="cyan"))

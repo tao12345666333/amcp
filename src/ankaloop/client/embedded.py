@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
+from ..application_services import ApplicationServices
 from .base import BaseClient, ResponseChunk
 from .exceptions import SessionError, SessionNotFoundError
 
@@ -24,6 +25,7 @@ class EmbeddedSession:
         agent: Any,  # Agent type
         cwd: str,
         agent_name: str,
+        services: ApplicationServices,
     ):
         """Initialize the embedded session.
 
@@ -38,20 +40,20 @@ class EmbeddedSession:
         self.cwd = cwd
         self.agent_name = agent_name
         self.created_at = datetime.now()
-        self.updated_at = datetime.now()
-        self.message_count = 0
+        self.services = services
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         status = self.agent.get_queue_status()["status"]
+        metrics = self.services.session_service.metrics_for(self.agent)
         return {
             "id": self.id,
             "cwd": self.cwd,
             "agent_name": self.agent_name,
             "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": (metrics.updated_at or self.created_at).isoformat(),
             "status": status,
-            "message_count": self.message_count,
+            "message_count": metrics.message_count,
         }
 
 
@@ -68,8 +70,9 @@ class EmbeddedClient(BaseClient):
                 print(chunk.content)
     """
 
-    def __init__(self):
+    def __init__(self, services: ApplicationServices | None = None):
         """Initialize the embedded client."""
+        self.services = services or ApplicationServices.default()
         self._sessions: dict[str, EmbeddedSession] = {}
         self._closing_sessions: set[str] = set()
         self._connected = False
@@ -116,9 +119,8 @@ class EmbeddedClient(BaseClient):
             Info dictionary.
         """
         from .. import __version__
-        from ..multi_agent import get_agent_registry
 
-        registry = get_agent_registry()
+        registry = self.services.agent_registry
         return {
             "name": "ankaloop-embedded",
             "version": __version__,
@@ -150,7 +152,6 @@ class EmbeddedClient(BaseClient):
         """
         from ..agent import Agent, create_agent_by_name
         from ..agent_spec import get_default_agent_spec
-        from ..multi_agent import get_agent_registry
 
         # Generate session ID
         sid = session_id or str(uuid.uuid4())[:8]
@@ -162,9 +163,13 @@ class EmbeddedClient(BaseClient):
 
         # Create agent
         if agent_name:
-            registry = get_agent_registry()
+            registry = self.services.agent_registry
             if agent_name in registry.list_agents():
-                agent = create_agent_by_name(agent_name, session_id=sid)
+                agent = create_agent_by_name(
+                    agent_name,
+                    session_id=sid,
+                    services=self.services,
+                )
                 resolved_name = agent_name
             else:
                 # Try as agent spec file
@@ -174,16 +179,16 @@ class EmbeddedClient(BaseClient):
 
                 try:
                     spec = load_agent_spec(Path(agent_name))
-                    agent = Agent(spec, session_id=sid)
+                    agent = Agent(spec, session_id=sid, services=self.services)
                     resolved_name = spec.name
                 except Exception:
                     # Fall back to default
                     spec = get_default_agent_spec()
-                    agent = Agent(spec, session_id=sid)
+                    agent = Agent(spec, session_id=sid, services=self.services)
                     resolved_name = spec.name
         else:
             spec = get_default_agent_spec()
-            agent = Agent(spec, session_id=sid)
+            agent = Agent(spec, session_id=sid, services=self.services)
             resolved_name = spec.name
 
         # Create session
@@ -192,6 +197,7 @@ class EmbeddedClient(BaseClient):
             agent=agent,
             cwd=work_dir,
             agent_name=resolved_name,
+            services=self.services,
         )
         self._sessions[sid] = session
 
@@ -241,6 +247,7 @@ class EmbeddedClient(BaseClient):
         finally:
             self._sessions.pop(session_id, None)
             self._closing_sessions.discard(session_id)
+            self.services.session_service.forget(session_id)
 
     # =========================================================================
     # Prompt Operations
@@ -270,8 +277,6 @@ class EmbeddedClient(BaseClient):
             raise SessionNotFoundError(session_id)
 
         session = self._sessions[session_id]
-        session.updated_at = datetime.now()
-        session.message_count += 1
 
         if stream:
             return self._stream_prompt(session, content)
@@ -296,8 +301,9 @@ class EmbeddedClient(BaseClient):
 
         try:
             work_dir = Path(session.cwd) if session.cwd else None
-            response = await session.agent.run(
-                user_input=content,
+            response = await self.services.session_service.run(
+                session.agent,
+                content,
                 work_dir=work_dir,
                 stream=False,
                 show_progress=False,
@@ -325,8 +331,9 @@ class EmbeddedClient(BaseClient):
         try:
             work_dir = Path(session.cwd) if session.cwd else None
 
-            response = await session.agent.run(
-                user_input=content,
+            response = await self.services.session_service.run(
+                session.agent,
+                content,
                 work_dir=work_dir,
                 stream=True,
                 show_progress=False,

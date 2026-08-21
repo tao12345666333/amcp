@@ -25,6 +25,7 @@ from ankaloop.client.exceptions import (
     SessionNotFoundError,
     TimeoutError,
 )
+from ankaloop.telegram.client import TelegramClient
 
 # ============================================================================
 # Test Exceptions
@@ -141,6 +142,11 @@ class TestAnkaloopClient:
 
         without_url = AnkaloopClient()
         assert without_url.mode == ClientMode.EMBEDDED
+
+    def test_telegram_client_implements_base_client_contract(self):
+        client = TelegramClient(AsyncMock())
+
+        assert isinstance(client, BaseClient)
 
 
 # ============================================================================

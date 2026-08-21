@@ -215,6 +215,21 @@ class TestAgentRegistry:
         subagents = registry.get_subagents_for("explorer")
         assert subagents == []
 
+    def test_parent_scoped_subagent_is_not_exposed_to_other_parents(self):
+        registry = AgentRegistry()
+        registry.register(
+            AgentConfig(
+                name="coder-only",
+                mode=AgentMode.SUBAGENT,
+                description="Scoped",
+                system_prompt="Scoped",
+                parent_agent="coder",
+            )
+        )
+
+        assert "coder-only" in registry.get_subagents_for("coder")
+        assert "coder-only" not in registry.get_subagents_for("default")
+
 
 class TestGlobalFunctions:
     """Tests for global helper functions."""

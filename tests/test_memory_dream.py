@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from ankaloop.memory import get_memory_manager, reset_memory_manager
 from ankaloop.memory_dream import MemoryDreamer
@@ -53,4 +54,33 @@ def test_memory_dreamer_skips_until_enough_events(tmp_path):
 
     assert result.ran is False
     assert result.reason == "not_enough_new_events"
+    reset_memory_manager()
+
+
+def test_memory_dreamer_does_not_advance_cursor_when_memory_write_fails(tmp_path):
+    reset_memory_manager()
+    manager = get_memory_manager(tmp_path)
+    manager.append_history("first", session_id="s1", scope="project")
+    manager.append_history("second", session_id="s1", scope="project")
+    dreamer = MemoryDreamer(
+        tmp_path,
+        min_interval_seconds=0,
+        min_new_events=2,
+        client=_FakeClient("# Memory\n- consolidated"),
+        model="test-model",
+    )
+
+    with patch.object(manager, "write_long_term", return_value=False):
+        result = dreamer.run_once()
+
+    assert result.reason == "write_failed"
+    state = dreamer._load_state()
+    assert state.get("last_event_id", 0) == 0
+    assert state["pending_event_id"] > 0
+    assert state["pending_memory"] == "# Memory\n- consolidated"
+
+    result = dreamer.run_once()
+
+    assert result.updated is True
+    assert len(dreamer._client.calls) == 1
     reset_memory_manager()

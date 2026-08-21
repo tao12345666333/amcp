@@ -281,6 +281,7 @@ class HookHandler:
         function: Python function path (for python type, e.g., "module.function")
         timeout: Timeout in seconds for hook execution
         enabled: Whether this handler is enabled
+        failure_mode: Whether execution failures are allowed ("open") or block ("closed")
         action: Action for markdown hooks - "warn" or "block"
         pattern: Regex pattern for markdown hooks
         message: Message to display (for markdown hooks)
@@ -295,6 +296,7 @@ class HookHandler:
     function: str | None = None
     timeout: int = 30
     enabled: bool = True
+    failure_mode: str = "open"
     # Markdown hook specific fields
     action: str = "warn"  # "warn" or "block"
     pattern: str | None = None
@@ -444,6 +446,10 @@ class HooksManager:
                         function=handler_data.get("function"),
                         timeout=handler_data.get("timeout", 30),
                         enabled=handler_data.get("enabled", True),
+                        failure_mode=self._normalize_failure_mode(
+                            handler_data.get("failure_mode", "open"),
+                            event,
+                        ),
                     )
                     # Resolve relative paths
                     if handler.script and not Path(handler.script).is_absolute():
@@ -453,6 +459,19 @@ class HooksManager:
                         handler.command = handler.command.replace("$ANKA_PROJECT_DIR", str(self.project_dir))
 
                     self.hooks[event].handlers.append(handler)
+
+    @staticmethod
+    def _normalize_failure_mode(value: object, event: HookEvent) -> str:
+        """Validate a configured hook failure mode."""
+        failure_mode = str(value).strip().lower()
+        if failure_mode not in {"open", "closed"}:
+            logger.warning(
+                "Invalid failure_mode %r for %s; defaulting to open",
+                value,
+                event.value,
+            )
+            return "open"
+        return failure_mode
 
     def _load_markdown_hooks_dir(self, hooks_dir: Path) -> None:
         """Load Markdown hook files from a directory.
@@ -626,15 +645,36 @@ class HooksManager:
 
         for handler in handlers:
             try:
-                if handler.type == "command" and handler.command:
-                    output = await self._execute_command_hook(handler, hook_input)
+                if handler.type == "command":
+                    if handler.command:
+                        output = await self._execute_command_hook(handler, hook_input)
+                    else:
+                        output = HookOutput(
+                            success=False,
+                            feedback="Command hook is missing its command",
+                        )
                 elif handler.type == "python":
-                    output = await self._execute_python_hook(handler, hook_input)
+                    if handler.script or handler.function:
+                        output = await self._execute_python_hook(handler, hook_input)
+                    else:
+                        output = HookOutput(
+                            success=False,
+                            feedback="Python hook requires a script or function",
+                        )
                 elif handler.type == "markdown":
                     output = self._execute_markdown_hook(handler, hook_input)
                 else:
-                    logger.warning(f"Unknown hook type: {handler.type}")
-                    continue
+                    output = HookOutput(
+                        success=False,
+                        feedback=f"Unknown hook type: {handler.type}",
+                    )
+
+                if not output.success and handler.failure_mode == "closed":
+                    reason = output.feedback or "Hook execution failed"
+                    output.continue_execution = False
+                    output.stop_reason = reason
+                    output.decision = HookDecision.DENY
+                    output.decision_reason = reason
 
                 # Merge outputs (later hooks can override earlier ones)
                 self._merge_outputs(combined_output, output)
@@ -653,10 +693,26 @@ class HooksManager:
 
             except TimeoutError:
                 logger.warning(f"Hook timed out after {handler.timeout}s")
-                combined_output.feedback = f"Hook timed out after {handler.timeout}s"
+                reason = f"Hook timed out after {handler.timeout}s"
+                combined_output.success = False
+                combined_output.feedback = reason
+                if handler.failure_mode == "closed":
+                    combined_output.continue_execution = False
+                    combined_output.stop_reason = reason
+                    combined_output.decision = HookDecision.DENY
+                    combined_output.decision_reason = reason
+                    break
             except Exception as e:
                 logger.warning(f"Hook execution failed: {e}")
-                combined_output.feedback = f"Hook execution failed: {e}"
+                reason = f"Hook execution failed: {e}"
+                combined_output.success = False
+                combined_output.feedback = reason
+                if handler.failure_mode == "closed":
+                    combined_output.continue_execution = False
+                    combined_output.stop_reason = reason
+                    combined_output.decision = HookDecision.DENY
+                    combined_output.decision_reason = reason
+                    break
 
         return combined_output
 
@@ -910,8 +966,13 @@ class HooksManager:
 
     def _merge_outputs(self, target: HookOutput, source: HookOutput) -> None:
         """Merge source output into target output."""
+        if not source.success:
+            target.success = False
         if source.feedback:
             target.feedback = (target.feedback or "") + "\n" + source.feedback
+        if not source.continue_execution:
+            target.continue_execution = False
+            target.stop_reason = source.stop_reason
         if source.system_message:
             target.system_message = source.system_message
         if source.updated_input:

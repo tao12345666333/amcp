@@ -186,6 +186,7 @@ default_max_lines = 400
 mcp_tools_enabled = true
 write_tool_enabled = true
 edit_tool_enabled = true
+sync_tool_settle_timeout_seconds = 2.0
 default_agent = "coder"
 
 [context]

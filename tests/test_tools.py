@@ -2,6 +2,8 @@ import json
 import re
 from unittest.mock import patch
 
+from ankaloop import tools as tools_module
+from ankaloop.config import AnkaloopConfig, ChatConfig
 from ankaloop.tools import (
     BashTool,
     GrepTool,
@@ -83,6 +85,21 @@ def test_registry_reports_unbindable_arguments_without_raw_typeerror():
     assert result.error.startswith("Invalid arguments:")
     assert "Did you mean 'paths'?" in result.error
     assert "TypeError" not in result.error
+
+
+def test_edit_tool_enabled_controls_apply_patch_registry():
+    cfg = AnkaloopConfig(
+        servers={},
+        chat=ChatConfig(write_tool_enabled=True, edit_tool_enabled=False),
+    )
+    with (
+        patch.object(tools_module, "_default_registry", None),
+        patch("ankaloop.config.load_config", return_value=cfg),
+    ):
+        registry = get_tool_registry()
+
+    assert "write_file" in registry.list_tools()
+    assert "apply_patch" not in registry.list_tools()
 
 
 def test_web_search_tool_firecrawl_backend():

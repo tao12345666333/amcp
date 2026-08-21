@@ -40,6 +40,7 @@ matcher = "write_file|apply_patch"  # Regex pattern to match tool names
 type = "command"                  # "command" or "python"
 command = "./scripts/validate-writes.sh"
 timeout = 30                      # Timeout in seconds
+failure_mode = "closed"           # "open" (default) or "closed"
 enabled = true
 
 [[hooks.PreToolUse.handlers]]
@@ -55,6 +56,13 @@ type = "command"
 command = "$ANKA_PROJECT_DIR/scripts/lint-file.sh"
 timeout = 60
 ```
+
+`failure_mode` controls what happens when a hook cannot execute or times out:
+
+- `open` logs the failure and allows execution to continue.
+- `closed` denies the operation. Use this for policy and security enforcement hooks.
+
+This setting is independent from a hook's normal allow/deny result.
 
 ### JSON Format
 

@@ -10,6 +10,7 @@ matcher = "write_file|apply_patch"
 type = "python"
 script = "./validate_file_writes.py"
 timeout = 30
+failure_mode = "closed"
 enabled = true
 
 [[hooks.PreToolUse.handlers]]
@@ -18,6 +19,7 @@ matcher = "write_file|apply_patch"
 type = "python"
 script = "./scripts/scan_secrets.py"
 timeout = 30
+failure_mode = "closed"
 enabled = true
 
 [[hooks.PreToolUse.handlers]]

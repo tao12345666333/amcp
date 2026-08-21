@@ -460,6 +460,7 @@ class TaskManager:
 
                 try:
                     # Execute the task in the same trusted workspace as its parent.
+                    # Agent.run routes through the shared ApplicationSessionService.
                     envelope = task.envelope
                     assert envelope is not None
                     result = await agent.run(

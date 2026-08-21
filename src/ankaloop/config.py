@@ -107,6 +107,7 @@ class ChatConfig:
     # Built-in file modification tools
     write_tool_enabled: bool | None = None
     edit_tool_enabled: bool | None = None
+    sync_tool_settle_timeout_seconds: float = 2.0
     # Agent settings
     default_agent: str | None = None  # default agent to use: "coder", "explorer", etc.
     # Queue settings
@@ -256,6 +257,7 @@ _DEFAULT = {
         # "mcp_servers": ["custom"]  # optional; if unset, expose all configured servers
         "write_tool_enabled": True,
         "edit_tool_enabled": True,
+        "sync_tool_settle_timeout_seconds": 2.0,
     },
     "context": {
         "progressive_tools": True,
@@ -424,6 +426,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
     mcp_servers = raw.get("mcp_servers")
     write_tool_enabled = raw.get("write_tool_enabled")
     edit_tool_enabled = raw.get("edit_tool_enabled")
+    sync_tool_settle_timeout_seconds = raw.get("sync_tool_settle_timeout_seconds", 2.0)
     # Agent settings
     default_agent = raw.get("default_agent")
     # Queue settings
@@ -460,6 +463,7 @@ def _decode_chat(raw: Mapping[str, object] | None) -> ChatConfig | None:
         mcp_servers=[str(s) for s in mcp_servers] if isinstance(mcp_servers, list) else None,
         write_tool_enabled=bool(write_tool_enabled) if write_tool_enabled is not None else None,
         edit_tool_enabled=bool(edit_tool_enabled) if edit_tool_enabled is not None else None,
+        sync_tool_settle_timeout_seconds=float(str(sync_tool_settle_timeout_seconds)),
         default_agent=str(default_agent) if default_agent is not None else None,
         enable_queue=bool(enable_queue) if enable_queue is not None else None,
         max_queue_size=int(str(max_queue_size)) if max_queue_size is not None else None,
@@ -788,6 +792,7 @@ def _encode_chat(c: ChatConfig | None) -> dict | None:
         out["write_tool_enabled"] = bool(c.write_tool_enabled)
     if c.edit_tool_enabled is not None:
         out["edit_tool_enabled"] = bool(c.edit_tool_enabled)
+    out["sync_tool_settle_timeout_seconds"] = float(c.sync_tool_settle_timeout_seconds)
     # Agent settings
     if c.default_agent:
         out["default_agent"] = c.default_agent

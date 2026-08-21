@@ -141,20 +141,25 @@ class MemoryStore:
                 logger.warning(f"Could not read long-term memory: {e}")
         return ""
 
-    def write_long_term(self, content: str) -> None:
+    def write_long_term(self, content: str) -> bool:
         """Write (overwrite) long-term memory.
 
         The agent should curate this to keep it organized and compact.
 
         Args:
             content: New content for MEMORY.md
+
+        Returns:
+            Whether the content was written successfully.
         """
         self._ensure_dir()
         try:
             self.memory_file.write_text(content, encoding="utf-8")
             logger.info(f"Updated long-term memory ({len(content)} chars)")
+            return True
         except Exception as e:
             logger.error(f"Could not write long-term memory: {e}")
+            return False
 
     # --- Soul and Identity ---
 
@@ -649,15 +654,18 @@ class MemoryManager:
         store = self._store_for_scope(scope)
         return store.read_long_term()
 
-    def write_long_term(self, content: str, scope: str = "user") -> None:
+    def write_long_term(self, content: str, scope: str = "user") -> bool:
         """Write long-term memory to the specified scope.
 
         Args:
             content: Memory content
             scope: "user" or "project"
+
+        Returns:
+            Whether the content was written successfully.
         """
         store = self._store_for_scope(scope)
-        store.write_long_term(content)
+        return store.write_long_term(content)
 
     def append_history(
         self,

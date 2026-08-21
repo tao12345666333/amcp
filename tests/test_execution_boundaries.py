@@ -12,7 +12,7 @@ import pytest
 
 from ankaloop.agent import Agent
 from ankaloop.agent_spec import ResolvedAgentSpec
-from ankaloop.config import AnkaloopConfig, ContextConfig, Server
+from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig, Server
 from ankaloop.multi_agent import AgentMode
 from ankaloop.task import TaskManager
 from ankaloop.tool_execution import (
@@ -312,6 +312,40 @@ async def test_thread_backed_tool_settles_before_cancellation_returns(tmp_path):
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_thread_backed_tool_cancellation_has_settle_deadline(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    registry = MagicMock()
+
+    def execute_tool(_name, **_arguments):
+        started.set()
+        release.wait(timeout=5)
+        return SimpleNamespace(success=True, content="late")
+
+    registry.execute_tool.side_effect = execute_tool
+    executor = ToolExecutor(
+        context=ToolExecutionContext("session", tmp_path, "deadline"),
+        capability=ToolCapability.from_spec(None, [], True),
+        exposed_tools={"stuck_tool"},
+        registry=registry,
+        mcp_registry={},
+        config=AnkaloopConfig(
+            servers={},
+            chat=ChatConfig(sync_tool_settle_timeout_seconds=0.05),
+        ),
+    )
+
+    task = asyncio.create_task(executor.execute("stuck_tool", {}))
+    assert await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=0.5)
+    assert not release.is_set()
+    release.set()
+    await asyncio.sleep(0.05)
 
 
 class _ToolCallingLLM:

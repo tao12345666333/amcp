@@ -92,10 +92,6 @@ line-length = 100
 select = ["E", "F", "UP", "B", "SIM", "I"]
 ignore = ["E501"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --cov=src/ankaloop --cov-report=term-missing"
-
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true

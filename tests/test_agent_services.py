@@ -48,6 +48,21 @@ async def test_process_message_compatibility_entry_delegates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_application_session_service_owns_completion_metrics(tmp_path):
+    services = _services()
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
+        agent = Agent(services=services)
+    agent.turn_service.process_message = AsyncMock(return_value="done")  # type: ignore[method-assign]
+
+    handle = await services.session_service.submit(agent, "hello", stream=False)
+
+    assert await handle.wait() == "done"
+    metrics = services.session_service.metrics_for(agent)
+    assert metrics.message_count == 1
+    assert metrics.status == "idle"
+
+
+@pytest.mark.asyncio
 async def test_context_and_tool_loop_compatibility_entries_delegate(tmp_path):
     with patch("ankaloop.agent.Path.home", return_value=tmp_path):
         agent = Agent(services=_services())

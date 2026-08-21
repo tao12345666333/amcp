@@ -761,6 +761,7 @@ class TelegramBot:
             )
             self._bind_session_memory(message.chat_id, session)
             streaming = self._config.streaming.streaming_enabled
+            # Agent.submit routes through the shared ApplicationSessionService.
             handle = await session.agent.submit(
                 message.text,
                 work_dir=self._work_dir,

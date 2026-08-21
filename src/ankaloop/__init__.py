@@ -8,6 +8,8 @@ __all__ = [
     "MaxStepsReached",
     "BusyError",
     "ApplicationServices",
+    "ApplicationSessionService",
+    "SessionMetrics",
     "ContextBuilder",
     "ToolLoop",
     "TurnService",
@@ -28,6 +30,12 @@ __all__ = [
     "QueuedMessage",
     "MessageQueueManager",
     "get_message_queue_manager",
+    # Runtime contracts
+    "ErrorEnvelope",
+    "TurnEvent",
+    "TurnHandle",
+    "TurnResult",
+    "TurnStatus",
     # Event bus
     "Event",
     "EventBus",
@@ -110,6 +118,7 @@ from .agent import (
     list_subagent_types,
 )
 from .application_services import ApplicationServices
+from .application_session import ApplicationSessionService, SessionMetrics
 from .commands import (
     CommandManager,
     CommandResult,
@@ -157,12 +166,7 @@ from .hooks import (
     run_stop_hooks,
     run_user_prompt_hooks,
 )
-from .message_queue import (
-    MessagePriority,
-    MessageQueueManager,
-    QueuedMessage,
-    get_message_queue_manager,
-)
+from .message_queue import MessageQueueManager, QueuedMessage, get_message_queue_manager
 from .models_db import (
     ModelInfo,
     ModelsDatabase,
@@ -181,6 +185,14 @@ from .project_rules import (
     ProjectRulesLoader,
     get_project_rules_info,
     load_project_rules,
+)
+from .runtime import (
+    ErrorEnvelope,
+    MessagePriority,
+    TurnEvent,
+    TurnHandle,
+    TurnResult,
+    TurnStatus,
 )
 from .skills import (
     SkillManager,
