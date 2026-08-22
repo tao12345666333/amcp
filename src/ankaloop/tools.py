@@ -236,9 +236,7 @@ def _run_coroutine_in_thread(coro: Any, timeout: float | None = None) -> Any:
     worker.join(timeout)
 
     if worker.is_alive():
-        raise ToolExecutionError(
-            f"MCP call timed out after {timeout:.1f} seconds; the worker thread was abandoned"
-        )
+        raise ToolExecutionError(f"MCP call timed out after {timeout:.1f} seconds; the worker thread was abandoned")
     if "value" in error:
         raise error["value"]
     return result.get("value")
