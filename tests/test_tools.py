@@ -1,6 +1,11 @@
+import asyncio
 import json
 import re
+import threading
+import time
 from unittest.mock import patch
+
+import pytest
 
 from ankaloop import tools as tools_module
 from ankaloop.config import AnkaloopConfig, ChatConfig
@@ -339,3 +344,40 @@ class TestTodoTool:
         assert "todo" in registry.list_tools()
         assert "web_search" in registry.list_tools()
         assert "web_fetch" in registry.list_tools()
+
+
+class TestRunCoroutineInThread:
+    """_run_coroutine_in_thread must never block the caller forever."""
+
+    def test_returns_result(self):
+        from ankaloop.tools import _run_coroutine_in_thread
+
+        async def coro():
+            return 42
+
+        assert _run_coroutine_in_thread(coro()) == 42
+
+    def test_propagates_exception(self):
+        from ankaloop.tools import _run_coroutine_in_thread
+
+        async def coro():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError, match="boom"):
+            _run_coroutine_in_thread(coro())
+
+    def test_join_timeout_raises_and_unblocks(self):
+        from ankaloop.tools import ToolExecutionError, _run_coroutine_in_thread
+
+        started = threading.Event()
+
+        async def hung():
+            started.set()
+            await asyncio.sleep(60)
+
+        begin = time.monotonic()
+        with pytest.raises(ToolExecutionError, match="timed out"):
+            _run_coroutine_in_thread(hung(), timeout=0.2)
+        elapsed = time.monotonic() - begin
+        assert elapsed < 5, "join timeout should unblock the caller quickly"
+        assert started.is_set(), "worker coroutine should have started before timing out"

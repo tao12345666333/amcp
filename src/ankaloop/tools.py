@@ -213,8 +213,14 @@ def _validate_callable_arguments(name: str, func: Callable[..., Any], arguments:
         raise ToolValidationError(f"Tool '{name}' arguments do not match its signature: {exc}") from exc
 
 
-def _run_coroutine_in_thread(coro: Any) -> Any:
-    """Run a coroutine from synchronous tool code, even under an active event loop."""
+def _run_coroutine_in_thread(coro: Any, timeout: float | None = None) -> Any:
+    """Run a coroutine from synchronous tool code, even under an active event loop.
+
+    The coroutine runs in a daemon worker thread with its own event loop, so the
+    caller can never be blocked forever by a coroutine that never completes: when
+    ``timeout`` is given, ``worker.join(timeout)`` gives up waiting and raises
+    :class:`ToolExecutionError` instead of hanging the calling thread.
+    """
 
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
@@ -227,8 +233,12 @@ def _run_coroutine_in_thread(coro: Any) -> Any:
 
     worker = threading.Thread(target=_runner, daemon=True)
     worker.start()
-    worker.join()
+    worker.join(timeout)
 
+    if worker.is_alive():
+        raise ToolExecutionError(
+            f"MCP call timed out after {timeout:.1f} seconds; the worker thread was abandoned"
+        )
     if "value" in error:
         raise error["value"]
     return result.get("value")
@@ -305,12 +315,17 @@ def _call_firecrawl_mcp(tool_name: str, arguments: dict[str, Any]) -> dict[str, 
     """
     import json
 
-    from .mcp_client import call_mcp_tool
+    from .mcp_client import DEFAULT_MCP_TIMEOUT, call_mcp_tool
 
     server = _get_firecrawl_server_config()
+    # A little slack over the in-coroutine timeout so call_mcp_tool's own
+    # wait_for error wins when it can; the join timeout is only a backstop.
     response = cast(
         dict[str, Any],
-        _run_coroutine_in_thread(call_mcp_tool(server, tool_name, arguments)),
+        _run_coroutine_in_thread(
+            call_mcp_tool(server, tool_name, arguments),
+            timeout=DEFAULT_MCP_TIMEOUT + 10.0,
+        ),
     )
     if response.get("is_error"):
         text = _render_mcp_text_response("Web provider error", response)
@@ -371,10 +386,17 @@ def _get_exa_server_config():
 
 
 def _call_exa_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    from .mcp_client import call_mcp_tool
+    from .mcp_client import DEFAULT_MCP_TIMEOUT, call_mcp_tool
 
     server = _get_exa_server_config()
-    return cast(dict[str, Any], _run_coroutine_in_thread(call_mcp_tool(server, tool_name, arguments)))
+    # Same slack as the firecrawl path: let call_mcp_tool's own timeout error win.
+    return cast(
+        dict[str, Any],
+        _run_coroutine_in_thread(
+            call_mcp_tool(server, tool_name, arguments),
+            timeout=DEFAULT_MCP_TIMEOUT + 10.0,
+        ),
+    )
 
 
 def _render_mcp_text_response(prefix: str, response: dict[str, Any]) -> str:
