@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ankaloop import tool_execution as tool_execution_module
 from ankaloop.agent import Agent
 from ankaloop.agent_spec import ResolvedAgentSpec
 from ankaloop.config import AnkaloopConfig, ChatConfig, ContextConfig, Server
@@ -21,6 +22,7 @@ from ankaloop.tool_execution import (
     ToolExecutionContext,
     ToolExecutor,
     WorkspaceBoundaryError,
+    _BoundedDaemonExecutor,
     normalize_tool_calls,
 )
 from ankaloop.tools import create_default_tool_registry
@@ -346,6 +348,54 @@ async def test_thread_backed_tool_cancellation_has_settle_deadline(tmp_path):
     assert not release.is_set()
     release.set()
     await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_sync_tool_is_not_executed(tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    queued_executed = threading.Event()
+    registry = MagicMock()
+
+    def execute_tool(name, **_arguments):
+        if name == "blocking_tool":
+            first_started.set()
+            release_first.wait(timeout=5)
+        else:
+            queued_executed.set()
+        return SimpleNamespace(success=True, content=name)
+
+    registry.execute_tool.side_effect = execute_tool
+    executor = ToolExecutor(
+        context=ToolExecutionContext("session", tmp_path, "queued-cancel"),
+        capability=ToolCapability.from_spec(None, [], True),
+        exposed_tools={"blocking_tool", "queued_tool"},
+        registry=registry,
+        mcp_registry={},
+        config=AnkaloopConfig(
+            servers={},
+            chat=ChatConfig(sync_tool_settle_timeout_seconds=0.01),
+        ),
+    )
+
+    with patch.object(
+        tool_execution_module,
+        "_sync_executor",
+        _BoundedDaemonExecutor(max_workers=1, max_pending=2),
+    ):
+        blocking = asyncio.create_task(executor.execute("blocking_tool", {}))
+        assert await asyncio.to_thread(first_started.wait, 1)
+        queued = asyncio.create_task(executor.execute("queued_tool", {}))
+        await asyncio.sleep(0)
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+
+        release_first.set()
+        assert (await blocking).content == "blocking_tool"
+        await asyncio.sleep(0.05)
+
+    assert not queued_executed.is_set()
 
 
 class _ToolCallingLLM:

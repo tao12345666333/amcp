@@ -312,6 +312,18 @@ class TestEmbeddedClient:
         assert client.is_connected is False
 
     @pytest.mark.asyncio
+    async def test_close_forgets_session_metrics(self):
+        """Closing a reusable client releases projections for all removed sessions."""
+        client = EmbeddedClient()
+        await client.connect()
+        await client.create_session(session_id="close-metrics")
+
+        assert len(client.services.session_service._metrics) == 1
+        await client.close()
+
+        assert len(client.services.session_service._metrics) == 0
+
+    @pytest.mark.asyncio
     async def test_context_manager(self):
         """Test async context manager."""
         async with EmbeddedClient() as client:

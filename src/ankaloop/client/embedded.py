@@ -90,6 +90,7 @@ class EmbeddedClient(BaseClient):
         """Cleanup resources."""
         for session in self._sessions.values():
             await session.agent.close()
+            self.services.session_service.forget(session.agent)
         self._sessions.clear()
         self._connected = False
 
@@ -247,7 +248,7 @@ class EmbeddedClient(BaseClient):
         finally:
             self._sessions.pop(session_id, None)
             self._closing_sessions.discard(session_id)
-            self.services.session_service.forget(session_id)
+            self.services.session_service.forget(session.agent)
 
     # =========================================================================
     # Prompt Operations

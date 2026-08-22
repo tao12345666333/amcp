@@ -63,6 +63,8 @@ class _BoundedDaemonExecutor:
         while True:
             loop, future, operation = self._jobs.get()
             try:
+                if future.done():
+                    continue
                 result = operation()
             except BaseException as exc:
                 self._notify(loop, future, error=exc)
@@ -324,19 +326,13 @@ class ToolExecutor:
             elif not task.done():
                 logger.error(
                     "Synchronous tool %s exceeded the %.2fs cancellation settle deadline "
-                    "for turn %s; its worker remains detached",
+                    "for turn %s; cancelling it before execution when possible",
                     name,
                     max(timeout, 0.0),
                     self.context.turn_id,
                 )
-                task.add_done_callback(self._consume_detached_result)
+                task.cancel()
             raise cancelled
-
-    @staticmethod
-    def _consume_detached_result(task: asyncio.Future[ToolResult]) -> None:
-        """Retrieve a detached worker result so failures remain observed."""
-        with contextlib.suppress(BaseException):
-            task.result()
 
     def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Canonicalize model input before hooks or trusted runtime binding."""

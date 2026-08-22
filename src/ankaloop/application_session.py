@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,11 +45,11 @@ class ApplicationSessionService:
     """
 
     def __init__(self) -> None:
-        self._metrics: dict[str, SessionMetrics] = {}
+        self._metrics: weakref.WeakKeyDictionary[Agent, SessionMetrics] = weakref.WeakKeyDictionary()
 
     def metrics_for(self, agent: Agent) -> SessionMetrics:
         """Return the metrics projection for an agent session."""
-        metrics = self._metrics.get(agent.session_id)
+        metrics = self._metrics.get(agent)
         if metrics is None:
             metrics = SessionMetrics(
                 prompt_tokens=agent.total_input_tokens,
@@ -56,12 +57,12 @@ class ApplicationSessionService:
                 total_tokens=agent.total_input_tokens + agent.total_output_tokens,
                 updated_at=datetime.now(),
             )
-            self._metrics[agent.session_id] = metrics
+            self._metrics[agent] = metrics
         return metrics
 
-    def forget(self, session_id: str) -> None:
+    def forget(self, agent: Agent) -> None:
         """Drop application metrics after a session is permanently removed."""
-        self._metrics.pop(session_id, None)
+        self._metrics.pop(agent, None)
 
     async def submit(
         self,
@@ -77,7 +78,7 @@ class ApplicationSessionService:
     ) -> TurnHandle:
         """Submit one turn through the agent's single runtime owner."""
         resolved_priority = self._resolve_priority(priority)
-        handle = await agent.submit(
+        handle = await agent._submit_turn(
             content,
             work_dir=work_dir,
             stream=stream,

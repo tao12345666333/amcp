@@ -54,12 +54,21 @@ async def test_application_session_service_owns_completion_metrics(tmp_path):
         agent = Agent(services=services)
     agent.turn_service.process_message = AsyncMock(return_value="done")  # type: ignore[method-assign]
 
-    handle = await services.session_service.submit(agent, "hello", stream=False)
+    handle = await agent.submit("hello", stream=False)
 
     assert await handle.wait() == "done"
     metrics = services.session_service.metrics_for(agent)
     assert metrics.message_count == 1
     assert metrics.status == "idle"
+
+
+def test_application_session_metrics_do_not_collide_for_reused_session_ids(tmp_path):
+    services = _services()
+    with patch("ankaloop.agent.Path.home", return_value=tmp_path):
+        first = Agent(session_id="shared", services=services)
+        second = Agent(session_id="shared", services=services)
+
+    assert services.session_service.metrics_for(first) is not services.session_service.metrics_for(second)
 
 
 @pytest.mark.asyncio

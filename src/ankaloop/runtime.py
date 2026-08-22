@@ -185,6 +185,16 @@ class TurnEvent:
             data={"turn_status": status.value},
         )
 
+    @classmethod
+    def output(
+        cls,
+        turn_id: str,
+        event_type: str,
+        data: dict[str, Any] | None = None,
+    ) -> TurnEvent:
+        """Create a canonical output event."""
+        return cls(turn_id=turn_id, type=event_type, data=data or {})
+
 
 # Compatibility alias for integrations that imported the previous stream-only name.
 TurnStreamEvent = TurnEvent
@@ -259,7 +269,7 @@ class TurnHandle:
         self._stream_subscribers.discard(queue)
 
     def _publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
-        event = TurnEvent(self.id, event_type, data=data or {})
+        event = TurnEvent.output(self.id, event_type, data)
         for queue in tuple(self._stream_subscribers):
             try:
                 queue.put_nowait(event)
@@ -268,10 +278,10 @@ class TurnHandle:
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait(
-                    TurnEvent(
+                    TurnEvent.output(
                         self.id,
                         "stream.overflow",
-                        data={"error": "Turn stream consumer is too slow"},
+                        {"error": "Turn stream consumer is too slow"},
                     )
                 )
 

@@ -70,7 +70,7 @@ async def turn_frames(handle: TurnHandle, session_id: str) -> AsyncGenerator[dic
                     event_type = "turn.completed"
                 else:
                     event_type = "turn.failed"
-                frame = _event_frame(TurnEvent(handle.id, event_type), handle)
+                frame = _event_frame(TurnEvent.output(handle.id, event_type), handle)
                 assert frame is not None
                 yield frame
                 return

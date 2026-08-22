@@ -311,7 +311,7 @@ class SessionManager:
             session = self._sessions.pop(session_id)
             await session.agent.close()
             session.agent.delete_persisted_session()
-            self.session_service.forget(session_id)
+            self.session_service.forget(session.agent)
             self._emit_event("session.deleted", {"session_id": session_id})
 
     async def submit_prompt(

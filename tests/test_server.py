@@ -339,7 +339,7 @@ class TestSessionEndpoints:
         handle = MagicMock(id="turn-queued")
         managed.agent.is_busy = MagicMock(return_value=True)
         managed.agent.queued_count = MagicMock(return_value=0)
-        managed.agent.submit = AsyncMock(return_value=handle)
+        managed.agent._submit_turn = AsyncMock(return_value=handle)
 
         response = client.post(
             f"/api/v1/sessions/{session_id}/prompt",
@@ -351,7 +351,7 @@ class TestSessionEndpoints:
         assert data["status"] == "queued"
         assert data["position"] == 1
         assert data["message_id"] == "turn-queued"
-        managed.agent.submit.assert_awaited_once()
+        managed.agent._submit_turn.assert_awaited_once()
 
 
 class TestToolEndpoints:
