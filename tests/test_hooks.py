@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from ankaloop.hooks import (
+    HookConfig,
     HookDecision,
     HookEvent,
     HookHandler,
@@ -170,6 +171,40 @@ class TestHooksManager:
     def setup_method(self):
         """Reset hooks manager before each test."""
         reset_hooks_manager()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failure_mode", "continues"),
+        [("open", True), ("closed", False)],
+    )
+    async def test_hook_failure_mode_is_explicit(self, tmp_path, failure_mode, continues):
+        manager = HooksManager(tmp_path)
+        manager._loaded = True
+        manager.hooks[HookEvent.PRE_TOOL_USE] = HookConfig(
+            handlers=[
+                HookHandler(
+                    type="python",
+                    function="missing.module",
+                    failure_mode=failure_mode,
+                )
+            ]
+        )
+
+        output = await manager.execute_hooks(
+            HookEvent.PRE_TOOL_USE,
+            HookInput(
+                session_id="test",
+                hook_event_name="PreToolUse",
+                cwd=str(tmp_path),
+                tool_name="bash",
+                tool_input={"command": "true"},
+            ),
+            "bash",
+        )
+
+        assert output.continue_execution is continues
+        if failure_mode == "closed":
+            assert output.decision == HookDecision.DENY
 
     def test_load_toml_config(self):
         """Test loading hooks from TOML config."""

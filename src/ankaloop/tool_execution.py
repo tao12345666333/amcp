@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+import queue
 import signal
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +21,91 @@ from .mcp_client import call_mcp_tool
 from .mcp_naming import is_mcp_tool_name
 from .task import TaskManager, TaskTool
 from .tools import ToolRegistry, ToolResult
+
+logger = logging.getLogger(__name__)
+
+
+class _BoundedDaemonExecutor:
+    """Small daemon worker pool for synchronous tools that cannot be cancelled."""
+
+    def __init__(self, max_workers: int = 8, max_pending: int = 64) -> None:
+        self._jobs: queue.Queue[
+            tuple[
+                asyncio.AbstractEventLoop,
+                asyncio.Future[ToolResult],
+                Callable[[], ToolResult],
+            ]
+        ] = queue.Queue(maxsize=max_pending)
+        for index in range(max_workers):
+            threading.Thread(
+                target=self._worker,
+                name=f"ankaloop-sync-tool-{index}",
+                daemon=True,
+            ).start()
+
+    def submit(self, operation: Callable[[], ToolResult]) -> asyncio.Future[ToolResult]:
+        """Queue an operation without blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[ToolResult] = loop.create_future()
+        try:
+            self._jobs.put_nowait((loop, future, operation))
+        except queue.Full:
+            future.set_result(
+                ToolResult(
+                    success=False,
+                    content="",
+                    error="Synchronous tool executor is saturated",
+                )
+            )
+        return future
+
+    def _worker(self) -> None:
+        while True:
+            loop, future, operation = self._jobs.get()
+            try:
+                if future.done():
+                    continue
+                result = operation()
+            except BaseException as exc:
+                self._notify(loop, future, error=exc)
+            else:
+                self._notify(loop, future, result=result)
+            finally:
+                self._jobs.task_done()
+
+    @staticmethod
+    def _notify(
+        loop: asyncio.AbstractEventLoop,
+        future: asyncio.Future[ToolResult],
+        *,
+        result: ToolResult | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        def complete() -> None:
+            if future.done():
+                return
+            if error is not None:
+                future.set_exception(error)
+            else:
+                assert result is not None
+                future.set_result(result)
+
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(complete)
+
+
+_sync_executor: _BoundedDaemonExecutor | None = None
+_sync_executor_lock = threading.Lock()
+
+
+def _get_sync_executor() -> _BoundedDaemonExecutor:
+    """Lazily create the bounded executor shared by synchronous tools."""
+    global _sync_executor
+    if _sync_executor is None:
+        with _sync_executor_lock:
+            if _sync_executor is None:
+                _sync_executor = _BoundedDaemonExecutor()
+    return _sync_executor
 
 
 class ToolCallProtocolError(Exception):
@@ -203,31 +293,45 @@ class ToolExecutor:
         return await self._execute_sync_tool(name, args)
 
     async def _execute_sync_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Run a thread-backed tool and settle it before propagating cancellation.
+        """Run a thread-backed tool and briefly settle it after cancellation.
 
         Python cannot stop a thread that has already entered synchronous tool
-        code. Shielding the worker means a cancelled turn waits until any file,
-        memory, or external side effect has reached a known terminal state.
+        code. The settle deadline gives a normal tool time to reach a terminal
+        state without allowing one stuck worker to block session cancellation
+        forever. A worker that exceeds the deadline is detached and logged.
         """
-        task = asyncio.create_task(
-            asyncio.to_thread(self.registry.execute_tool, name, **arguments),
-            name=f"ankaloop-tool-{self.context.turn_id}-{name}",
+        task = _get_sync_executor().submit(
+            partial(self.registry.execute_tool, name, **arguments),
         )
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError as cancelled:
-            # Repeated cancellation requests must not break the settled
-            # guarantee while the underlying thread can still mutate state.
+            timeout = self.config.chat.sync_tool_settle_timeout_seconds if self.config.chat is not None else 2.0
+            deadline = asyncio.get_running_loop().time() + max(timeout, 0.0)
             while not task.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
                 try:
-                    await asyncio.shield(task)
+                    await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
                 except asyncio.CancelledError:
                     continue
+                except TimeoutError:
+                    break
                 except Exception:
                     break
-            if not task.cancelled():
+            if task.done() and not task.cancelled():
                 with contextlib.suppress(Exception):
                     task.result()
+            elif not task.done():
+                logger.error(
+                    "Synchronous tool %s exceeded the %.2fs cancellation settle deadline "
+                    "for turn %s; cancelling it before execution when possible",
+                    name,
+                    max(timeout, 0.0),
+                    self.context.turn_id,
+                )
+                task.cancel()
             raise cancelled
 
     def prepare_model_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

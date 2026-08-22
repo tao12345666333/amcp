@@ -34,14 +34,20 @@ from .mcp_client import list_mcp_tools
 from .mcp_naming import is_mcp_tool_name, mcp_tool_name
 from .memory import get_memory_manager
 from .memory_review import run_memory_review
-from .message_queue import MessagePriority
 from .multi_agent import AgentConfig, get_agent_registry
 from .progressive.context_budget import ContextBudget, ContextBudgetManager, estimate_text_tokens
 from .progressive.relevance import RelevanceScorer
 from .progressive.skill_view import ProgressiveSkillView
 from .progressive.tool_view import ProgressiveToolView
 from .project_rules import ProjectRulesLoader
-from .runtime import CancellationResult, RuntimeClosedError, SessionRuntime, TurnCancelledError, TurnHandle, TurnRequest
+from .runtime import (
+    CancellationResult,
+    MessagePriority,
+    RuntimeClosedError,
+    SessionRuntime,
+    TurnHandle,
+    TurnRequest,
+)
 from .session_search import get_transcript_store  # noqa: F401 - legacy patch seam
 from .session_state import SessionState
 from .session_store import SessionStore, SessionTimelineStore
@@ -719,7 +725,8 @@ class Agent:
             MaxStepsReached: If max steps exceeded
             BusyError: If session is busy and queue_if_busy is False
         """
-        handle = await self.submit(
+        return await self.services.session_service.run(
+            self,
             user_input,
             work_dir=work_dir,
             stream=stream,
@@ -727,21 +734,6 @@ class Agent:
             priority=priority,
             reject_if_busy=not queue_if_busy,
         )
-        try:
-            return await handle.wait()
-        except TurnCancelledError:
-            raise
-        except asyncio.CancelledError as cancelled:
-            cancel_task = asyncio.create_task(handle.cancel())
-            while not cancel_task.done():
-                try:
-                    await asyncio.shield(cancel_task)
-                except asyncio.CancelledError:
-                    continue
-            if not cancel_task.cancelled():
-                with contextlib.suppress(Exception):
-                    cancel_task.result()
-            raise cancelled
 
     async def submit(
         self,
@@ -754,6 +746,27 @@ class Agent:
         reject_if_busy: bool = False,
     ) -> TurnHandle:
         """Submit a turn and return a handle that owns its eventual result."""
+        return await self.services.session_service.submit(
+            self,
+            user_input,
+            work_dir=work_dir,
+            stream=stream,
+            show_progress=show_progress,
+            priority=priority,
+            reject_if_busy=reject_if_busy,
+        )
+
+    async def _submit_turn(
+        self,
+        user_input: str,
+        *,
+        work_dir: Path | None = None,
+        stream: bool = True,
+        show_progress: bool = True,
+        priority: MessagePriority = MessagePriority.NORMAL,
+        reject_if_busy: bool = False,
+    ) -> TurnHandle:
+        """Submit directly to the owned runtime for the application session service."""
         async with self._lifecycle_lock:
             if self._closed:
                 raise RuntimeClosedError(f"Agent session {self.session_id} is closed")
@@ -976,6 +989,10 @@ class Agent:
     def queued_count(self) -> int:
         """Get the number of queued messages for this session."""
         return self._runtime.queued_count
+
+    def has_pending_work(self, *, excluding: TurnHandle | None = None) -> bool:
+        """Return whether this session has other active or queued work."""
+        return self._runtime.has_pending_work(excluding=excluding)
 
     def queued_prompts(self) -> list[str]:
         """Get list of queued prompts for this session."""

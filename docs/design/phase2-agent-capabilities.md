@@ -90,6 +90,10 @@ registry.register(custom)
 
 ## 2. Message Queue System (`message_queue.py`)
 
+> **Deprecated:** Production request scheduling is now owned by `SessionRuntime`
+> through `ApplicationSessionService`. The APIs below remain only as a compatibility
+> reference and should not be used by new integrations.
+
 ### Core Concepts
 
 - **Session-specific queues**: Each session has its own message queue

@@ -275,3 +275,42 @@ async def test_closing_turn_relay_unsubscribes_without_cancelling_turn():
 
     release.set()
     assert await handle.wait() == "result"
+
+
+@pytest.mark.asyncio
+async def test_observer_failure_cannot_strand_runtime_work():
+    observed = []
+
+    async def process(request):
+        return request.prompt
+
+    def broken_observer(event, handle):
+        observed.append((event, handle.id))
+        raise RuntimeError("observer failed")
+
+    runtime = SessionRuntime("observer", process, broken_observer)
+    first = await runtime.submit("first")
+    second = await runtime.submit("second")
+
+    assert await first.wait() == "first"
+    assert await second.wait() == "second"
+    assert first.status == TurnStatus.COMPLETED
+    assert second.status == TurnStatus.COMPLETED
+    assert observed
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_has_stable_error_envelope():
+    async def process(_request):
+        raise ValueError("bad turn")
+
+    runtime = SessionRuntime("errors", process)
+    handle = await runtime.submit("fail")
+
+    with pytest.raises(ValueError, match="bad turn"):
+        await handle.wait()
+
+    assert handle.outcome is not None
+    assert handle.outcome.error_envelope is not None
+    assert handle.outcome.error_envelope.code == "AGENT_ERROR"
+    assert handle.outcome.error_envelope.details["exception_type"] == "ValueError"

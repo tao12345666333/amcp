@@ -25,6 +25,7 @@ from ankaloop.client.exceptions import (
     SessionNotFoundError,
     TimeoutError,
 )
+from ankaloop.telegram.client import TelegramClient
 
 # ============================================================================
 # Test Exceptions
@@ -141,6 +142,11 @@ class TestAnkaloopClient:
 
         without_url = AnkaloopClient()
         assert without_url.mode == ClientMode.EMBEDDED
+
+    def test_telegram_client_implements_base_client_contract(self):
+        client = TelegramClient(AsyncMock())
+
+        assert isinstance(client, BaseClient)
 
 
 # ============================================================================
@@ -304,6 +310,18 @@ class TestEmbeddedClient:
 
         await client.close()
         assert client.is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_close_forgets_session_metrics(self):
+        """Closing a reusable client releases projections for all removed sessions."""
+        client = EmbeddedClient()
+        await client.connect()
+        await client.create_session(session_id="close-metrics")
+
+        assert len(client.services.session_service._metrics) == 1
+        await client.close()
+
+        assert len(client.services.session_service._metrics) == 0
 
     @pytest.mark.asyncio
     async def test_context_manager(self):

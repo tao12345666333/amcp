@@ -134,6 +134,18 @@ def test_stale_session_owner_cannot_overwrite_newer_revision(tmp_path):
     assert [turn.turn_id for turn in persisted.turns] == ["first"]
 
 
+def test_delete_uses_same_cross_process_lock_as_save(tmp_path):
+    store = SessionStore(tmp_path, "delete-lock")
+    store.save(SessionState(session_id="delete-lock", agent_name="test").to_snapshot())
+
+    with patch("ankaloop.session_store._exclusive_file_lock") as lock:
+        lock.return_value.__enter__.return_value = None
+        store.delete()
+
+    lock.assert_called_once()
+    assert not store.path.exists()
+
+
 def test_corrupt_session_has_explicit_diagnostic(tmp_path):
     store = SessionStore(tmp_path, "corrupt")
     store.path.write_text("{not-json", encoding="utf-8")

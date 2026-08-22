@@ -21,20 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+import warnings
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
-
-class MessagePriority(Enum):
-    """Priority levels for queued messages."""
-
-    LOW = 0
-    NORMAL = 1
-    HIGH = 2
-    URGENT = 3
+from .runtime import MessagePriority
 
 
 @dataclass
@@ -184,10 +177,10 @@ class SessionQueue:
 
 
 class MessageQueueManager:
-    """Manages message queues for multiple sessions.
+    """Deprecated compatibility queue.
 
-    Provides centralized management of session queues,
-    busy state tracking, and message routing.
+    Production execution is owned by ``SessionRuntime``. This class remains for
+    one compatibility cycle so existing imports do not break.
 
     Example usage:
         manager = MessageQueueManager()
@@ -214,6 +207,11 @@ class MessageQueueManager:
 
     def __init__(self):
         """Initialize the message queue manager."""
+        warnings.warn(
+            "MessageQueueManager is deprecated; submit work through ApplicationSessionService or SessionRuntime",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._session_queues: dict[str, SessionQueue] = {}
         self._busy_sessions: set[str] = set()
         self._session_locks: dict[str, asyncio.Lock] = {}

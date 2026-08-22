@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified application session lifecycle**: prompts across CLI, server, embedded client,
+  Telegram, and delegated tasks now share canonical turn events, results, error envelopes,
+  metrics, and queue ownership; the legacy message queue manager is deprecated.
+
 ### Fixed
 
+- **Runtime and persistence reliability**: observer failures no longer strand turns, synchronous
+  tool cancellation has a bounded settle deadline, failed memory consolidation remains retryable
+  without advancing its cursor, and session deletion shares the save lock.
+- **Configuration and authorization enforcement**: `edit_tool_enabled`, parent-scoped sub-agents,
+  explicit hook fail-open/fail-closed behavior, and the complete Telegram client contract are now
+  enforced.
 - **Skill directory paths in docs**: stale pre-rename `.amcp` paths in the skill-creator and session-cleanup SKILL.md examples and a `SkillManager` docstring aligned with the current `.ankaloop` layout (`#41`).
 
 ---

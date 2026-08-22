@@ -261,7 +261,11 @@ class AgentRegistry:
         if not parent or not parent.can_delegate:
             return []
 
-        return self.list_subagents()
+        return [
+            name
+            for name, config in self._agents.items()
+            if config.mode == AgentMode.SUBAGENT and (config.parent_agent is None or config.parent_agent == parent_name)
+        ]
 
     def load_from_file(self, config_file: Path) -> None:
         """Load agent configurations from a YAML file.

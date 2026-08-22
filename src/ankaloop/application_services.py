@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .application_session import ApplicationSessionService
 from .memory import MemoryManager, get_memory_manager
 from .multi_agent import AgentRegistry, get_agent_registry
 from .session_search import TranscriptStore, get_transcript_store
@@ -71,6 +72,7 @@ class ApplicationServices:
     skill_manager: SkillManager
     transcript_store: TranscriptStoreService
     memory_manager_factory: Callable[[Path | None], MemoryManager]
+    session_service: ApplicationSessionService = field(default_factory=ApplicationSessionService)
 
     @classmethod
     def default(cls) -> ApplicationServices:
@@ -81,6 +83,7 @@ class ApplicationServices:
             skill_manager=get_skill_manager(),
             transcript_store=LegacyTranscriptStoreAdapter(get_transcript_store),
             memory_manager_factory=get_memory_manager,
+            session_service=ApplicationSessionService(),
         )
 
     def memory_manager(self, project_root: Path | None = None) -> MemoryManager:

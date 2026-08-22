@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from ...llm import ProviderError
+from ...runtime import ErrorEnvelope
 from ..interaction import apply_interaction_result, route_server_interaction
 from ..models import (
     CancelRequest,
@@ -40,28 +40,20 @@ async def _safe_emit(coro: Coroutine[Any, Any, None]) -> None:
         await coro
 
 
-def _queue_priority(priority: str):
-    """Map server API priority strings to the agent queue enum."""
-    from ...message_queue import MessagePriority as QueuePriority
-
-    priority_map = {
-        "low": QueuePriority.LOW,
-        "normal": QueuePriority.NORMAL,
-        "high": QueuePriority.HIGH,
-        "urgent": QueuePriority.URGENT,
-    }
-    return priority_map.get(priority, QueuePriority.NORMAL)
-
-
-async def _enqueue_agent_prompt(session: Any, content: str, request: PromptRequest):
+async def _enqueue_agent_prompt(
+    session_manager: Any,
+    session: Any,
+    content: str,
+    request: PromptRequest,
+):
     """Submit a queued prompt and return its owned turn handle and position."""
     position = session.agent.queued_count() + 1
-    handle = await session.agent.submit(
-        content,
+    handle = await session_manager.submit_prompt(
+        session_id=session.id,
+        content=content,
         work_dir=Path(session.cwd),
         stream=request.stream,
-        show_progress=False,
-        priority=_queue_priority(request.priority.value),
+        priority=request.priority.value,
     )
     return handle, position
 
@@ -205,7 +197,12 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
 
         if is_busy:
             # Default: queue the message
-            handle, position = await _enqueue_agent_prompt(session, routed.content, request)
+            handle, position = await _enqueue_agent_prompt(
+                session_manager,
+                session,
+                routed.content,
+                request,
+            )
 
             # Notify about queuing
             await _safe_emit(
@@ -238,7 +235,6 @@ async def send_prompt(session_id: str, request: PromptRequest) -> PromptResponse
             priority=request.priority.value,
         )
         response_text = await handle.wait()
-        session.message_count += 1
 
         return PromptResponse(
             session_id=session_id,
@@ -329,8 +325,6 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
                 message_id = handle.id
                 async for frame in turn_frames(handle, session_id):
                     yield json.dumps(frame) + "\n"
-                if handle.status.value == "completed":
-                    session.message_count += 1
             else:
                 yield (
                     json.dumps(
@@ -348,15 +342,16 @@ async def send_prompt_stream(session_id: str, request: PromptRequest) -> Streami
                 yield json.dumps({"type": "complete", "turn_id": message_id}) + "\n"
 
         except Exception as e:
-            provider = e if isinstance(e, ProviderError) else None
+            envelope = ErrorEnvelope.from_exception(e)
             yield (
                 json.dumps(
                     {
                         "type": "error",
                         "turn_id": message_id,
-                        "error": str(e),
-                        "code": f"PROVIDER_{provider.kind.value.upper()}" if provider else "AGENT_ERROR",
-                        "retryable": provider.retryable if provider else False,
+                        "error": envelope.message,
+                        "code": envelope.code,
+                        "retryable": envelope.retryable,
+                        "details": envelope.details,
                     }
                 )
                 + "\n"
@@ -401,12 +396,14 @@ async def get_turn(session_id: str, turn_id: str) -> dict[str, Any]:
     if handle is None:
         raise HTTPException(status_code=404, detail={"code": "TURN_NOT_FOUND"})
     outcome = handle.outcome
+    envelope = outcome.error_envelope if outcome else None
     return {
         "session_id": session_id,
         "turn_id": turn_id,
         "status": handle.status.value,
         "response": outcome.value if outcome else None,
         "error": str(outcome.error) if outcome and outcome.error else None,
+        "error_envelope": envelope.to_dict() if envelope else None,
     }
 
 

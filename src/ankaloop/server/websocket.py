@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from ..runtime import ErrorEnvelope
 from .interaction import apply_interaction_result, route_server_interaction
 from .models import EventType
 from .session_manager import SessionNotFoundError, get_session_manager
@@ -446,6 +447,7 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
     except (WebSocketDisconnect, RuntimeError):
         return
     except Exception as e:
+        envelope = ErrorEnvelope.from_exception(e)
         with contextlib.suppress(Exception):
             await connection_manager.send(
                 websocket,
@@ -453,8 +455,10 @@ async def handle_prompt(websocket: WebSocket, msg_id: str, payload: dict[str, An
                     "type": "error",
                     "id": msg_id,
                     "payload": {
-                        "error": str(e),
-                        "code": "PROMPT_ERROR",
+                        "error": envelope.message,
+                        "code": envelope.code,
+                        "retryable": envelope.retryable,
+                        "details": envelope.details,
                     },
                 },
             )

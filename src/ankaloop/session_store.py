@@ -328,6 +328,8 @@ class SessionStore:
         """Delete the persisted session if present."""
         with self._lock:
             try:
-                self.path.unlink(missing_ok=True)
+                self.root.mkdir(parents=True, exist_ok=True)
+                with self.lock_path.open("a+b") as lock_handle, _exclusive_file_lock(lock_handle):
+                    self.path.unlink(missing_ok=True)
             except OSError as exc:
                 raise SessionStoreError(f"Could not delete session {self.session_id}: {exc}") from exc

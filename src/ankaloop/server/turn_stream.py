@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from ..llm import ProviderError
-from ..runtime import TurnHandle, TurnStatus, TurnStreamEvent
+from ..runtime import TurnEvent, TurnHandle, TurnStatus
 
 
-def _event_frame(event: TurnStreamEvent, handle: TurnHandle) -> dict[str, Any] | None:
+def _event_frame(event: TurnEvent, handle: TurnHandle) -> dict[str, Any] | None:
     """Convert an internal turn event to the public streaming schema."""
     base = {"turn_id": event.turn_id}
     if event.type == "message.chunk":
@@ -25,20 +24,18 @@ def _event_frame(event: TurnStreamEvent, handle: TurnHandle) -> dict[str, Any] |
         return {"type": "complete", **base, "status": "completed"}
     if event.type in {"turn.failed", "turn.cancelled"}:
         cancelled = event.type == "turn.cancelled"
-        error = handle.outcome.error if handle.outcome is not None else None
-        provider = error if isinstance(error, ProviderError) else None
+        envelope = handle.outcome.error_envelope if handle.outcome is not None else None
         return {
             "type": "error",
             **base,
-            "error": event.data.get("error") or ("Turn cancelled" if cancelled else "Turn failed"),
-            "code": (
-                "TURN_CANCELLED"
-                if cancelled
-                else f"PROVIDER_{provider.kind.value.upper()}"
-                if provider
-                else "AGENT_ERROR"
+            "error": (
+                envelope.message
+                if envelope
+                else event.data.get("error") or ("Turn cancelled" if cancelled else "Turn failed")
             ),
-            "retryable": provider.retryable if provider else False,
+            "code": "TURN_CANCELLED" if cancelled else envelope.code if envelope else "AGENT_ERROR",
+            "retryable": envelope.retryable if envelope else False,
+            "details": envelope.details if envelope else {},
         }
     if event.type == "stream.overflow":
         return {
@@ -73,7 +70,7 @@ async def turn_frames(handle: TurnHandle, session_id: str) -> AsyncGenerator[dic
                     event_type = "turn.completed"
                 else:
                     event_type = "turn.failed"
-                frame = _event_frame(TurnStreamEvent(handle.id, event_type), handle)
+                frame = _event_frame(TurnEvent.output(handle.id, event_type), handle)
                 assert frame is not None
                 yield frame
                 return
